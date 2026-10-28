@@ -1,0 +1,100 @@
+[package]
+name = "ghost"
+version = "0.1.0"
+edition.workspace = true
+license = "Apache-2.0"
+rust-version.workspace = true
+
+[[bin]]
+name = "ghost"
+path = "src/main.rs"
+
+[dependencies]
+anyhow.workspace = true
+base64.workspace = true
+chrono.workspace = true
+clap.workspace = true
+ed25519-dalek.workspace = true
+gigahost-client-api = { path = "crates/client-api", default-features = false, features = ["clap"] }
+hkdf.workspace = true
+hpke.workspace = true
+rand_core.workspace = true
+reqwest = { workspace = true, features = ["gzip", "zstd"] }
+serde.workspace = true
+serde_json.workspace = true
+serde_yaml_ng = "0.10.0"
+sha2.workspace = true
+tokio.workspace = true
+uuid.workspace = true
+zeroize.workspace = true
+
+# The terminal's width, for tables.
+[target.'cfg(unix)'.dependencies]
+rustix = { version = "1.1.4", default-features = false, features = ["process", "std", "termios"] }
+# `ghost x`, `ghost ghostd` and `ghost mcp`: ghostd's client and the MCP
+# server over stdio.
+ghostd-client.workspace = true
+ghostd-protocol.workspace = true
+# The size of a request to ghostd as its protocol encodes it.
+postcard.workspace = true
+# `ghost ghostd install` reads the channel's release archive (tar.gz).
+flate2 = "1.1.10"
+rmcp = { version = "3.5.1", default-features = false, features = ["macros", "server", "transport-io"] }
+schemars = "1.2.2"
+
+# `ghost key import` reads a pasted key with the console's echo off: the
+# console calls are `unsafe`, which this workspace forbids in its own code.
+[target.'cfg(windows)'.dependencies]
+rpassword = "7.5.4"
+
+[dev-dependencies]
+tempfile = "3.27.0"
+
+# A terminal to paste a key into in the tests of `ghost key import`.
+[target.'cfg(target_os = "linux")'.dev-dependencies]
+rustix = { version = "1.1.4", default-features = false, features = ["pty", "std", "termios"] }
+
+[lints]
+workspace = true
+
+[workspace]
+members = ["crates/client-api"]
+resolver = "3"
+
+[workspace.package]
+edition = "2024"
+license = "Apache-2.0"
+rust-version = "1.97"
+
+[workspace.dependencies]
+anyhow = "1.0.102"
+base64 = "0.22.1"
+chrono = { version = "0.4.44", features = ["serde"] }
+clap = { version = "4.5.60", features = ["derive", "env"] }
+ed25519-dalek = "2.2.0"
+ghostd-client = { git = "https://github.com/gigahost-apps/ghostd", rev = "74bd8368c0b9ab746990929aaeb3ec3af765b110" }
+ghostd-protocol = { git = "https://github.com/gigahost-apps/ghostd", rev = "74bd8368c0b9ab746990929aaeb3ec3af765b110" }
+hkdf = "0.12.4"
+hpke = { version = "0.14.0", default-features = false, features = ["alloc", "chacha", "getrandom", "x25519"] }
+postcard = { version = "1.1.3", features = ["use-std"] }
+rand_core = { version = "0.6.4", features = ["getrandom"] }
+reqwest = { version = "0.13.4", default-features = false, features = ["json", "rustls", "stream"] }
+serde = { version = "1.0.229", features = ["derive"] }
+serde_json = "1.0.151"
+serde_urlencoded = "0.7.1"
+sha2 = "0.10.9"
+thiserror = "2.0.18"
+tokio = { version = "1.53.1", features = ["fs", "io-util", "macros", "net", "process", "rt-multi-thread", "signal", "sync", "time"] }
+uuid = { version = "1.24.1", features = ["serde", "v7"] }
+zeroize = "1.8.2"
+
+[workspace.lints.rust]
+unsafe_code = "forbid"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+module_name_repetitions = "allow"
+must_use_candidate = "allow"
+needless_raw_string_hashes = "allow"
+too_many_lines = "allow"

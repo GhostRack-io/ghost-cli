@@ -1,0 +1,18 @@
+name: CLI
+on: [push, pull_request]
+jobs:
+  check:
+    if: github.event.repository.private == false
+    strategy:
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - name: Toolchain
+        run: rustup show active-toolchain
+      - run: cargo fmt --all -- --check
+      - run: cargo clippy --locked --workspace --all-targets --all-features -- -D warnings
+      - run: cargo test --locked --workspace
+      - run: cargo test --locked -p gigahost-client-api --no-default-features
+      - run: cargo test --locked -p gigahost-client-api --all-features

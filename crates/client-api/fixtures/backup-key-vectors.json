@@ -1,0 +1,39 @@
+{
+  "billing": {
+    "backup_id": "019b7cb4-6800-7000-8000-0000000000a2",
+    "billing_public_key_b64url": "zdP4IVbnN7IdRNXpXNKPCjOkmYiFmNSa2pBXyBAySGU",
+    "create_body": "{\"offering_id\":\"of2_F95QS_EuMsVz4IG5EulOew\",\"source\":{\"kind\":\"backup\",\"backup_id\":\"019b7cb4-6800-7000-8000-0000000000a2\",\"billing_authorization\":{\"pricing_revision\":3,\"maximum_charge_microusd\":22000,\"signature\":\"xtkXdZEB5Zb91VsF2QxeyNovsiR69FkZf-B5-gplbKAuXlQmhOKtPJT8mULINB_5y2JxDI_E5brMMowT7VGBBg\"}},\"gateway_tier\":\"shared_ip\",\"ssh_public_keys\":[],\"cloud_init\":null,\"hostname\":\"old-api\",\"startup_command\":null}",
+    "destination": "gigahost_s3",
+    "idempotency_key": "browser-intent-019b7cb4-6800-7000-8000-0000000000a5",
+    "instance_id": "019b7cb4-6800-7000-8000-0000000000a1",
+    "maximum_charge_microusd": 22000,
+    "message": "GIGAHOST-BACKUP-BILLING-AUTHORIZATION-V1\nrestore_backup\n019b7cb4-6800-7000-8000-0000000000a1\n019b7cb4-6800-7000-8000-0000000000a2\ngigahost_s3\n3\n22000\nbrowser-intent-019b7cb4-6800-7000-8000-0000000000a5",
+    "operation": "restore_backup",
+    "pricing_revision": 3,
+    "restore_body": "{\"billing_authorization\":{\"pricing_revision\":3,\"maximum_charge_microusd\":22000,\"signature\":\"xtkXdZEB5Zb91VsF2QxeyNovsiR69FkZf-B5-gplbKAuXlQmhOKtPJT8mULINB_5y2JxDI_E5brMMowT7VGBBg\"}}",
+    "restore_charge_microusd_per_gib": 2000,
+    "signature_b64url": "xtkXdZEB5Zb91VsF2QxeyNovsiR69FkZf-B5-gplbKAuXlQmhOKtPJT8mULINB_5y2JxDI_E5brMMowT7VGBBg",
+    "size_bytes": 11811160064
+  },
+  "description": "Fixed vectors of a hosted backup's restore (src/keys.rs): the billing authorization the account key of the vector sevens of account-seed-vectors.json signs for it, with the bodies `ghost account approve` sends it in, and one rewrap of the backup's data key from the account's recovery key to a restore's destination, HPKE base mode with DHKEM(X25519, HKDF-SHA256), HKDF-SHA256 and ChaCha20-Poly1305, its ephemeral keys derived from the fixed input keying material given (RFC 9180 DeriveKeyPair). Every client that approves a hosted restore reproduces them byte for byte. Regenerate with `cargo test -p ghost -- --ignored write_backup_key_vectors`.",
+  "rewrap": {
+    "backup_id": "019b7cb4-6800-7000-8000-0000000000a2",
+    "data_key_hex": "5cf5466a22bfbef6a465ccc59c9476ef1052dac2bd17ff8ae86599062bb935df",
+    "destination_ikm_hex": "39702fa808a7d43fcc9bfa9e0597f8feaec658f7bdbb2da661778002307f4934",
+    "destination_instance_id": "019b7cb4-6800-7000-8000-0000000000a3",
+    "destination_key_fingerprint_b64url": "ECJ1OhRwL2UZbhABBWrbnqwc4VmjJqK3UC0_pKn1AUo",
+    "destination_private_key_hex": "86697d7e8c5f3969a2bc0b064d9fc58cf590027d1b4b2b2a22dd4e8dbb75378a",
+    "destination_public_key_b64url": "bt0a8v62NNTKu7eFEdG7zZ5RnZxKwoLiJtZxV4EiZjU",
+    "envelope_b64url": "h9HfH_5b1tW8kOlVQ2KUgOq3FqZu1TsID8AmZRzAnlnEPNqkhTjQ24IngQaiioPvwq5ymL1VYQihx8rIbiJk0VGLxMUb9CMccBm__vkGedM",
+    "ephemeral_ikm_hex": "250506f53fe45d18d58164b997d4afe178dd36bafd7e66dc84407bbf6e3cb0de",
+    "recovery_key_fingerprint_b64url": "Yk6-41llhxrpIJ00JC7UUZayac65_V1XufLcXbQOhuQ",
+    "recovery_public_key_b64url": "yPXVKmfAsCNCg2BgdF4UWcaGDlOR_tvdV82zkXLK5Ak",
+    "restore_aad_hex": "47494741484f53542d4241434b55502d524553544f52452d575241502d5631019b7cb46800700080000000000000a3019b7cb46800700080000000000000a2019b7cb46800700080000000000000a41022753a14702f65196e1001056adb9eac1ce159a326a2b7502d3fa4a9f5014a",
+    "restore_job_id": "019b7cb4-6800-7000-8000-0000000000a4",
+    "source_aad_hex": "47494741484f53542d4241434b55502d575241502d5631019b7cb46800700080000000000000a1019b7cb46800700080000000000000a2624ebee35965871ae9209d34242ed45196b269ceb9fd5d57b9f2dc5db40e86e4",
+    "source_ephemeral_ikm_hex": "8a35ffa7c19331a9c0c11e8b990aebbf18fc40750f9c0e9883bf74fc01ca2e1d",
+    "source_instance_id": "019b7cb4-6800-7000-8000-0000000000a1",
+    "wrapped_data_key_b64url": "T14o2iKw-WEDHzX1qOWqKMCmHQgju7HHPvTM6e5wCzz6rCm0jPfBMbtsGnKl7rh4-DNzpQZNz0gYfr3j3ZGXYXG_WPmV7I1s8Qi0GdebmAs"
+  },
+  "seed_hex": "0707070707070707070707070707070707070707070707070707070707070707"
+}

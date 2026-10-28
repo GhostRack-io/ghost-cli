@@ -1,0 +1,16 @@
+/target/
+/artifacts/
+/dist/
+.env*
+credentials*
+*.pem
+*.key
+*.p12
+*.pfx
+!config/console-host-key.pub
+.credentials*
+.cargo/credentials*
+.netrc
+.npmrc
+.ssh/
+.aws/

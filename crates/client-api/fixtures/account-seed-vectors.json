@@ -1,0 +1,86 @@
+{
+  "description": "Fixed vectors of the account key (src/keys.rs): the seed file's text, the HKDF-SHA-256 materials, the Ed25519 and X25519 (RFC 9180 DeriveKeyPair) keys, their SHA-256 fingerprints, the key ID, the deposit memo and a request signed with the authentication key. Every client that reads an account key or signs a request reproduces them byte for byte. Regenerate with `cargo test -p ghost -- --ignored write_account_seed_vectors`.",
+  "vectors": [
+    {
+      "authentication_key_fingerprint_b64url": "IMGR8f2FAJh9mhvBDdPEW-uZGS72fu3tLuMA51n5DZM",
+      "authentication_key_id": "uJfHbOlYvB2g4lsp",
+      "authentication_material_hex": "735172d0a2ab3a33b6447c31ce8887a7246a088de6c30ab464494fb0ce68baae",
+      "authentication_public_key_b64url": "w2sXhbIFa7_hpp3kpu6pqwNtKgy-r2L-kizZo0YzCRM",
+      "billing_key_fingerprint_b64url": "qYccV5G_D1HY995DFqHAGdvVPe0rJ9WEkhisV1HQL78",
+      "billing_material_hex": "e113ab6336d600472defed70b6bd2b0ec2b247b32afaa6d450af4110a4190195",
+      "billing_public_key_b64url": "g_zia9b9QQD3JTNtUuJN0h7kZxR1hN4pNFBa9mbLiCQ",
+      "deposit_memo": "cxjn4gq4OtRSyGa9",
+      "name": "zero",
+      "recovery_key_fingerprint_b64url": "7x55tHr14bHgiOACz4yUUhE3qlATDZvlEJh429uow2w",
+      "recovery_material_hex": "5966ac2e605d57472da632eb021cb473a33aee700aabb660b263d382b9ea14de",
+      "recovery_private_key_hex": "6d44e689e72619b801e3a938ef6ee3ac7de77165480cb91138d7220ab852cd34",
+      "recovery_public_key_b64url": "aVMns9BJW15bs5NAntuhEMzMmkm-TPERWSmtt-IIT2g",
+      "request": {
+        "body": "{\"terms_accepted\":true}",
+        "canonical": "GIGAHOST-ACCOUNT-REQUEST-V1\nuJfHbOlYvB2g4lsp\n1767225600000\n019b7cb4-6800-7000-8000-000000000001\nPOST\n/api/mut/v1/account/activate\nMvKZlNijuIlPCME9W8JuY5YesCikHZvQMMN4vzgusdk\n",
+        "idempotency_key": null,
+        "method": "POST",
+        "nonce": "019b7cb4-6800-7000-8000-000000000001",
+        "signature_b64url": "0GRTy_0e0jgKJqkXGLOrf5zmLJgsLALGUmRnaeNx8KjklMknnc4BhfG3iGVOvkHQ1ldBNl4cANkLyuNUvIE1BQ",
+        "target": "/api/mut/v1/account/activate",
+        "timestamp_unix_ms": 1767225600000
+      },
+      "seed_file": "gigahost-account-seed-v1:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\n",
+      "seed_hex": "0000000000000000000000000000000000000000000000000000000000000000"
+    },
+    {
+      "authentication_key_fingerprint_b64url": "g8A2INImqTxV2ZS5ciEAwmB0s5wx5vc-f-DEBYWoxm0",
+      "authentication_key_id": "XTmMRZrEYsqsLzH8",
+      "authentication_material_hex": "5972638b91193354c8b8b21c87266c12c571db551b474371d49a9de9d840534e",
+      "authentication_public_key_b64url": "rQKmlIDG6H2byLcnjk064LnvgOguyqcrpaml_NkjEUE",
+      "billing_key_fingerprint_b64url": "DXdoYF_x7BbLaoQP3Filu3h4GM7smwsmyLZ5mZOlm8g",
+      "billing_material_hex": "9cbb9d9a7ff0cd07d3f1bb66186d4f7876abd3fc0a99e720a2a6d09e9b0c73de",
+      "billing_public_key_b64url": "zdP4IVbnN7IdRNXpXNKPCjOkmYiFmNSa2pBXyBAySGU",
+      "deposit_memo": "SLJ263QS4HYaGM0M",
+      "name": "sevens",
+      "recovery_key_fingerprint_b64url": "Yk6-41llhxrpIJ00JC7UUZayac65_V1XufLcXbQOhuQ",
+      "recovery_material_hex": "544a2eea489478df7d1ee8a713716d2fcfa670da7ca0ccf36cf0c7ba702f4701",
+      "recovery_private_key_hex": "835dce2a528a8577dc63af6a4ce62df370d0d0544d225fc1ca5175754b2e4ab8",
+      "recovery_public_key_b64url": "yPXVKmfAsCNCg2BgdF4UWcaGDlOR_tvdV82zkXLK5Ak",
+      "request": {
+        "body": "",
+        "canonical": "GIGAHOST-ACCOUNT-REQUEST-V1\nXTmMRZrEYsqsLzH8\n1767225600001\n019b7cb4-6801-7abc-9def-0123456789ab\nPOST\n/api/mut/v1/account/login\n47DEQpj8HBSa-_TImW-5JCeuQeRkm5NMpJWZG3hSuFU\n",
+        "idempotency_key": null,
+        "method": "POST",
+        "nonce": "019b7cb4-6801-7abc-9def-0123456789ab",
+        "signature_b64url": "CdTUIeQoupJDOp17xUBtnFWOVRydSkn8QLB-t5ZTTrA8u_bZHw7S7ytQbsTlsA3OJkoeWJtnsw8vr1NEPrexAQ",
+        "target": "/api/mut/v1/account/login",
+        "timestamp_unix_ms": 1767225600001
+      },
+      "seed_file": "gigahost-account-seed-v1:BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc\n",
+      "seed_hex": "0707070707070707070707070707070707070707070707070707070707070707"
+    },
+    {
+      "authentication_key_fingerprint_b64url": "UCsWO1PI2FkMKGp7PC4llV0AFDdBHXGHi0ag-mOpXPM",
+      "authentication_key_id": "cJrXoqbsbO-s_n0-",
+      "authentication_material_hex": "4c4b1df465a513c4e354ca95735f66fdfe6172318d0fee099298b109c0e11bb0",
+      "authentication_public_key_b64url": "Qr60sU4kHda6-btHNLYPanCKkoEX95VyBnqTUODfhNg",
+      "billing_key_fingerprint_b64url": "nJBmLfluqv0idaOGQ1n0Ug8PiprZP84G4ZL9cs2MflM",
+      "billing_material_hex": "167072585ca00ded4261ae8b6998d46f51f92fbef2ee7c736afdcb4bbddb713b",
+      "billing_public_key_b64url": "i0ff3zBsU5ZJFTO9jNhZVFmsuRz3cMt5PvzOeMJzKaY",
+      "deposit_memo": "a3YmKb9XBduYDKUF",
+      "name": "random",
+      "recovery_key_fingerprint_b64url": "NVJ-wHhVwrUa7dypVexN_ngGY-Ua6BoklxfPNwSUBK0",
+      "recovery_material_hex": "0f847a63f29745569fe3dbea36e12d092971eab6c3265176a722493bb76605cb",
+      "recovery_private_key_hex": "cc1cb2ca7f8edcd6ac6f9f4bedb05822ac5bd40c41f0643a8010fcc938ccc9ba",
+      "recovery_public_key_b64url": "yIPcqq1hm5UmG25eOgVRH6cRcdgPOnwQ7qU_4jUaViY",
+      "request": {
+        "body": "{\"address\":\"xch1example\"}",
+        "canonical": "GIGAHOST-ACCOUNT-REQUEST-V1\ncJrXoqbsbO-s_n0-\n1767225600002\n019b7cb4-6802-7fff-bfff-ffffffffffff\nPUT\n/api/mut/v1/provider/payout-address\n9Ghzmy4M_4mrhCBjmltuCuTcNuz8ndkAQE_bH0xsJoY\nbrowser-0123456789abcdef",
+        "idempotency_key": "browser-0123456789abcdef",
+        "method": "PUT",
+        "nonce": "019b7cb4-6802-7fff-bfff-ffffffffffff",
+        "signature_b64url": "m0jwg0zXnEifUBv0O6zVCLbAMqJ-C1hS-p1I2m7THo1a_hIX4V44lF4i1nKECWgIGBmkRGl82y19gv6tmUQADw",
+        "target": "/api/mut/v1/provider/payout-address",
+        "timestamp_unix_ms": 1767225600002
+      },
+      "seed_file": "gigahost-account-seed-v1:wpCPlIWd5oB0ErTWPYEwRhpLzyKYq-dqY8BKUErauMo\n",
+      "seed_hex": "c2908f94859de6807412b4d63d8130461a4bcf2298abe76a63c04a504adab8ca"
+    }
+  ]
+}
