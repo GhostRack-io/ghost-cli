@@ -3410,6 +3410,8 @@ pub enum HttpProxyProtocol {
     #[default]
     Http,
     Https,
+    #[serde(rename = "https_terminated")]
+    HttpsTerminated,
     #[serde(other)]
     Unknown,
 }
