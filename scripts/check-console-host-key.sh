@@ -10,9 +10,9 @@ fail() {
 }
 
 [[ -f $file ]] || fail "$file does not exist"
-mapfile -t lines < <(grep -v '^[[:space:]]*\(#\|$\)' -- "$file")
-((${#lines[@]} == 1)) || fail "$file must hold exactly one public key line"
-read -r type blob _ <<<"${lines[0]}"
+line=$(grep -v '^[[:space:]]*\(#\|$\)' -- "$file" || true)
+[[ -n $line && $line != *$'\n'* ]] || fail "$file must hold exactly one public key line"
+read -r type blob _ <<<"$line"
 [[ $type == ssh-ed25519 ]] || fail "$file must hold an ssh-ed25519 key, not ${type:-nothing}"
 [[ $blob != PLACEHOLDER ]] \
     || fail "$file holds the placeholder: put the console's host key there (ssh-keygen -y -f console-ssh-host.key) before a release"

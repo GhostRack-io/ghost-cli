@@ -67,6 +67,7 @@ impl ApiClient {
     /// A client whose signed requests use the identity `load_identity`
     /// returns, loaded when the first of them is sent. It returns `None`
     /// when there is no account, which such a request then fails for.
+    #[cfg(any(unix, test))]
     pub(crate) fn with_identity_loader(
         base_url: &str,
         load_identity: IdentityLoader,
