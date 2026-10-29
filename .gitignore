@@ -8,9 +8,11 @@ credentials*
 *.p12
 *.pfx
 !config/console-host-key.pub
+!config/release-public.pem
 .credentials*
 .cargo/credentials*
 .netrc
 .npmrc
 .ssh/
 .aws/
+__pycache__/
