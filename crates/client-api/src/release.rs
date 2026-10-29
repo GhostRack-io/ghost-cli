@@ -523,7 +523,10 @@ mod release_tests {
             r#"{{"signature":"c2ln","release":{}}}"#,
             serde_json::to_string(&manifest.release).unwrap()
         );
-        let child = std::process::Command::new("jq")
+        let mut jq = std::process::Command::new("jq");
+        #[cfg(windows)]
+        jq.arg("--binary");
+        let child = jq
             .args(["-cS", ".release"])
             .stdin(std::process::Stdio::piped())
             .stdout(std::process::Stdio::piped())
