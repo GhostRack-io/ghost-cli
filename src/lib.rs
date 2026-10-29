@@ -11990,11 +11990,13 @@ mod tests {
         );
         assert_eq!(load_optional_text(None, None, flag).unwrap(), None);
         let missing = directory.path().join("missing");
+        let os_error = fs::read_to_string(&missing).unwrap_err();
+        assert_eq!(os_error.kind(), std::io::ErrorKind::NotFound);
         let error = load_optional_text(None, Some(&missing), flag).unwrap_err();
         assert_eq!(
             error.to_string(),
             format!(
-                "cannot read --startup-command-file {}: No such file or directory (os error 2)",
+                "cannot read --startup-command-file {}: {os_error}",
                 missing.display()
             )
         );
@@ -14052,10 +14054,12 @@ mod tests {
         }
         let directory = tempfile::tempdir().unwrap();
         let missing = directory.path().join("missing.yaml");
+        let os_error = fs::read_to_string(&missing).unwrap_err();
+        assert_eq!(os_error.kind(), std::io::ErrorKind::NotFound);
         assert_eq!(
             load_user_data(&missing).unwrap_err().to_string(),
             format!(
-                "cannot read --cloud-init-file {}: No such file or directory (os error 2)",
+                "cannot read --cloud-init-file {}: {os_error}",
                 missing.display()
             )
         );
