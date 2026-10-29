@@ -265,7 +265,7 @@ fn streams_environment_and_exit_status_are_inherited() {
             .env("TEST_HELPER_EXIT", "305419896")
             .output()
             .unwrap();
-        assert_eq!(output.status.code(), Some(305419896));
+        assert_eq!(output.status.code(), Some(305_419_896));
     }
 }
 #[test]
