@@ -3098,6 +3098,8 @@ fn rescue_notes(instance: &InstanceView) -> Vec<String> {
     let Some(rescue) = &instance.rescue else {
         return Vec::new();
     };
+    #[cfg(not(unix))]
+    let _ = rescue;
     #[cfg(unix)]
     let login = ghostd::remember_rescue_host_key(instance.instance_id, &rescue.host_key_public)
         .and_then(|known_hosts| ghostd::rescue_ssh_command(instance, &known_hosts));
@@ -7255,9 +7257,12 @@ async fn execute_instance(
             );
             // A cached name that stood for another instance now is this
             // one's too.
-            ghostd::forget_instance(accepted.resource_id);
-            for name in [&args.name, &args.hostname].into_iter().flatten() {
-                ghostd::forget_name(name);
+            #[cfg(unix)]
+            {
+                ghostd::forget_instance(accepted.resource_id);
+                for name in [&args.name, &args.hostname].into_iter().flatten() {
+                    ghostd::forget_name(name);
+                }
             }
             if let (Some(backup), Some(recovery)) =
                 (selected_backup.as_ref(), hosted_recovery.as_ref())
@@ -7356,6 +7361,7 @@ async fn execute_instance(
                     &retried_by_id(args.mutation.key(), &args.instance_id, instance_id),
                 )
                 .await?;
+            #[cfg(unix)]
             ghostd::forget_instance(instance_id);
             mutation_result(api, accepted, &args.mutation, show_progress).await
         }
@@ -7429,6 +7435,7 @@ async fn execute_instance(
                     &retried_by_id(args.mutation.key(), &args.instance_id, instance_id),
                 )
                 .await?;
+            #[cfg(unix)]
             ghostd::forget_instance(instance_id);
             let result = mutation_result(api, accepted, &args.mutation, show_progress).await?;
             if args.mutation.wait
@@ -7463,6 +7470,7 @@ async fn execute_instance(
                     &retried_by_id(args.mutation.key(), &args.instance_id, instance_id),
                 )
                 .await?;
+            #[cfg(unix)]
             ghostd::forget_instance(instance_id);
             let result = mutation_result(api, accepted, &args.mutation, show_progress).await?;
             if args.mutation.wait
@@ -7562,8 +7570,11 @@ async fn execute_instance(
                     &retried_by_id(args.idempotency.key(), &args.instance_id, instance_id),
                 )
                 .await?;
-            ghostd::forget_instance(instance_id);
-            ghostd::forget_name(&args.name);
+            #[cfg(unix)]
+            {
+                ghostd::forget_instance(instance_id);
+                ghostd::forget_name(&args.name);
+            }
             to_value(instance)
         }
         InstanceCommand::Ports(args) => {
@@ -7709,6 +7720,7 @@ async fn execute_instance(
                     &retried_by_id(args.mutation.key(), &args.instance_id, instance_id),
                 )
                 .await?;
+            #[cfg(unix)]
             ghostd::forget_instance(instance_id);
             if let Some(note) = backups.as_deref().and_then(kept_backups_note) {
                 notice(&note);
@@ -8074,6 +8086,7 @@ async fn restore_backup(cli: &Cli, api: &ApiClient, args: &RestoreBackupArgs) ->
         .await?,
         !cli.globals.compact,
     );
+    #[cfg(unix)]
     ghostd::forget_instance(instance_id);
 
     if let Some(recovery) = hosted_recovery.as_ref() {
