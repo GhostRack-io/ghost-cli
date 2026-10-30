@@ -92,7 +92,7 @@ use gigahost_client_api::{
         ProviderHostView, ProviderIncidentSeverity, ProviderIncidentState, ProviderIncidentView,
         ProviderOutageDetailView, ProviderOutagePage, ProviderPayoutAddressView,
         ProviderPayoutView, ProviderReliabilityView, ProviderUptimeView, RedeployInstanceRequest,
-        ReinstallInstanceRequest, RenameInstanceRequest, RescueInstanceRequest,
+        RedeploySetting, ReinstallInstanceRequest, RenameInstanceRequest, RescueInstanceRequest,
         ResetInstanceAccessRequest, RestoreBackupRequest, RotateGatewayKeysRequest,
         SSH_PUBLIC_KEY_TYPES, ScheduleHostRetirementRequest, ScheduleInstanceRetirementRequest,
         SessionRevocationView, SetBackupScheduleRequest, SetHostPrivateRequest,
@@ -1754,6 +1754,10 @@ struct RedeployArgs {
     /// command, no paths of its own.
     #[arg(long)]
     reset: bool,
+    /// Drop this setting for the new image's own: entrypoint, command, user
+    /// or workdir; repeat for several.
+    #[arg(long, value_enum, value_name = "SETTING")]
+    clear: Vec<RedeploySetting>,
     /// For --stock-image, an OpenSSH public key line for root; repeat for
     /// multiple keys. Without one, the keys saved in the account.
     #[arg(
@@ -3584,6 +3588,9 @@ impl Summary {
                         "location": instance.location,
                         "image": match (instance.image, instance.container) {
                             (Some(image), _) => Some(image.slug),
+                            (None, Some(container)) if container.image_unknown => {
+                                Some("unknown".to_owned())
+                            }
                             (None, Some(container)) => {
                                 Some(container.stock_image.unwrap_or(container.image))
                             }
@@ -10524,7 +10531,7 @@ fn redeploy_request(args: &RedeployArgs) -> Result<RedeployInstanceRequest> {
         }
         .into());
     }
-    Ok(RedeployInstanceRequest {
+    let request = RedeployInstanceRequest {
         image: spec.container.clone(),
         stock_image: spec.stock_image.clone(),
         env,
@@ -10538,7 +10545,16 @@ fn redeploy_request(args: &RedeployArgs) -> Result<RedeployInstanceRequest> {
         ssh_key_ids: named_keys_only(&ssh_public_keys),
         ssh_public_keys,
         reset: args.reset,
-    })
+        clear: args.clear.clone(),
+    };
+    if let Err(message) = request.validate() {
+        return Err(Refusal {
+            code: "invalid_request",
+            message,
+        }
+        .into());
+    }
+    Ok(request)
 }
 
 /// Root replacement requires explicit confirmation, without reading secrets.
@@ -10588,6 +10604,12 @@ fn redeploy_confirmation(
 /// host pinned. None for an instance that is not a container's.
 fn redeployed_note(instance: &InstanceView) -> Option<String> {
     let container = instance.container.as_ref()?;
+    if container.image_unknown {
+        return Some(format!(
+            "Instance {} runs an unknown image: its host has not said which it kept.",
+            instance.instance_id
+        ));
+    }
     let image = container.stock_image.as_deref().unwrap_or(&container.image);
     Some(match &container.image_digest {
         Some(digest) => format!(
@@ -20740,6 +20762,15 @@ mod tests {
             .unwrap();
         // Refused before anything is sent.
         for refused in [
+            &[
+                "--container",
+                "nginx:1.28",
+                "--user",
+                "101",
+                "--clear",
+                "user",
+                "--yes",
+            ][..],
             &["--stock-image", "debian-13", "--command", "[]", "--yes"][..],
             &[
                 "--container",
@@ -20770,6 +20801,47 @@ mod tests {
         assert!(
             Cli::try_parse_from(["ghost", "instance", "redeploy", &id, "--env", "A=b"]).is_err(),
             "an image is required"
+        );
+        let Cli {
+            command:
+                Command::Instance {
+                    command: InstanceCommand::Redeploy(args),
+                },
+            ..
+        } = Cli::try_parse_from([
+            "ghost",
+            "instance",
+            "redeploy",
+            &id,
+            "--container",
+            "nginx:1.28",
+            "--clear",
+            "entrypoint",
+            "--clear",
+            "workdir",
+        ])
+        .unwrap()
+        else {
+            panic!("a redeploy");
+        };
+        let cleared = redeploy_request(&args).unwrap();
+        assert_eq!(
+            serde_json::to_value(&cleared).unwrap(),
+            json!({"image": "nginx:1.28", "clear": ["entrypoint", "workdir"]})
+        );
+        assert!(
+            Cli::try_parse_from([
+                "ghost",
+                "instance",
+                "redeploy",
+                &id,
+                "--container",
+                "nginx:1.28",
+                "--clear",
+                "stop_timeout"
+            ])
+            .is_err(),
+            "only the four settings clear"
         );
         let path = format!("/api/mut/v1/instances/{instance_id}/redeploy");
         assert_eq!(

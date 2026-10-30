@@ -2916,7 +2916,8 @@ impl UpdateInstanceRequest {
 /// The host snapshots the root first and rolls back to it if the redeploy fails. Exactly one of
 /// `image` and `stock_image`.  Each of the image's settings (`env` to `volumes`) keeps the
 /// instance's current value when absent and replaces it when given (an empty list clears a list);
-/// with `reset` an absent one takes a creation's default instead. A stock image takes no
+/// with `reset` an absent one takes a creation's default instead, and `clear` drops one of the
+/// entrypoint, command, user and workdir alone for the new image's own. A stock image takes no
 /// entrypoint, command, user or workdir: those of the current image are dropped when it moves to
 /// one.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
@@ -2962,39 +2963,108 @@ pub struct RedeployInstanceRequest {
     /// instance's current values.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub reset: bool,
+    /// The settings that take the new image's own instead of the current
+    /// value; absent from older clients, which keep them. A setting named
+    /// here and given is refused ([`Self::validate`]).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub clear: Vec<RedeploySetting>,
+}
+
+/// A container setting a redeploy can drop for the new image's own
+/// ([`RedeployInstanceRequest::clear`]). The backend receives it and no
+/// client decodes it, so it has no `Unknown`: a name it does not know is
+/// refused.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "clap", derive(clap::ValueEnum))]
+#[cfg_attr(feature = "clap", value(rename_all = "snake_case"))]
+pub enum RedeploySetting {
+    Entrypoint,
+    Command,
+    User,
+    Workdir,
+}
+
+impl RedeploySetting {
+    /// The setting's name in a request.
+    #[must_use]
+    pub const fn name(self) -> &'static str {
+        match self {
+            Self::Entrypoint => "entrypoint",
+            Self::Command => "command",
+            Self::User => "user",
+            Self::Workdir => "workdir",
+        }
+    }
 }
 
 impl RedeployInstanceRequest {
+    /// Refuse a setting both given and cleared.
+    ///
+    /// # Errors
+    ///
+    /// The refusal's words, which name the setting.
+    pub fn validate(&self) -> Result<(), String> {
+        for setting in &self.clear {
+            let given = match setting {
+                RedeploySetting::Entrypoint => self.entrypoint.is_some(),
+                RedeploySetting::Command => self.command.is_some(),
+                RedeploySetting::User => self.user.is_some(),
+                RedeploySetting::Workdir => self.workdir.is_some(),
+            };
+            if given {
+                return Err(format!(
+                    "{} is both given and cleared; a redeploy takes one or the other",
+                    setting.name()
+                ));
+            }
+        }
+        Ok(())
+    }
+
+    /// Whether the instance's `setting` goes on to the new image: not when
+    /// it is cleared, the settings are reset or a stock image has none.
+    fn keeps(&self, setting: RedeploySetting) -> bool {
+        !self.reset && self.stock_image.is_none() && !self.clear.contains(&setting)
+    }
+
     /// The container the instance runs after the redeploy, from what it
     /// runs now (`current`, its environment left out): the request's image
-    /// and the settings it gives, the others `current`'s unless `reset`.
-    /// A stock image keeps none of `current`'s entrypoint, command, user
-    /// and workdir. Its environment is the request's, empty when it gives
+    /// and the settings it gives, the others `current`'s unless `reset`
+    /// or, for the entrypoint, command, user and workdir, `clear`. A stock
+    /// image keeps none of those. Its environment is the request's, empty when it gives
     /// none: the caller keeps the current one then.
     #[must_use]
     pub fn merged(&self, current: &CreateContainerRequest) -> CreateContainerRequest {
         let keep = !self.reset;
-        let process = keep && self.stock_image.is_none();
         CreateContainerRequest {
             image: self.image.clone(),
             stock_image: self.stock_image.clone(),
-            entrypoint: self
-                .entrypoint
-                .clone()
-                .or_else(|| current.entrypoint.clone().filter(|_| process)),
-            command: self
-                .command
-                .clone()
-                .or_else(|| current.command.clone().filter(|_| process)),
+            entrypoint: self.entrypoint.clone().or_else(|| {
+                current
+                    .entrypoint
+                    .clone()
+                    .filter(|_| self.keeps(RedeploySetting::Entrypoint))
+            }),
+            command: self.command.clone().or_else(|| {
+                current
+                    .command
+                    .clone()
+                    .filter(|_| self.keeps(RedeploySetting::Command))
+            }),
             env: self.env.clone().unwrap_or_default(),
-            user: self
-                .user
-                .clone()
-                .or_else(|| current.user.clone().filter(|_| process)),
-            workdir: self
-                .workdir
-                .clone()
-                .or_else(|| current.workdir.clone().filter(|_| process)),
+            user: self.user.clone().or_else(|| {
+                current
+                    .user
+                    .clone()
+                    .filter(|_| self.keeps(RedeploySetting::User))
+            }),
+            workdir: self.workdir.clone().or_else(|| {
+                current
+                    .workdir
+                    .clone()
+                    .filter(|_| self.keeps(RedeploySetting::Workdir))
+            }),
             stop_timeout_seconds: self
                 .stop_timeout_seconds
                 .or(current.stop_timeout_seconds.filter(|_| keep)),
@@ -3698,6 +3768,11 @@ pub struct ContainerInstanceView {
     /// resolved and pinned; absent until the creation's pull.
     #[serde(default)]
     pub image_digest: Option<String>,
+    /// Whether the image and the settings here may not be what the host
+    /// runs: a redeploy's last attempt was never reported, and its host has
+    /// not said yet which container it kept. False from older backends.
+    #[serde(default)]
+    pub image_unknown: bool,
     /// The slug of the platform's stock image the instance runs
     /// ([`CreateContainerRequest::stock_image`]), whose `image` is then
     /// that image pinned by its digest; absent for an image of the

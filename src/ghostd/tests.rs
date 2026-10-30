@@ -410,6 +410,7 @@ fn a_container_of_the_renters_image_has_no_ssh() {
     let container = |image: &str, stock_image: Option<&str>| ContainerInstanceView {
         image: image.to_owned(),
         image_digest: None,
+        image_unknown: false,
         stock_image: stock_image.map(str::to_owned),
         restart_policy: gigahost_client_api::hypervisor::RestartPolicy::Always,
         volumes: Vec::new(),
