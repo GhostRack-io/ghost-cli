@@ -11,7 +11,7 @@
 use std::{ffi::OsString, fs, io::Write as _, os::unix::fs::OpenOptionsExt as _, path::Path};
 
 use anyhow::{Context as _, Result, bail};
-use gigahost_client_api::{
+use ghostrack_client_api::{
     api::GetInstance,
     website::{InstanceKind, InstanceView},
 };
@@ -26,7 +26,7 @@ pub(crate) const BUILT_IN_HOST_KEY: &str = include_str!("../config/console-host-
 pub(crate) const PLACEHOLDER: &str = "PLACEHOLDER";
 
 /// The name the console's host key is filed under in ghost's known hosts.
-pub(crate) const HOST_KEY_ALIAS: &str = "gigahost-console";
+pub(crate) const HOST_KEY_ALIAS: &str = "ghostrack-console";
 
 /// The console server's port.
 pub(crate) const CONSOLE_PORT: u16 = 2222;
@@ -48,7 +48,7 @@ pub(crate) fn host_key(line: &str) -> Result<(String, String)> {
             "this ghost was built without the console's host key: give it with --console-host-key or GHOST_CONSOLE_HOST_KEY (the public docs list its fingerprint)"
         );
     }
-    if !gigahost_client_api::website::valid_ssh_public_key(&format!("{kind} {blob}")) {
+    if !ghostrack_client_api::website::valid_ssh_public_key(&format!("{kind} {blob}")) {
         bail!("the console's host key is not an OpenSSH public key line");
     }
     Ok((kind.to_owned(), blob.to_owned()))
@@ -205,7 +205,7 @@ async fn console(
 mod tests {
     use super::*;
 
-    const KEY: &str = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHeHGO1Mp+d9SZrDhuNTitg9vmYCj0pZiw+EuZbKDbM0 gigahost-console";
+    const KEY: &str = "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHeHGO1Mp+d9SZrDhuNTitg9vmYCj0pZiw+EuZbKDbM0 ghostrack-console";
 
     #[test]
     fn the_placeholder_and_a_bad_line_are_no_host_key() {
@@ -233,23 +233,23 @@ mod tests {
     #[test]
     fn the_console_server_is_the_apis_domain_on_2222() {
         assert_eq!(
-            console_server("https://api.gigahost.cloud", None).unwrap(),
-            ("console.gigahost.cloud".to_owned(), 2222)
+            console_server("https://api.ghostrack.io", None).unwrap(),
+            ("console.ghostrack.io".to_owned(), 2222)
         );
         assert_eq!(
             console_server("http://127.0.0.1:8080", None).unwrap(),
             ("console.127.0.0.1".to_owned(), 2222)
         );
         assert_eq!(
-            console_server("https://api.gigahost.cloud", Some("localhost:2200")).unwrap(),
+            console_server("https://api.ghostrack.io", Some("localhost:2200")).unwrap(),
             ("localhost".to_owned(), 2200)
         );
         assert_eq!(
-            console_server("https://api.gigahost.cloud", Some("[::1]:2201")).unwrap(),
+            console_server("https://api.ghostrack.io", Some("[::1]:2201")).unwrap(),
             ("::1".to_owned(), 2201)
         );
         assert_eq!(
-            console_server("https://api.gigahost.cloud", Some("console.example")).unwrap(),
+            console_server("https://api.ghostrack.io", Some("console.example")).unwrap(),
             ("console.example".to_owned(), 2222)
         );
     }
@@ -258,15 +258,15 @@ mod tests {
     fn ssh_checks_the_built_in_key_strictly() {
         let directory = tempfile::tempdir().unwrap();
         let known_hosts = directory.path().join("console_known_hosts");
-        fs::write(&known_hosts, "gigahost-console ssh-ed25519 OLDKEY\n").unwrap();
+        fs::write(&known_hosts, "ghostrack-console ssh-ed25519 OLDKEY\n").unwrap();
         write_known_host(&known_hosts, &host_key(KEY).unwrap()).unwrap();
         let written = fs::read_to_string(&known_hosts).unwrap();
         assert_eq!(
             written,
-            "gigahost-console ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHeHGO1Mp+d9SZrDhuNTitg9vmYCj0pZiw+EuZbKDbM0\n"
+            "ghostrack-console ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHeHGO1Mp+d9SZrDhuNTitg9vmYCj0pZiw+EuZbKDbM0\n"
         );
         let instance = uuid::Uuid::from_u128(7);
-        let argv = ssh_argv("console.gigahost.cloud", 2222, instance, &known_hosts);
+        let argv = ssh_argv("console.ghostrack.io", 2222, instance, &known_hosts);
         let argv: Vec<String> = argv
             .iter()
             .map(|argument| argument.to_string_lossy().into_owned())
@@ -278,7 +278,7 @@ mod tests {
             "-p",
             "2222",
             "-o",
-            "HostKeyAlias=gigahost-console",
+            "HostKeyAlias=ghostrack-console",
             "-o",
             "StrictHostKeyChecking=yes",
             "-o",
@@ -298,7 +298,7 @@ mod tests {
             "-l",
             "00000000-0000-0000-0000-000000000007",
             "--",
-            "console.gigahost.cloud",
+            "console.ghostrack.io",
         ];
         assert_eq!(argv, expected);
     }
@@ -321,7 +321,7 @@ mod tests {
                 .status
                 .success()
         };
-        assert!(!check("ssh-ed25519 PLACEHOLDER gigahost-console\n"));
+        assert!(!check("ssh-ed25519 PLACEHOLDER ghostrack-console\n"));
         assert!(!check(
             "ecdsa-sha2-nistp256 AAAAE2VjZHNhLXNoYTItbmlzdHAyNTYAAAAIbmlzdHAyNTYAAABBBA== x\n"
         ));

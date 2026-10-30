@@ -72,13 +72,13 @@ def prepare(packages, directory, version, revision, prefix, public_base, private
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--packages', required=True, type=Path)
-    parser.add_argument('--repository', default=os.environ.get('GITHUB_REPOSITORY', 'GhostRack-io/ghost-cli'))
+    parser.add_argument('--repository', default=os.environ.get('GITHUB_REPOSITORY', 'ghostrack-io/ghost-cli'))
     parser.add_argument('--dry-run', action='store_true')
     args = parser.parse_args()
     version, revision = package.source()
     prefix = PREFIX
     bucket = os.environ.get('CDN_STORAGE_ZONE') or 'gigahost-apps'
-    public_base = os.environ.get('CDN_PUBLIC_BASE') or 'https://apps.gigahost.cloud'
+    public_base = os.environ.get('CDN_PUBLIC_BASE') or 'https://apps.ghostrack.io'
     endpoint = os.environ.get('CDN_STORAGE_ENDPOINT') or 'https://sg.storage.bunnycdn.com'
     client = cdn.BunnyHTTPStorage(endpoint, 'dry-run' if args.dry_run else os.environ.get('CDN_STORAGE_PASSWORD'))
     client.object_url(bucket, prefix + '/latest.json')

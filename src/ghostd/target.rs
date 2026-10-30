@@ -18,7 +18,7 @@ use std::{
 };
 
 use anyhow::{Context as _, Result, bail};
-use gigahost_client_api::{
+use ghostrack_client_api::{
     api::GetInstance,
     website::{GatewayTier, InstanceKind, InstanceState, InstanceView},
 };
@@ -626,7 +626,7 @@ pub(crate) struct InstanceAddress {
 }
 
 /// The repository prefix of the platform's stock images
-/// (gigahost-apps/container-images): an older backend's view of a
+/// (ghostrack-io/container-images): an older backend's view of a
 /// container instance does not name its stock image, and one of an image
 /// from there may be one. This is a best guess, and it also applies to a
 /// newer backend's view, where a missing `stock_image` reads as null: a

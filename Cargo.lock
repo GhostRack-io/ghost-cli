@@ -817,7 +817,7 @@ dependencies = [
  "flate2",
  "ghostd-client",
  "ghostd-protocol",
- "gigahost-client-api",
+ "ghostrack-client-api",
  "hkdf 0.12.4",
  "hpke",
  "postcard",
@@ -859,7 +859,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "gigahost-client-api"
+name = "ghostrack-client-api"
 version = "0.1.0"
 dependencies = [
  "base64",

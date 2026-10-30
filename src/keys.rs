@@ -553,8 +553,8 @@ pub fn authentication_identity(seed: &[u8; 32]) -> Result<AuthenticationIdentity
     Ok(AuthenticationIdentity {
         signing_key,
         public_key,
-        key_id: gigahost_client_api::account_auth::auth_key_id(&public_key),
-        deposit_memo: gigahost_client_api::account_auth::deposit_memo(&public_key),
+        key_id: ghostrack_client_api::account_auth::auth_key_id(&public_key),
+        deposit_memo: ghostrack_client_api::account_auth::deposit_memo(&public_key),
     })
 }
 
@@ -1311,7 +1311,7 @@ mod tests {
     /// keys, their fingerprints, the key ID and deposit memo, and one
     /// request signed with the authentication key, all computed here.
     fn vector(name: &str, seed: [u8; 32], request: &VectorRequest) -> serde_json::Value {
-        use gigahost_client_api::account_auth::{RequestSignatureInput, canonical_request};
+        use ghostrack_client_api::account_auth::{RequestSignatureInput, canonical_request};
 
         let authentication_material = derive_material(&seed, AUTHENTICATION_KEY_LABEL).unwrap();
         let billing_material = derive_material(&seed, BILLING_KEY_LABEL).unwrap();
@@ -1547,7 +1547,7 @@ mod tests {
     /// account vector, its message and signature, the approval request bodies,
     /// and a key rewrap with fixed IDs and fixed randomness.
     fn backup_key_vectors() -> serde_json::Value {
-        use gigahost_client_api::{
+        use ghostrack_client_api::{
             account_auth::{
                 BackupBillingAuthorizationInput, canonical_backup_billing_authorization,
             },

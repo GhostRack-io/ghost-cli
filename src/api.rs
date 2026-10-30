@@ -3,7 +3,7 @@ use std::{sync::OnceLock, time::Duration};
 use anyhow::{Context as _, Result, bail};
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use chrono::{DateTime, Utc};
-use gigahost_client_api::{
+use ghostrack_client_api::{
     account_auth::{
         AUTH_KEY_ID_HEADER, REQUEST_NONCE_HEADER, REQUEST_SIGNATURE_HEADER,
         REQUEST_TIMESTAMP_HEADER, RequestSignatureInput, canonical_request,

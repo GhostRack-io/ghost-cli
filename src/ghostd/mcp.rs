@@ -2567,7 +2567,7 @@ impl ServerHandler for GhostServer {
             .with_instructions(
                 "Work on machines through ghostd: run programs (ghostd_exec, argv arrays, \
 no quoting), start long-running work as jobs (ghostd_job_start), and read, write, edit, \
-search and sync files. A target is an instance ID or name of the Gigahost account, \
+search and sync files. A target is an instance ID or name of the GhostRack account, \
 ssh://[user@]host[:port], or local. Interactive programs (a REPL, an installer that asks \
 questions) run in sessions (ghostd_session_start, _send, _read); ghostd_wait waits for a \
 port, a URL, a file or a job instead of polling; ghostd_machine_state says what is going \

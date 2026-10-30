@@ -13,7 +13,7 @@ use std::{
 };
 
 use ghostd_protocol::v1::{ExecSpec, FileKind, Outcome, Program, Request, Stat};
-use gigahost_client_api::website::{InstanceView, PortForwardView};
+use ghostrack_client_api::website::{InstanceView, PortForwardView};
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt as _, AsyncWriteExt as _, BufReader};
 use uuid::Uuid;
@@ -303,7 +303,7 @@ fn exit_codes_map_as_a_shell_does() {
 
 fn instance_fixture() -> InstanceView {
     InstanceView {
-        kind: gigahost_client_api::website::InstanceKind::Vm,
+        kind: ghostrack_client_api::website::InstanceKind::Vm,
         container: None,
         instance_id: Uuid::now_v7(),
         offering_id: "offering".to_owned(),
@@ -313,8 +313,8 @@ fn instance_fixture() -> InstanceView {
         redundant_tags: Vec::new(),
         name: "vm".to_owned(),
         root_disk_bytes: 10 << 30,
-        state: gigahost_client_api::website::InstanceState::Running,
-        desired_power_state: gigahost_client_api::hypervisor::PowerState::Running,
+        state: ghostrack_client_api::website::InstanceState::Running,
+        desired_power_state: ghostrack_client_api::hypervisor::PowerState::Running,
         holds_capacity: true,
         public_ipv4: None,
         gateway_tier: None,
@@ -387,7 +387,7 @@ fn instance_addresses_are_validated() {
         .retain(|forward| forward.guest_port != 22);
     assert!(instance_address(&instance).is_err());
     instance.port_forwards.clear();
-    instance.gateway_tier = Some(gigahost_client_api::website::GatewayTier::SharedIp);
+    instance.gateway_tier = Some(ghostrack_client_api::website::GatewayTier::SharedIp);
     assert!(instance_address(&instance).is_err());
     // An address of its own: SSH on port 22.
     instance.gateway_tier = None;
@@ -403,7 +403,7 @@ fn instance_addresses_are_validated() {
 /// is the platform's.
 #[test]
 fn a_container_of_the_renters_image_has_no_ssh() {
-    use gigahost_client_api::website::{ContainerInstanceView, InstanceKind};
+    use ghostrack_client_api::website::{ContainerInstanceView, InstanceKind};
     let mut instance = instance_fixture();
     instance.public_ipv4 = Some("203.0.113.7".to_owned());
     instance.kind = InstanceKind::Container;
@@ -411,7 +411,7 @@ fn a_container_of_the_renters_image_has_no_ssh() {
         image: image.to_owned(),
         image_digest: None,
         stock_image: stock_image.map(str::to_owned),
-        restart_policy: gigahost_client_api::hypervisor::RestartPolicy::Always,
+        restart_policy: ghostrack_client_api::hypervisor::RestartPolicy::Always,
         volumes: Vec::new(),
         entrypoint: None,
         command: None,
@@ -2318,7 +2318,7 @@ fn release_key(seed: u8) -> (ed25519_dalek::SigningKey, String) {
 fn signed_manifest(key: &ed25519_dalek::SigningKey, release: &Value) -> Vec<u8> {
     use base64::{Engine as _, engine::general_purpose::STANDARD};
     use ed25519_dalek::Signer as _;
-    let mut manifest: gigahost_client_api::release::SignedReleaseManifest =
+    let mut manifest: ghostrack_client_api::release::SignedReleaseManifest =
         serde_json::from_value(json!({"release": release, "signature": ""})).unwrap();
     manifest.signature = STANDARD.encode(key.sign(&manifest.signed_bytes()).to_bytes());
     serde_json::to_vec(&manifest).unwrap()
@@ -2577,7 +2577,7 @@ async fn ghost_checks_a_channel_release_before_it_reaches_a_target() {
     .unwrap_or_default();
     assert!(error.contains("signature is invalid"), "{error}");
     // A backend without the channel names the source install.
-    let none: gigahost_client_api::website::ReleaseChannelsView = serde_json::from_value(json!({
+    let none: ghostrack_client_api::website::ReleaseChannelsView = serde_json::from_value(json!({
         "release_public_key_pem": pem,
         "hypervisor": null,
         "cli": null,
@@ -3776,7 +3776,7 @@ fn a_rescues_host_key_is_filed_in_advance_and_checked() {
             path.display()
         )
     );
-    instance.port_forwards = vec![gigahost_client_api::website::PortForwardView {
+    instance.port_forwards = vec![ghostrack_client_api::website::PortForwardView {
         public_port: 20022,
         guest_port: 22,
     }];
@@ -3794,7 +3794,7 @@ fn a_rescues_host_key_is_filed_in_advance_and_checked() {
         format!("{own} ssh-ed25519 AAAAown\n")
     );
     // ghost's connections wait for the rescue's end.
-    instance.rescue = Some(gigahost_client_api::website::RescueView {
+    instance.rescue = Some(ghostrack_client_api::website::RescueView {
         started_at: chrono::Utc::now(),
         host_key_public: "ssh-ed25519 AAAAsecond".to_owned(),
         host_key_fingerprint: "SHA256:abc".to_owned(),

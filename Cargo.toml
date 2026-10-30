@@ -15,7 +15,7 @@ base64.workspace = true
 chrono.workspace = true
 clap.workspace = true
 ed25519-dalek.workspace = true
-gigahost-client-api = { path = "crates/client-api", default-features = false, features = ["clap"] }
+ghostrack-client-api = { path = "crates/client-api", default-features = false, features = ["clap"] }
 hkdf.workspace = true
 hpke.workspace = true
 rand_core.workspace = true
