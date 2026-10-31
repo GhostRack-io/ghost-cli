@@ -5210,6 +5210,11 @@ pub struct ProviderHostView {
     /// new instances on it, and no public read shows it. False from a backend of before.
     #[serde(default)]
     pub private: bool,
+    /// Whether an agent release waits for the provider's approval
+    /// ([`HostAgentUpdateView::pending_approval`]). False from a backend of
+    /// before.
+    #[serde(default)]
+    pub agent_update_pending: bool,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]

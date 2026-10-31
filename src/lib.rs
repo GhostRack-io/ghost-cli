@@ -44,49 +44,52 @@ use gigahost_client_api::{
     },
     api::{
         AccountDeposits, AccountHistory, AccountSlaCredits, ActivateAccount, AddIpAddresses,
-        AddPrivateRenter, AddTicketMessage, AuthorizeBackupRestore, CancelBackup, ChangeGateway,
-        CheckHostPublicPath, CheckIpAddress, CompleteOperationIntent, CreateBackup,
-        CreateGithubLink, CreateGithubSignup, CreateHostEnrollmentToken, CreateInstance,
-        CreateIpPool, CreateLoginGrant, CreatePayout, CreateTicket, DeclareHostEmergency,
-        DeleteBackup, DeleteInstance, DeleteIpPool, EndInstanceRescue, GetAccount,
-        GetAccountBalance, GetActivationTerms, GetBackup, GetBackupPricing, GetBackupSchedule,
-        GetGithubClaim, GetHostNetworkTests, GetHostPricing, GetHostPrivacy, GetIncident,
-        GetInstance, GetInstanceConsoleLog, GetInstanceGatewayTraffic, GetInstanceLogs,
-        GetInstanceMesh, GetInstanceMeshUsage, GetInstanceUsage, GetJob, GetOffering,
-        GetOperationIntent, GetProviderBalance, GetProviderHost, GetProviderHostInstanceUsage,
-        GetProviderHostMetrics, GetProviderOutage, GetProviderReliability, GetProviderUptime,
-        GetTicket, HandOverIpPool, ListAuthKeys, ListBackups, ListContainerImages, ListImages,
-        ListIncidents, ListInstanceBackups, ListInstanceTags, ListInstanceUpgrades, ListInstances,
-        ListIpPools, ListJobs, ListLocations, ListNotifications, ListOfferings, ListPayouts,
-        ListPrivateRenters, ListProviderHosts, ListProviderOutages, ListProviderReviews,
-        ListSessions, ListTickets, MigrateAccountSeed, MoveGatewayLocation, RedeployInstance,
-        ReinstallInstance, RemoveIpAddress, RemovePrivateRenter, RemoveWebsitePassword,
-        RenameInstance, RescueInstance, ResetInstanceAccess, RestoreBackup, RetireHost,
+        AddPrivateRenter, AddTicketMessage, ApproveHostAgentUpdate, AuthorizeBackupRestore,
+        CancelBackup, CancelHostAgentUpdate, ChangeGateway, CheckHostPublicPath, CheckIpAddress,
+        CompleteOperationIntent, CreateBackup, CreateGithubLink, CreateGithubSignup,
+        CreateHostEnrollmentToken, CreateInstance, CreateIpPool, CreateLoginGrant, CreatePayout,
+        CreateTicket, DeclareHostEmergency, DeleteBackup, DeleteInstance, DeleteIpPool,
+        EndInstanceRescue, GetAccount, GetAccountBalance, GetActivationTerms, GetBackup,
+        GetBackupPricing, GetBackupSchedule, GetGithubClaim, GetHostAgentUpdate,
+        GetHostNetworkTests, GetHostPricing, GetHostPrivacy, GetIncident, GetInstance,
+        GetInstanceConsoleLog, GetInstanceGatewayTraffic, GetInstanceLogs, GetInstanceMesh,
+        GetInstanceMeshUsage, GetInstanceUsage, GetJob, GetOffering, GetOperationIntent,
+        GetProviderBalance, GetProviderHost, GetProviderHostInstanceUsage, GetProviderHostMetrics,
+        GetProviderOutage, GetProviderReliability, GetProviderUptime, GetTicket, HandOverIpPool,
+        ListAuthKeys, ListBackups, ListContainerImages, ListImages, ListIncidents,
+        ListInstanceBackups, ListInstanceTags, ListInstanceUpgrades, ListInstances, ListIpPools,
+        ListJobs, ListLocations, ListNotifications, ListOfferings, ListPayouts, ListPrivateRenters,
+        ListProviderHosts, ListProviderOutages, ListProviderReviews, ListSessions, ListTickets,
+        MigrateAccountSeed, MoveGatewayLocation, RedeployInstance, ReinstallInstance,
+        RemoveIpAddress, RemovePrivateRenter, RemoveWebsitePassword, RenameInstance,
+        RescueInstance, ResetInstanceAccess, RestoreBackup, RetireHost, RetryHostAgentUpdate,
         RevokeSession, RevokeSessions, RotateGatewayKeys, ScheduleHostRetirement,
-        ScheduleInstanceRetirement, SetBackupSchedule, SetHostPrivate, SetHostRentalAdmission,
-        SetIncidentState, SetInstancePower, SetPayoutAddress, SetPortForwards, SetTagRedundant,
-        SetTicketState, SetWebsitePassword, TagInstance, UnlinkGithub, UpdateHostPricing,
-        UpdateInstance, UpgradeInstance, WriteProviderReview,
+        ScheduleInstanceRetirement, SetBackupSchedule, SetHostAgentUpdatePolicy, SetHostPrivate,
+        SetHostRentalAdmission, SetIncidentState, SetInstancePower, SetPayoutAddress,
+        SetPortForwards, SetTagRedundant, SetTicketState, SetWebsitePassword, TagInstance,
+        UnlinkGithub, UpdateHostPricing, UpdateInstance, UpgradeInstance, WriteProviderReview,
     },
     hypervisor::{GuestInitializationStatus, HostMode, PowerState, RestartPolicy},
     website::{
         AccessResetState, AccountActivationTerms, AccountAuthKeyView, AccountBackupListQuery,
         AccountBalanceView, AccountGithubView, AccountProjectionView, AccountView,
         ActivateAccountRequest, ActiveSessionView, AddCloudIpAddressesRequest,
-        AddPrivateRenterRequest, AddSupportTicketMessageRequest, AuthorizeBackupRestoreRequest,
-        BackupDestinationFilter, BackupDestinationKind, BackupPricingView, BackupScheduleFrequency,
-        BackupScheduleRuleInput, BackupScheduleRuleView, BackupScheduleView, BackupSort,
-        BackupStateFilter, BackupView, BillingAuthorization, ChangeGatewayRequest,
-        CloudIpAddressInput, CloudIpPoolScope, CloudIpPoolView, ContainerEnvVar,
-        ContainerImageView, ContainerLogView, CreateBackupRequest, CreateCloudIpPoolRequest,
-        CreateContainerRequest, CreateHostEnrollmentTokenRequest, CreateInstanceRequest,
-        CreateProviderPayoutRequest, CreateSupportTicketRequest, DeclareHostEmergencyRequest,
-        GatewayTier, GatewayTrafficView, GithubUnlinked, HandOverCloudIpPoolRequest,
-        HostEnrollmentToken, HostModeFilter, HostPrivacyView, ImageView, InstanceConsoleLogView,
-        InstanceKind, InstanceListQuery, InstanceMeshView, InstanceProjectionView, InstanceSort,
-        InstanceSource, InstanceState, InstanceStateFilter, InstanceTagView, InstanceUpgradeView,
-        InstanceView, IpChoice, JobAccepted, JobEventView, JobKind, JobPage, JobState,
-        JobStateFilter, JobStepState, JobView, KindChoice, LedgerKind, LocationView, LoginGrant,
+        AddPrivateRenterRequest, AddSupportTicketMessageRequest, AgentUpdateAttemptRequest,
+        AgentUpdateAttemptView, AgentUpdatePolicy, AgentUpdateState, AgentUpdateWindow,
+        ApproveAgentUpdateRequest, AuthorizeBackupRestoreRequest, BackupDestinationFilter,
+        BackupDestinationKind, BackupPricingView, BackupScheduleFrequency, BackupScheduleRuleInput,
+        BackupScheduleRuleView, BackupScheduleView, BackupSort, BackupStateFilter, BackupView,
+        BillingAuthorization, ChangeGatewayRequest, CloudIpAddressInput, CloudIpPoolScope,
+        CloudIpPoolView, ContainerEnvVar, ContainerImageView, ContainerLogView,
+        CreateBackupRequest, CreateCloudIpPoolRequest, CreateContainerRequest,
+        CreateHostEnrollmentTokenRequest, CreateInstanceRequest, CreateProviderPayoutRequest,
+        CreateSupportTicketRequest, DeclareHostEmergencyRequest, GatewayTier, GatewayTrafficView,
+        GithubUnlinked, HandOverCloudIpPoolRequest, HostAgentUpdateView, HostEnrollmentToken,
+        HostModeFilter, HostPrivacyView, ImageView, InstanceConsoleLogView, InstanceKind,
+        InstanceListQuery, InstanceMeshView, InstanceProjectionView, InstanceSort, InstanceSource,
+        InstanceState, InstanceStateFilter, InstanceTagView, InstanceUpgradeView, InstanceView,
+        IpChoice, JobAccepted, JobEventView, JobKind, JobPage, JobState, JobStateFilter,
+        JobStepState, JobView, KindChoice, LedgerKind, LocationView, LoginGrant,
         MAX_SSH_PUBLIC_KEYS, MigrateAccountSeedRequest, MoveGatewayLocationRequest, OfferingView,
         PortForwardChange, PrivateRenterView, ProviderBalanceView, ProviderHostDetailView,
         ProviderHostView, ProviderIncidentSeverity, ProviderIncidentState, ProviderIncidentView,
@@ -95,9 +98,9 @@ use gigahost_client_api::{
         RedeploySetting, ReinstallInstanceRequest, RenameInstanceRequest, RescueInstanceRequest,
         ResetInstanceAccessRequest, RestoreBackupRequest, RotateGatewayKeysRequest,
         SSH_PUBLIC_KEY_TYPES, ScheduleHostRetirementRequest, ScheduleInstanceRetirementRequest,
-        SessionRevocationView, SetBackupScheduleRequest, SetHostPrivateRequest,
-        SetHostRentalPauseRequest, SetPortForwardsRequest, SetPowerStateRequest,
-        SetProviderIncidentStateRequest, SetProviderPayoutAddressRequest,
+        SessionRevocationView, SetAgentUpdatePolicyRequest, SetBackupScheduleRequest,
+        SetHostPrivateRequest, SetHostRentalPauseRequest, SetPortForwardsRequest,
+        SetPowerStateRequest, SetProviderIncidentStateRequest, SetProviderPayoutAddressRequest,
         SetSupportTicketStateRequest, SetTagRedundantRequest, SetWebsitePasswordRequest, SortOrder,
         SupportTicketCategory, SupportTicketPriority, SupportTicketResourceInput,
         SupportTicketState, SupportTicketSummaryView, SupportTicketView, SupportWaitingOn,
@@ -109,7 +112,7 @@ use gigahost_client_api::{
     website_password,
 };
 use serde::{Deserialize, Serialize, de::DeserializeOwned};
-use serde_json::{Value, json};
+use serde_json::{Map, Value, json};
 use sha2::{Digest as _, Sha256};
 use uuid::Uuid;
 
@@ -803,6 +806,181 @@ enum ProviderCommand {
         #[command(subcommand)]
         command: ProviderPrivateRentersCommand,
     },
+    /// Show a host's agent updates, or change how it takes them.
+    AgentUpdate {
+        #[command(subcommand)]
+        command: ProviderAgentUpdateCommand,
+    },
+}
+
+#[derive(Subcommand)]
+enum ProviderAgentUpdateCommand {
+    /// Show the release installed and the one on its way, the policy, the
+    /// window, any pause, the last failure and the newest attempts.
+    Show {
+        /// Host ID, from `ghost provider hosts`.
+        host_id: Uuid,
+    },
+    /// Change the policy or the weekly window; what you leave out stays.
+    Set {
+        /// Host ID, from `ghost provider hosts`.
+        host_id: Uuid,
+        /// `manual` waits for your approval of each release; `automatic`
+        /// takes the releases Gigahost rolls out.
+        #[arg(long, value_enum)]
+        policy: Option<AgentUpdatePolicyChoice>,
+        /// The window's UTC days, such as `mon,thu`. Needs --start and
+        /// --hours.
+        #[arg(long, value_delimiter = ',', value_enum, requires_all = ["start", "hours"])]
+        days: Vec<WindowDay>,
+        /// When the window opens, UTC, as `HH:MM`.
+        #[arg(long, value_parser = parse_window_start, requires = "days")]
+        start: Option<u16>,
+        /// How long the window stays open, 1 to 24 hours.
+        #[arg(long, value_parser = clap::value_parser!(u16).range(1..=24), requires = "days")]
+        hours: Option<u16>,
+        /// Update at any time.
+        #[arg(long, conflicts_with_all = ["days", "start", "hours"])]
+        clear_window: bool,
+        #[command(flatten)]
+        mutation: IdempotencyArgs,
+    },
+    /// Hold updates on the host, until you resume them or until `--until`.
+    Pause {
+        /// Host ID, from `ghost provider hosts`.
+        host_id: Uuid,
+        /// When the pause ends, as `2026-11-30T12:00:00Z`.
+        #[arg(long, value_name = "TIME")]
+        until: Option<DateTime<Utc>>,
+        #[command(flatten)]
+        mutation: IdempotencyArgs,
+    },
+    /// End a pause.
+    Resume {
+        /// Host ID, from `ghost provider hosts`.
+        host_id: Uuid,
+        #[command(flatten)]
+        mutation: IdempotencyArgs,
+    },
+    /// Approve one release for the host, once: the one that waits for your
+    /// approval, or the channel's current one.
+    Approve {
+        /// Host ID, from `ghost provider hosts`.
+        host_id: Uuid,
+        /// The release, as `ghost provider agent-update show` names it.
+        release: String,
+        #[command(flatten)]
+        mutation: IdempotencyArgs,
+    },
+    /// Try the release of the last attempt again, after it failed or
+    /// was rolled back.
+    Retry {
+        /// Host ID, from `ghost provider hosts`.
+        host_id: Uuid,
+        #[command(flatten)]
+        mutation: IdempotencyArgs,
+    },
+    /// Cancel the attempt on its way, unless it is being applied.
+    Cancel {
+        /// Host ID, from `ghost provider hosts`.
+        host_id: Uuid,
+        #[command(flatten)]
+        mutation: IdempotencyArgs,
+    },
+}
+
+/// A policy `ghost provider agent-update set` can choose.
+#[derive(Clone, Copy, ValueEnum)]
+enum AgentUpdatePolicyChoice {
+    Manual,
+    Automatic,
+}
+
+impl From<AgentUpdatePolicyChoice> for AgentUpdatePolicy {
+    fn from(choice: AgentUpdatePolicyChoice) -> Self {
+        match choice {
+            AgentUpdatePolicyChoice::Manual => Self::Manual,
+            AgentUpdatePolicyChoice::Automatic => Self::Automatic,
+        }
+    }
+}
+
+/// A UTC day of a window, in the order of its bits: Monday is bit 0.
+#[derive(Clone, Copy, ValueEnum)]
+enum WindowDay {
+    Mon,
+    Tue,
+    Wed,
+    Thu,
+    Fri,
+    Sat,
+    Sun,
+}
+
+/// A window's start, `HH:MM`, as minutes after midnight.
+fn parse_window_start(value: &str) -> Result<u16, String> {
+    value
+        .split_once(':')
+        .filter(|(hours, minutes)| hours.len() == 2 && minutes.len() == 2)
+        .and_then(|(hours, minutes)| Some((hours.parse().ok()?, minutes.parse().ok()?)))
+        .filter(|&(hours, minutes): &(u16, u16)| hours < 24 && minutes < 60)
+        .map(|(hours, minutes)| hours * 60 + minutes)
+        .ok_or_else(|| "expected a UTC time as HH:MM, such as 02:30".to_owned())
+}
+
+/// What `ghost provider agent-update set` changes.
+struct AgentUpdateChange {
+    policy: Option<AgentUpdatePolicy>,
+    window: WindowChange,
+}
+
+/// What `ghost provider agent-update set` does to the window.
+#[derive(Clone, Copy)]
+enum WindowChange {
+    Keep,
+    Clear,
+    Set(AgentUpdateWindow),
+}
+
+/// The window `days`, `start` and `hours` name, whole; None when they name
+/// none. Clap requires them together.
+fn named_window(
+    days: &[WindowDay],
+    start: Option<u16>,
+    hours: Option<u16>,
+) -> Option<AgentUpdateWindow> {
+    (!days.is_empty()).then_some(AgentUpdateWindow {
+        days: days
+            .iter()
+            .fold(0, |bits, &day| bits | (1_u8 << (day as u8))),
+        start_minute: start?,
+        minutes: hours? * 60,
+    })
+}
+
+/// The whole policy the backend replaces, from the host's `view`: what the
+/// caller leaves out stays as it is, and `paused` is `(paused, until)`
+/// where it changes.
+fn agent_update_policy_request(
+    view: &HostAgentUpdateView,
+    change: &AgentUpdateChange,
+    paused: Option<(bool, Option<DateTime<Utc>>)>,
+) -> Result<SetAgentUpdatePolicyRequest> {
+    let policy = change.policy.unwrap_or(view.policy);
+    if policy == AgentUpdatePolicy::Unknown {
+        bail!("this host has a policy this ghost does not know; update ghost first");
+    }
+    let (paused, paused_until) = paused.unwrap_or((view.paused, view.paused_until));
+    Ok(SetAgentUpdatePolicyRequest {
+        policy,
+        paused,
+        paused_until,
+        window: match change.window {
+            WindowChange::Keep => view.window,
+            WindowChange::Clear => None,
+            WindowChange::Set(window) => Some(window),
+        },
+    })
 }
 
 #[derive(Subcommand)]
@@ -4654,6 +4832,15 @@ fn readable_sections(command: &Command, output: &Value, terminal: Terminal) -> O
         }
         return Some(pretty::render(&Value::Object(fields), terminal));
     }
+    if matches!(
+        command,
+        Command::Provider {
+            command: ProviderCommand::AgentUpdate { .. }
+        }
+    ) {
+        let view: HostAgentUpdateView = serde_json::from_value(output.clone()).ok()?;
+        return Some(pretty::render(&agent_update_record(&view), terminal));
+    }
     if let Command::Provider {
         command:
             ProviderCommand::Host {
@@ -5641,6 +5828,98 @@ async fn execute_catalog(api: &ApiClient, command: &CatalogCommand) -> Result<Va
     }
 }
 
+/// A window for reading: `mon, thu 02:30 UTC for 4 h`.
+fn agent_update_window_text(window: AgentUpdateWindow) -> String {
+    const DAYS: [&str; 7] = ["mon", "tue", "wed", "thu", "fri", "sat", "sun"];
+    let days: Vec<&str> = DAYS
+        .iter()
+        .enumerate()
+        .filter(|(bit, _)| window.days & (1 << bit) != 0)
+        .map(|(_, day)| *day)
+        .collect();
+    let (hours, minutes) = (window.minutes / 60, window.minutes % 60);
+    format!(
+        "{} {:02}:{:02} UTC for {}",
+        days.join(", "),
+        window.start_minute / 60,
+        window.start_minute % 60,
+        if minutes == 0 {
+            format!("{hours} h")
+        } else {
+            format!("{hours} h {minutes} min")
+        }
+    )
+}
+
+/// One attempt for reading: its release, state and what it failed with.
+fn agent_update_attempt_text(attempt: &AgentUpdateAttemptView) -> String {
+    let mut text = format!("{} ({})", attempt.release, wire_name(attempt.state));
+    if let Some(code) = &attempt.failure_code {
+        let _ = write!(text, ": {code}");
+    }
+    if let Some(detail) = &attempt.detail {
+        let _ = write!(text, ": {detail}");
+    }
+    text
+}
+
+/// A host's agent updates as `ghost provider agent-update` shows them: an
+/// agent that cannot update itself says how to update it by hand. `--json`
+/// keeps the API's answer.
+fn agent_update_record(view: &HostAgentUpdateView) -> Value {
+    let mut record = Map::new();
+    let mut put = |key: &str, value: Value| {
+        record.insert(key.to_owned(), value);
+    };
+    put("installed", json!(view.installed_release));
+    if !view.remote_updates {
+        put("update", json!("by hand"));
+        put("install_command", json!(view.install_command));
+    }
+    if view.locally_disabled {
+        put("remote_updates", json!("disabled on the host"));
+    }
+    if view.named_release_unavailable {
+        put("channel", json!("names no single release: updates wait"));
+    }
+    put("channel_release", json!(view.channel_release));
+    put(
+        "target",
+        json!(view.target.as_ref().map(agent_update_attempt_text)),
+    );
+    put("pending_approval", json!(view.pending_approval));
+    put("policy", json!(wire_name(view.policy)));
+    put("window", json!(view.window.map(agent_update_window_text)));
+    put(
+        "paused",
+        match (view.paused, view.paused_until) {
+            (false, _) => json!(false),
+            (true, None) => json!(true),
+            (true, Some(until)) => json!(format!("until {}", until.format("%Y-%m-%d %H:%M UTC"))),
+        },
+    );
+    put(
+        "last_failure",
+        json!(view.last_failure.as_ref().map(agent_update_attempt_text)),
+    );
+    put(
+        "history",
+        view.history
+            .iter()
+            .map(|attempt| {
+                json!({
+                    "release": attempt.release,
+                    "state": wire_name(attempt.state),
+                    "failure_code": attempt.failure_code,
+                    "created_at": attempt.created_at,
+                    "finished_at": attempt.finished_at,
+                })
+            })
+            .collect(),
+    );
+    Value::Object(record)
+}
+
 /// A provider as the catalog shows it: its name and the offerings it lists
 /// now (the catalog's first 500 of that provider's), its rating
 /// from its reviews' `summary`, and its `reliability`. A provider without
@@ -5745,6 +6024,130 @@ async fn pool_address_id(api: &ApiClient, pool: Uuid, address: Ipv4Addr) -> Resu
         })
         .map(|candidate| candidate.address_id)
         .with_context(|| format!("address {address} was not found in pool {pool}"))
+}
+
+/// A host's agent updates. The API replaces a policy whole and names an
+/// attempt by its ID, so each change reads the host first. A retry of a
+/// command under its key names the same attempt and sends the same policy,
+/// and gets the first answer again.
+async fn execute_agent_update(
+    api: &ApiClient,
+    command: &ProviderAgentUpdateCommand,
+) -> Result<Value> {
+    const SAME: AgentUpdateChange = AgentUpdateChange {
+        policy: None,
+        window: WindowChange::Keep,
+    };
+    let read = async |host_id: Uuid| -> Result<HostAgentUpdateView> {
+        api.read(&GetHostAgentUpdate { host_id }, "").await
+    };
+    let policy = async |host_id: Uuid,
+                        change: AgentUpdateChange,
+                        paused: Option<(bool, Option<DateTime<Utc>>)>,
+                        mutation: &IdempotencyArgs|
+           -> Result<Value> {
+        let request = agent_update_policy_request(&read(host_id).await?, &change, paused)?;
+        let view: HostAgentUpdateView = api
+            .write_retryable(
+                &SetHostAgentUpdatePolicy { host_id },
+                &request,
+                &mutation.key(),
+            )
+            .await?;
+        to_value(view)
+    };
+    match command {
+        ProviderAgentUpdateCommand::Show { host_id } => to_value(read(*host_id).await?),
+        ProviderAgentUpdateCommand::Set {
+            host_id,
+            policy: choice,
+            days,
+            start,
+            hours,
+            clear_window,
+            mutation,
+        } => {
+            let window = named_window(days, *start, *hours);
+            if choice.is_none() && window.is_none() && !clear_window {
+                bail!("name what to change: --policy, a window or --clear-window");
+            }
+            let change = AgentUpdateChange {
+                policy: choice.map(Into::into),
+                window: match window {
+                    Some(window) => WindowChange::Set(window),
+                    None if *clear_window => WindowChange::Clear,
+                    None => WindowChange::Keep,
+                },
+            };
+            policy(*host_id, change, None, mutation).await
+        }
+        ProviderAgentUpdateCommand::Pause {
+            host_id,
+            until,
+            mutation,
+        } => policy(*host_id, SAME, Some((true, *until)), mutation).await,
+        ProviderAgentUpdateCommand::Resume { host_id, mutation } => {
+            policy(*host_id, SAME, Some((false, None)), mutation).await
+        }
+        ProviderAgentUpdateCommand::Approve {
+            host_id,
+            release,
+            mutation,
+        } => {
+            let view: HostAgentUpdateView = api
+                .write_retryable(
+                    &ApproveHostAgentUpdate { host_id: *host_id },
+                    &ApproveAgentUpdateRequest {
+                        release: release.clone(),
+                    },
+                    &mutation.key(),
+                )
+                .await?;
+            to_value(view)
+        }
+        ProviderAgentUpdateCommand::Retry { host_id, mutation } => {
+            let Some(failed) = read(*host_id).await?.last_failure else {
+                bail!("no update of this host failed");
+            };
+            let view: HostAgentUpdateView = api
+                .write_retryable(
+                    &RetryHostAgentUpdate { host_id: *host_id },
+                    &AgentUpdateAttemptRequest {
+                        update_id: failed.update_id,
+                    },
+                    &mutation.key(),
+                )
+                .await?;
+            to_value(view)
+        }
+        ProviderAgentUpdateCommand::Cancel { host_id, mutation } => {
+            let view = read(*host_id).await?;
+            let Some(update_id) = cancellable_attempt(&view, mutation.has_key()) else {
+                bail!("this host has no update on its way");
+            };
+            let view: HostAgentUpdateView = api
+                .write_retryable(
+                    &CancelHostAgentUpdate { host_id: *host_id },
+                    &AgentUpdateAttemptRequest { update_id },
+                    &mutation.key(),
+                )
+                .await?;
+            to_value(view)
+        }
+    }
+}
+
+/// The attempt `ghost provider agent-update cancel` names: the one on its
+/// way, or, for a retry under its key, the one that command cancelled.
+fn cancellable_attempt(view: &HostAgentUpdateView, retrying: bool) -> Option<Uuid> {
+    view.target
+        .as_ref()
+        .or_else(|| {
+            view.history
+                .first()
+                .filter(|attempt| retrying && attempt.state == AgentUpdateState::Cancelled)
+        })
+        .map(|attempt| attempt.update_id)
 }
 
 async fn execute_provider(api: &ApiClient, command: &ProviderCommand) -> Result<Value> {
@@ -6049,6 +6452,7 @@ async fn execute_provider(api: &ApiClient, command: &ProviderCommand) -> Result<
                 to_value(renter)
             }
         },
+        ProviderCommand::AgentUpdate { command } => execute_agent_update(api, command).await,
         ProviderCommand::RetireInstance {
             instance_id,
             notice_days,
@@ -15661,6 +16065,213 @@ mod tests {
         ));
         assert!(parse(&[]).is_err(), "a host or a subcommand");
         assert!(parse(&["not-a-host"]).is_err());
+    }
+
+    fn agent_update_view(value: &Value) -> HostAgentUpdateView {
+        let mut view = json!({
+            "host_id": Uuid::nil(), "installed_release": "20261001T000000Z-aaaaaaaaaaaa",
+            "remote_updates": true, "locally_disabled": false, "channel_release": null,
+            "install_command": null, "named_release_unavailable": false, "policy": "manual",
+            "paused": false, "paused_until": null, "window": null, "target": null,
+            "pending_approval": null, "last_failure": null, "history": [],
+        });
+        for (key, value) in value.as_object().unwrap() {
+            view[key] = value.clone();
+        }
+        serde_json::from_value(view).unwrap()
+    }
+
+    fn attempt(state: &str) -> Value {
+        json!({
+            "update_id": Uuid::from_u128(7), "release": "20261010T000000Z-bbbbbbbbbbbb",
+            "state": state, "rollout_id": null, "failure_code": null, "detail": null,
+            "created_at": "2026-10-10T00:00:00Z", "finished_at": null,
+        })
+    }
+
+    /// Every command of `ghost provider agent-update` parses, a window only
+    /// whole and never with --clear-window.
+    #[test]
+    fn agent_update_commands_parse() {
+        let host = Uuid::nil().to_string();
+        let parse = |arguments: &[&str]| {
+            Cli::try_parse_from(
+                ["ghost", "provider", "agent-update"]
+                    .iter()
+                    .chain(arguments),
+            )
+        };
+        let Command::Provider {
+            command:
+                ProviderCommand::AgentUpdate {
+                    command:
+                        ProviderAgentUpdateCommand::Set {
+                            policy: Some(AgentUpdatePolicyChoice::Automatic),
+                            days,
+                            start,
+                            hours,
+                            clear_window: false,
+                            ..
+                        },
+                },
+        } = parse(&[
+            "set",
+            &host,
+            "--policy",
+            "automatic",
+            "--days",
+            "mon,sun",
+            "--start",
+            "02:30",
+            "--hours",
+            "4",
+        ])
+        .unwrap()
+        .command
+        else {
+            panic!("not the set command");
+        };
+        assert_eq!(
+            named_window(&days, start, hours),
+            Some(AgentUpdateWindow {
+                days: 0b100_0001,
+                start_minute: 150,
+                minutes: 240,
+            })
+        );
+        for arguments in [
+            vec!["show", &host],
+            vec!["set", &host, "--clear-window"],
+            vec!["pause", &host],
+            vec!["pause", &host, "--until", "2026-11-30T12:00:00Z"],
+            vec!["resume", &host],
+            vec!["approve", &host, "20261010T000000Z-bbbbbbbbbbbb"],
+            vec!["retry", &host],
+            vec!["cancel", &host, "--idempotency-key", "0123456789abcdef"],
+        ] {
+            assert!(parse(&arguments).is_ok(), "{arguments:?}");
+        }
+        for arguments in [
+            vec!["set", &host, "--days", "mon"],
+            vec!["set", &host, "--start", "02:00", "--hours", "4"],
+            vec![
+                "set", &host, "--days", "mon", "--start", "24:00", "--hours", "4",
+            ],
+            vec![
+                "set", &host, "--days", "mon", "--start", "02:00", "--hours", "25",
+            ],
+            vec![
+                "set", &host, "--days", "mon", "--start", "02:00", "--hours", "0",
+            ],
+            vec!["set", &host, "--policy", "unknown"],
+            vec![
+                "set",
+                &host,
+                "--clear-window",
+                "--days",
+                "mon",
+                "--start",
+                "02:00",
+                "--hours",
+                "4",
+            ],
+            vec!["approve", &host],
+            vec!["pause", &host, "--until", "tomorrow"],
+        ] {
+            assert!(parse(&arguments).is_err(), "{arguments:?}");
+        }
+    }
+
+    /// The API replaces a policy whole: a change keeps the rest, and a host
+    /// of a policy this ghost does not know is left alone.
+    #[test]
+    fn an_agent_update_change_keeps_what_it_leaves_out() {
+        let window = AgentUpdateWindow {
+            days: 1,
+            start_minute: 60,
+            minutes: 120,
+        };
+        let until: DateTime<Utc> = "2026-11-30T12:00:00Z".parse().unwrap();
+        let view = agent_update_view(&json!({
+            "policy": "automatic", "paused": true, "paused_until": until,
+            "window": window,
+        }));
+        let same = AgentUpdateChange {
+            policy: None,
+            window: WindowChange::Keep,
+        };
+        let kept = agent_update_policy_request(&view, &same, None).unwrap();
+        assert_eq!(kept.policy, AgentUpdatePolicy::Automatic);
+        assert!(kept.paused);
+        assert_eq!(kept.paused_until, Some(until));
+        assert_eq!(kept.window, Some(window));
+        let resumed = agent_update_policy_request(&view, &same, Some((false, None))).unwrap();
+        assert!(!resumed.paused);
+        assert_eq!(resumed.paused_until, None);
+        assert_eq!(resumed.window, Some(window));
+        let cleared = agent_update_policy_request(
+            &view,
+            &AgentUpdateChange {
+                policy: Some(AgentUpdatePolicy::Manual),
+                window: WindowChange::Clear,
+            },
+            None,
+        )
+        .unwrap();
+        assert_eq!(cleared.policy, AgentUpdatePolicy::Manual);
+        assert_eq!(cleared.window, None);
+        assert_eq!(cleared.paused_until, Some(until));
+        let newer = agent_update_view(&json!({"policy": "from_the_future"}));
+        assert!(agent_update_policy_request(&newer, &same, None).is_err());
+    }
+
+    /// Cancelling names the attempt on its way; a retry under its key finds
+    /// the one it cancelled, and a first try none.
+    #[test]
+    fn cancelling_names_the_attempt_on_its_way() {
+        let open = agent_update_view(&json!({"target": attempt("staged")}));
+        assert_eq!(cancellable_attempt(&open, false), Some(Uuid::from_u128(7)));
+        let cancelled = agent_update_view(&json!({"history": [attempt("cancelled")]}));
+        assert_eq!(cancellable_attempt(&cancelled, false), None);
+        assert_eq!(
+            cancellable_attempt(&cancelled, true),
+            Some(Uuid::from_u128(7))
+        );
+        let failed = agent_update_view(&json!({"history": [attempt("failed")]}));
+        assert_eq!(cancellable_attempt(&failed, true), None);
+    }
+
+    /// `show` says every state plainly, and a state of a newer backend
+    /// still decodes.
+    #[test]
+    fn an_agent_update_reads_plainly() {
+        let mut failed = attempt("rolled_back");
+        failed["failure_code"] = json!("crash_loop");
+        failed["detail"] = json!("two restarts");
+        let view = agent_update_view(&json!({
+            "remote_updates": true, "locally_disabled": true,
+            "named_release_unavailable": true,
+            "target": attempt("from_the_future"),
+            "pending_approval": "20261010T000000Z-bbbbbbbbbbbb",
+            "window": {"days": 9, "start_minute": 150, "minutes": 90},
+            "paused": true, "paused_until": "2026-11-30T12:00:00Z",
+            "last_failure": failed.clone(), "history": [failed],
+        }));
+        let record = agent_update_record(&view);
+        assert_eq!(record["window"], "mon, thu 02:30 UTC for 1 h 30 min");
+        assert_eq!(record["paused"], "until 2026-11-30 12:00 UTC");
+        assert_eq!(record["remote_updates"], "disabled on the host");
+        assert_eq!(record["target"], "20261010T000000Z-bbbbbbbbbbbb (unknown)");
+        assert_eq!(
+            record["last_failure"],
+            "20261010T000000Z-bbbbbbbbbbbb (rolled_back): crash_loop: two restarts"
+        );
+        assert_eq!(record["history"][0]["state"], "rolled_back");
+        let hand = agent_update_record(&agent_update_view(&json!({
+            "remote_updates": false, "install_command": "curl | sudo sh",
+        })));
+        assert_eq!(hand["update"], "by hand");
+        assert_eq!(hand["install_command"], "curl | sudo sh");
     }
 
     /// `ghost catalog` alone lists offerings, with their filters; a filter
