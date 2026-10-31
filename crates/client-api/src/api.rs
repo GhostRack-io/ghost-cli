@@ -3,33 +3,34 @@ use crate::website::{
     AccountActivationTerms, AccountAuthKeyView, AccountBalanceView, AccountSessionView,
     AccountSshKeyView, AccountView, ActivateAccountRequest, ActiveSessionView,
     AddAccountSshKeyRequest, AddCloudIpAddressesRequest, AddPrivateRenterRequest,
-    AddSupportTicketMessageRequest, AuthorizeBackupRestoreRequest, BackupInstanceView,
-    BackupPricingView, BackupScheduleView, BackupView, BrowserOperationInput, BrowserOperationView,
-    CloudIpPoolView, CompleteOperationIntentRequest, CompleteTrialClaimRequest,
-    CompletedTrialClaimView, ContainerLogView, CreateBackupRequest, CreateCloudIpPoolRequest,
+    AddSupportTicketMessageRequest, AgentUpdateAttemptRequest, ApproveAgentUpdateRequest,
+    AuthorizeBackupRestoreRequest, BackupInstanceView, BackupPricingView, BackupScheduleView,
+    BackupView, BrowserOperationInput, BrowserOperationView, CloudIpPoolView,
+    CompleteOperationIntentRequest, CompleteTrialClaimRequest, CompletedTrialClaimView,
+    ContainerLogView, CreateBackupRequest, CreateCloudIpPoolRequest,
     CreateHostEnrollmentTokenRequest, CreateInstanceRequest, CreateProviderPayoutRequest,
     CreateSupportTicketRequest, DeclareHostEmergencyRequest, GatewayTrafficView,
     GithubLoginRequest, GithubLoginStart, GithubUnlinked, HandOverCloudIpPoolRequest, HistoryPage,
-    HostEnrollmentToken, HostNetworkTestsView, HostPricingView, HostPrivacyView, ImageView,
-    InstanceConsoleLogView, InstanceConsoleSessionsView, InstanceHardwareView,
-    InstanceLocationView, InstanceProviderTerminationView, InstanceProviderView,
-    InstanceSystemView, InstanceTagView, InstanceUpgradeView, InstanceView, JobAccepted, JobPage,
-    JobView, LocationView, LoginGrant, MigrateAccountSeedRequest, NotificationsReadView,
-    OfferingView, PasswordChallenge, PasswordChallengeRequest, PasswordLoginRequest,
-    PrivateRenterView, ProtectedBalanceView, ProviderBalanceView, ProviderHostDetailView,
-    ProviderHostView, ProviderIncidentView, ProviderOutageDetailView, ProviderOutagePage,
-    ProviderPayoutAddressView, ProviderPayoutView, ProviderReliabilityView, ProviderRentalView,
-    ProviderUptimeView, RedeemLoginGrantRequest, RedeemLoginGrantResponse, RedeployInstanceRequest,
-    ReinstallInstanceRequest, ReleaseChannelsView, RenameInstanceRequest, RestoreBackupRequest,
-    RotateGatewayKeysRequest, ScheduleHostRetirementRequest, ScheduleInstanceRetirementRequest,
-    SessionRevocationView, SetBackupScheduleRequest, SetHostPrivateRequest,
-    SetHostRentalPauseRequest, SetNotificationReadRequest, SetPortForwardsRequest,
-    SetPowerStateRequest, SetProtectedBalanceRequest, SetProviderIncidentStateRequest,
-    SetProviderPayoutAddressRequest, SetSupportTicketStateRequest, SetTagRedundantRequest,
-    SetWebsitePasswordRequest, SupportTicketSummaryView, SupportTicketView, TagInstanceRequest,
-    TrialClaimStatusView, TrialClaimView, UpdateHostPricingRequest, UpdateInstanceRequest,
-    UpgradeInstanceRequest, UserNotificationView, WebsitePasswordRemoved, WebsitePasswordView,
-    WriteProviderReviewRequest,
+    HostAgentUpdateView, HostEnrollmentToken, HostNetworkTestsView, HostPricingView,
+    HostPrivacyView, ImageView, InstanceConsoleLogView, InstanceConsoleSessionsView,
+    InstanceHardwareView, InstanceLocationView, InstanceProviderTerminationView,
+    InstanceProviderView, InstanceSystemView, InstanceTagView, InstanceUpgradeView, InstanceView,
+    JobAccepted, JobPage, JobView, LocationView, LoginGrant, MigrateAccountSeedRequest,
+    NotificationsReadView, OfferingView, PasswordChallenge, PasswordChallengeRequest,
+    PasswordLoginRequest, PrivateRenterView, ProtectedBalanceView, ProviderBalanceView,
+    ProviderHostDetailView, ProviderHostView, ProviderIncidentView, ProviderOutageDetailView,
+    ProviderOutagePage, ProviderPayoutAddressView, ProviderPayoutView, ProviderReliabilityView,
+    ProviderRentalView, ProviderUptimeView, RedeemLoginGrantRequest, RedeemLoginGrantResponse,
+    RedeployInstanceRequest, ReinstallInstanceRequest, ReleaseChannelsView, RenameInstanceRequest,
+    RestoreBackupRequest, RotateGatewayKeysRequest, ScheduleHostRetirementRequest,
+    ScheduleInstanceRetirementRequest, SessionRevocationView, SetAgentUpdatePolicyRequest,
+    SetBackupScheduleRequest, SetHostPrivateRequest, SetHostRentalPauseRequest,
+    SetNotificationReadRequest, SetPortForwardsRequest, SetPowerStateRequest,
+    SetProtectedBalanceRequest, SetProviderIncidentStateRequest, SetProviderPayoutAddressRequest,
+    SetSupportTicketStateRequest, SetTagRedundantRequest, SetWebsitePasswordRequest,
+    SupportTicketSummaryView, SupportTicketView, TagInstanceRequest, TrialClaimStatusView,
+    TrialClaimView, UpdateHostPricingRequest, UpdateInstanceRequest, UpgradeInstanceRequest,
+    UserNotificationView, WebsitePasswordRemoved, WebsitePasswordView, WriteProviderReviewRequest,
 };
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::Value;
@@ -579,6 +580,28 @@ endpoints! {
     SetHostPrivate { host_id: Uuid } = user POST
         "/api/mut/v1/provider/hosts/{host_id}/private" (SetHostPrivateRequest)
         => HostPrivacyView;
+    /// The host's agent: its release, its update policy and its update
+    /// attempts.
+    GetHostAgentUpdate { host_id: Uuid } =
+        user GET "/v1/provider/hosts/{host_id}/agent-update" => HostAgentUpdateView;
+    /// Set the host's update policy, pause and maintenance window, whole.
+    SetHostAgentUpdatePolicy { host_id: Uuid } = user POST
+        "/api/mut/v1/provider/hosts/{host_id}/agent-update/policy"
+        (SetAgentUpdatePolicyRequest) => HostAgentUpdateView;
+    /// Approve one exact release for the host: the one that waits for the
+    /// approval, or the channel's current one.
+    ApproveHostAgentUpdate { host_id: Uuid } = user POST
+        "/api/mut/v1/provider/hosts/{host_id}/agent-update/approve"
+        (ApproveAgentUpdateRequest) => HostAgentUpdateView;
+    /// A new attempt at the release of an attempt that failed or was
+    /// rolled back.
+    RetryHostAgentUpdate { host_id: Uuid } = user POST
+        "/api/mut/v1/provider/hosts/{host_id}/agent-update/retry"
+        (AgentUpdateAttemptRequest) => HostAgentUpdateView;
+    /// Cancel an attempt that is not being applied yet.
+    CancelHostAgentUpdate { host_id: Uuid } = user POST
+        "/api/mut/v1/provider/hosts/{host_id}/agent-update/cancel"
+        (AgentUpdateAttemptRequest) => HostAgentUpdateView;
     /// The accounts the provider allows on its private hosts, by alias,
     /// each with what of it is on them; at most 100. Its own account is
     /// always allowed and not listed.

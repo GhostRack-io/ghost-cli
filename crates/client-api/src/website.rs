@@ -5655,6 +5655,125 @@ pub struct SetHostRentalPauseRequest {
     pub paused: bool,
 }
 
+/// How a host takes new agent releases: on the provider's approval of each
+/// one (`Manual`, the default) or from the operator's rollouts
+/// (`Automatic`).
+#[derive(Clone, Copy, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentUpdatePolicy {
+    #[default]
+    Manual,
+    Automatic,
+    /// A policy of a newer backend.
+    #[serde(other)]
+    Unknown,
+}
+
+/// Where one attempt to update a host's agent is.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentUpdateState {
+    PendingApproval,
+    Approved,
+    Ordered,
+    Staged,
+    Applying,
+    Succeeded,
+    RolledBack,
+    Failed,
+    Cancelled,
+    /// A state of a newer backend.
+    #[serde(other)]
+    Unknown,
+}
+
+/// A weekly maintenance window in UTC, on the days of `days`: bit 0 is
+/// Monday and bit 6 Sunday. It opens `start_minute` minutes after midnight
+/// of each of them, and stays open for `minutes`, 60 to 1440; it may run
+/// into the next day.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct AgentUpdateWindow {
+    pub days: u8,
+    pub start_minute: u16,
+    pub minutes: u16,
+}
+
+/// One attempt to update a host's agent.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct AgentUpdateAttemptView {
+    pub update_id: Uuid,
+    pub release: String,
+    pub state: AgentUpdateState,
+    /// The operator's rollout that asked for it, if one did.
+    pub rollout_id: Option<Uuid>,
+    pub failure_code: Option<String>,
+    pub detail: Option<String>,
+    pub created_at: DateTime<Utc>,
+    pub finished_at: Option<DateTime<Utc>>,
+}
+
+/// A host's agent: what it runs, what it may take, and how it took it.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct HostAgentUpdateView {
+    pub host_id: Uuid,
+    /// The release its agent last reported.
+    pub installed_release: Option<String>,
+    /// Whether its agent can update itself.
+    pub remote_updates: bool,
+    /// Whether the host's own file refuses remote updates.
+    pub locally_disabled: bool,
+    /// The newest release of the hypervisor channel, when it is known.
+    pub channel_release: Option<String>,
+    /// The command that updates an agent that cannot update itself.
+    pub install_command: Option<String>,
+    /// Whether this backend's release channel cannot name one release, so
+    /// that an approved attempt waits.
+    pub named_release_unavailable: bool,
+    pub policy: AgentUpdatePolicy,
+    /// Whether a pause holds now.
+    pub paused: bool,
+    /// When it ends; none while it holds until it is lifted.
+    pub paused_until: Option<DateTime<Utc>>,
+    pub window: Option<AgentUpdateWindow>,
+    /// The attempt in progress.
+    pub target: Option<AgentUpdateAttemptView>,
+    /// The release that waits for the provider's approval.
+    pub pending_approval: Option<String>,
+    /// The newest attempt that failed or was rolled back.
+    pub last_failure: Option<AgentUpdateAttemptView>,
+    /// The newest attempts, at most 20, the newest first.
+    pub history: Vec<AgentUpdateAttemptView>,
+}
+
+/// A host's update policy, whole (`SetHostAgentUpdatePolicy`).
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct SetAgentUpdatePolicyRequest {
+    #[serde(deserialize_with = "known")]
+    pub policy: AgentUpdatePolicy,
+    pub paused: bool,
+    /// When a pause ends; none for a pause until it is lifted.
+    #[serde(default)]
+    pub paused_until: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub window: Option<AgentUpdateWindow>,
+}
+
+/// Approve one exact release for a host (`ApproveHostAgentUpdate`).
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ApproveAgentUpdateRequest {
+    pub release: String,
+}
+
+/// Names the attempt to retry or cancel (`RetryHostAgentUpdate`,
+/// `CancelHostAgentUpdate`).
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct AgentUpdateAttemptRequest {
+    pub update_id: Uuid,
+}
+
 /// Make a host private or public again (`SetHostPrivate`).
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]

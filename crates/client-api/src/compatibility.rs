@@ -17,6 +17,8 @@ use serde::{
 pub const CLIENT_DECODED_ENUMS: &[&str] = &[
     "AccessResetState",
     "AccountFundingState",
+    "AgentUpdatePolicy",
+    "AgentUpdateState",
     "BackupDestinationKind",
     "BackupPurpose",
     "BackupScheduleFrequency",
@@ -93,6 +95,7 @@ macro_rules! fallback {
 }
 
 fallback!(
+    crate::website::AgentUpdatePolicy,
     crate::website::AccountFundingState,
     crate::website::BackupDestinationKind,
     crate::website::BackupPurpose,
