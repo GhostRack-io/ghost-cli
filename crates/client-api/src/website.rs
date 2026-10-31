@@ -5714,6 +5714,7 @@ pub struct AgentUpdateAttemptView {
 
 /// A host's agent: what it runs, what it may take, and how it took it.
 #[derive(Clone, Debug, Deserialize, Serialize)]
+#[expect(clippy::struct_excessive_bools, reason = "each is a fact of its own")]
 pub struct HostAgentUpdateView {
     pub host_id: Uuid,
     /// The release its agent last reported.
