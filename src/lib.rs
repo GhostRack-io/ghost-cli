@@ -980,6 +980,8 @@ fn agent_update_policy_request(
             WindowChange::Clear => None,
             WindowChange::Set(window) => Some(window),
         },
+        // Read just now, and a retry under its key must send the same body.
+        policy_revision: None,
     })
 }
 
@@ -16223,6 +16225,14 @@ mod tests {
         assert!(kept.paused);
         assert_eq!(kept.paused_until, Some(until));
         assert_eq!(kept.window, Some(window));
+        assert!(
+            !serde_json::to_value(&kept)
+                .unwrap()
+                .as_object()
+                .unwrap()
+                .contains_key("policy_revision"),
+            "a backend of before refuses a field it does not know"
+        );
         let resumed = agent_update_policy_request(&view, &same, Some((false, None))).unwrap();
         assert!(!resumed.paused);
         assert_eq!(resumed.paused_until, None);

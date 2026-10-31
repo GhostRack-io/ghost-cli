@@ -5741,6 +5741,11 @@ pub struct HostAgentUpdateView {
     /// When it ends; none while it holds until it is lifted.
     pub paused_until: Option<DateTime<Utc>>,
     pub window: Option<AgentUpdateWindow>,
+    /// Names the policy, pause and window of this answer, for
+    /// [`SetAgentUpdatePolicyRequest::policy_revision`]; none from a backend
+    /// of before.
+    #[serde(default)]
+    pub policy_revision: Option<String>,
     /// The attempt in progress.
     pub target: Option<AgentUpdateAttemptView>,
     /// The release that waits for the provider's approval.
@@ -5763,6 +5768,11 @@ pub struct SetAgentUpdatePolicyRequest {
     pub paused_until: Option<DateTime<Utc>>,
     #[serde(default)]
     pub window: Option<AgentUpdateWindow>,
+    /// The [`HostAgentUpdateView::policy_revision`] the rest was taken from:
+    /// a host that no longer answers it refuses the change, for a page that
+    /// stayed open. Left out, the change replaces what is there.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub policy_revision: Option<String>,
 }
 
 /// Approve one exact release for a host (`ApproveHostAgentUpdate`).
