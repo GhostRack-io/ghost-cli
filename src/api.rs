@@ -530,6 +530,25 @@ pub fn rejection_code(error: &anyhow::Error) -> Option<&str> {
         .and_then(|error| error.code.as_deref())
 }
 
+/// `error` with `words` in place of the backend's plain conflict ("resource
+/// already exists"), for a route where that answer means the state rules
+/// the request out. Its status, code and request stay; any other error is
+/// left as it is.
+#[must_use]
+pub fn reword_conflict(mut error: anyhow::Error, words: &str) -> anyhow::Error {
+    if let Some(answer) = error.downcast_mut::<StatusError>()
+        && answer.code.as_deref() == Some("conflict")
+    {
+        let request = answer
+            .request_id
+            .as_ref()
+            .map(|request_id| format!(" (request {request_id})"))
+            .unwrap_or_default();
+        answer.message = format!("API returned {}: {words}{request}", answer.status);
+    }
+    error
+}
+
 /// How the backend answered a request it did not carry out: the HTTP
 /// status and, from its error body, the stable code, the job a conflict
 /// names, and the request's ID.

@@ -6106,15 +6106,12 @@ async fn execute_agent_update(
             to_value(view)
         }
         ProviderAgentUpdateCommand::Retry { host_id, mutation } => {
-            let Some(failed) = read(*host_id).await?.last_failure else {
-                bail!("no update of this host failed");
-            };
+            let view = read(*host_id).await?;
+            let update_id = retryable_attempt(&view, mutation.has_key())?;
             let view: HostAgentUpdateView = api
                 .write_retryable(
                     &RetryHostAgentUpdate { host_id: *host_id },
-                    &AgentUpdateAttemptRequest {
-                        update_id: failed.update_id,
-                    },
+                    &AgentUpdateAttemptRequest { update_id },
                     &mutation.key(),
                 )
                 .await?;
@@ -6122,9 +6119,7 @@ async fn execute_agent_update(
         }
         ProviderAgentUpdateCommand::Cancel { host_id, mutation } => {
             let view = read(*host_id).await?;
-            let Some(update_id) = cancellable_attempt(&view, mutation.has_key()) else {
-                bail!("this host has no update on its way");
-            };
+            let update_id = cancellable_attempt(&view, mutation.has_key())?;
             let view: HostAgentUpdateView = api
                 .write_retryable(
                     &CancelHostAgentUpdate { host_id: *host_id },
@@ -6137,9 +6132,29 @@ async fn execute_agent_update(
     }
 }
 
+/// The attempt `ghost provider agent-update retry` names: the host's newest,
+/// the only one the backend takes, once it failed or was rolled back; or, for
+/// a retry under its key, the failure that command tried again, which a newer
+/// attempt follows by then.
+fn retryable_attempt(view: &HostAgentUpdateView, retrying: bool) -> Result<Uuid> {
+    let Some(failed) = &view.last_failure else {
+        bail!("no update of this host failed");
+    };
+    let newest = view.history.first().map(|attempt| attempt.update_id);
+    if !retrying && newest != Some(failed.update_id) {
+        bail!("the newest update of this host did not fail");
+    }
+    Ok(failed.update_id)
+}
+
 /// The attempt `ghost provider agent-update cancel` names: the one on its
 /// way, or, for a retry under its key, the one that command cancelled.
-fn cancellable_attempt(view: &HostAgentUpdateView, retrying: bool) -> Option<Uuid> {
+fn cancellable_attempt(view: &HostAgentUpdateView, retrying: bool) -> Result<Uuid> {
+    if let Some(target) = &view.target
+        && target.state == AgentUpdateState::Applying
+    {
+        bail!("the update is being applied, so it cannot be cancelled");
+    }
     view.target
         .as_ref()
         .or_else(|| {
@@ -6148,6 +6163,7 @@ fn cancellable_attempt(view: &HostAgentUpdateView, retrying: bool) -> Option<Uui
                 .filter(|attempt| retrying && attempt.state == AgentUpdateState::Cancelled)
         })
         .map(|attempt| attempt.update_id)
+        .context("this host has no update on its way")
 }
 
 async fn execute_provider(api: &ApiClient, command: &ProviderCommand) -> Result<Value> {
@@ -6452,7 +6468,9 @@ async fn execute_provider(api: &ApiClient, command: &ProviderCommand) -> Result<
                 to_value(renter)
             }
         },
-        ProviderCommand::AgentUpdate { command } => execute_agent_update(api, command).await,
+        ProviderCommand::AgentUpdate { command } => execute_agent_update(api, command)
+            .await
+            .map_err(|error| api::reword_conflict(error, "this host cannot take that update now")),
         ProviderCommand::RetireInstance {
             instance_id,
             notice_days,
@@ -16226,19 +16244,108 @@ mod tests {
     }
 
     /// Cancelling names the attempt on its way; a retry under its key finds
-    /// the one it cancelled, and a first try none.
+    /// the one it cancelled, and a first try none. One being applied is
+    /// past cancelling, which says so.
     #[test]
     fn cancelling_names_the_attempt_on_its_way() {
+        let refused = |view: &HostAgentUpdateView, retrying| {
+            cancellable_attempt(view, retrying).unwrap_err().to_string()
+        };
         let open = agent_update_view(&json!({"target": attempt("staged")}));
-        assert_eq!(cancellable_attempt(&open, false), Some(Uuid::from_u128(7)));
-        let cancelled = agent_update_view(&json!({"history": [attempt("cancelled")]}));
-        assert_eq!(cancellable_attempt(&cancelled, false), None);
         assert_eq!(
-            cancellable_attempt(&cancelled, true),
-            Some(Uuid::from_u128(7))
+            cancellable_attempt(&open, false).unwrap(),
+            Uuid::from_u128(7)
+        );
+        let cancelled = agent_update_view(&json!({"history": [attempt("cancelled")]}));
+        assert_eq!(
+            refused(&cancelled, false),
+            "this host has no update on its way"
+        );
+        assert_eq!(
+            cancellable_attempt(&cancelled, true).unwrap(),
+            Uuid::from_u128(7)
         );
         let failed = agent_update_view(&json!({"history": [attempt("failed")]}));
-        assert_eq!(cancellable_attempt(&failed, true), None);
+        assert_eq!(refused(&failed, true), "this host has no update on its way");
+        let applying = agent_update_view(&json!({"target": attempt("applying")}));
+        for retrying in [false, true] {
+            assert_eq!(
+                refused(&applying, retrying),
+                "the update is being applied, so it cannot be cancelled"
+            );
+        }
+    }
+
+    /// Trying again names the host's newest attempt, the only one the backend
+    /// takes; a retry under its key finds the failure it tried again.
+    #[test]
+    fn trying_again_names_the_newest_attempt_that_failed() {
+        let refused = |view: &HostAgentUpdateView, retrying| {
+            retryable_attempt(view, retrying).unwrap_err().to_string()
+        };
+        let failed = attempt("failed");
+        let mut later = attempt("cancelled");
+        later["update_id"] = json!(Uuid::from_u128(8));
+        assert_eq!(
+            refused(&agent_update_view(&json!({})), false),
+            "no update of this host failed"
+        );
+        let newest = agent_update_view(&json!({
+            "last_failure": failed.clone(), "history": [failed.clone()],
+        }));
+        assert_eq!(
+            retryable_attempt(&newest, false).unwrap(),
+            Uuid::from_u128(7)
+        );
+        let followed = agent_update_view(&json!({
+            "last_failure": failed.clone(), "history": [later, failed],
+        }));
+        assert_eq!(
+            refused(&followed, false),
+            "the newest update of this host did not fail"
+        );
+        assert_eq!(
+            retryable_attempt(&followed, true).unwrap(),
+            Uuid::from_u128(7)
+        );
+    }
+
+    /// The backend's plain conflict is no duplicate here: each command says
+    /// the host cannot take it now, and keeps what `--json` reports.
+    #[tokio::test]
+    async fn an_agent_update_conflict_says_the_host_cannot_take_it() {
+        let directory = tempfile::tempdir().unwrap();
+        let seed = directory.path().join("account.seed");
+        keys::generate_seed(&seed).unwrap();
+        let conflict = json!({"code": "conflict", "message": "resource already exists",
+            "request_id": "agent-1"})
+        .to_string();
+        let open = agent_update_view(&json!({"target": attempt("staged")}));
+        let (url, _) = canned_server(vec![
+            (409, conflict.clone()),
+            (200, serde_json::to_string(&open).unwrap()),
+            (409, conflict),
+        ])
+        .await;
+        let host = Uuid::nil().to_string();
+        let release = "20261010T000000Z-bbbbbbbbbbbb";
+        for arguments in [
+            vec!["provider", "agent-update", "approve", &host, release],
+            vec!["provider", "agent-update", "cancel", &host],
+        ] {
+            let error = execute(&account_command(&url, &seed, &arguments))
+                .await
+                .unwrap_err();
+            let output = error_output(&error);
+            assert_eq!(
+                output["error"]["message"],
+                "API returned 409 Conflict: this host cannot take that update now (request agent-1)",
+                "{arguments:?}"
+            );
+            assert_eq!(output["error"]["code"], "conflict");
+            assert_eq!(output["error"]["status"], 409);
+            assert_eq!(output["error"]["request_id"], "agent-1");
+        }
     }
 
     /// `show` says every state plainly, and a state of a newer backend
