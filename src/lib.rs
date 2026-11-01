@@ -130,7 +130,7 @@ pub struct GlobalOptions {
         global = true,
         env = "GHOST_API_URL",
         hide_env_values = true,
-        default_value = "https://api.gigahost.cloud",
+        default_value = "https://api.ghostrack.io",
         help_heading = GLOBAL_OPTIONS
     )]
     api_url: String,
@@ -2202,7 +2202,7 @@ impl HistoryArgs {
     /// # Panics
     /// Panics only if the static query URL cannot be parsed.
     pub fn query_after(&self, filters: &[(&str, String)]) -> String {
-        let mut url = reqwest::Url::parse("https://api.gigahost.cloud/").expect("static URL");
+        let mut url = reqwest::Url::parse("https://api.ghostrack.io/").expect("static URL");
         let mut query = url.query_pairs_mut();
         for (name, value) in filters {
             query.append_pair(name, value);
@@ -5263,7 +5263,7 @@ const GITHUB_POLL_INTERVAL: Duration = Duration::from_secs(2);
 
 /// The Terms of Service on the website, which a sign-up, an activation and a host's enrollment
 /// agree to.
-const TERMS_URL: &str = "https://gigahost.cloud/terms";
+const TERMS_URL: &str = "https://ghostrack.io/terms";
 
 /// The line a sign-up or an activation prints before it sends anything:
 /// activating agrees to the Terms and asks that the service starts at once,
@@ -5310,8 +5310,8 @@ fn github_wait_limit(claim: &TrialClaimView, now: DateTime<Utc>) -> Duration {
 
 /// The claim link to open in the browser, only when it is the website of
 /// the API in use: an http or https link without a user name or password,
-/// on the API's host or on a parent domain of it (`gigahost.cloud` for
-/// `api.gigahost.cloud`), as the desktop app opens only the configured
+/// on the API's host or on a parent domain of it (`ghostrack.io` for
+/// `api.ghostrack.io`), as the desktop app opens only the configured
 /// website. The API chooses the link, so any other is printed for the
 /// person to judge and never handed to the system, where a file link or a
 /// registered protocol would start a program.
@@ -6666,7 +6666,7 @@ async fn execute_provider(api: &ApiClient, command: &ProviderCommand) -> Result<
             cursor,
             limit,
         } => {
-            let mut url = reqwest::Url::parse("https://api.gigahost.cloud/").expect("static URL");
+            let mut url = reqwest::Url::parse("https://api.ghostrack.io/").expect("static URL");
             let mut query = url.query_pairs_mut();
             if let Some(host) = host {
                 query.append_pair("host", &host.to_string());
@@ -8165,7 +8165,7 @@ async fn execute_instance(
 /// parameter in the order of its fields, `state` once for each state and
 /// `tag` for each tag.
 fn instance_list_query(query: &InstanceListQuery) -> String {
-    let mut url = reqwest::Url::parse("https://api.gigahost.cloud/").expect("static URL");
+    let mut url = reqwest::Url::parse("https://api.ghostrack.io/").expect("static URL");
     {
         let mut pairs = url.query_pairs_mut();
         if let Some(ids) = &query.ids {
@@ -8213,7 +8213,7 @@ fn instance_list_query(query: &InstanceListQuery) -> String {
 /// in the order of its fields, `state` once for each state and `tag` for
 /// each tag.
 fn backup_list_query(query: &AccountBackupListQuery) -> String {
-    let mut url = reqwest::Url::parse("https://api.gigahost.cloud/").expect("static URL");
+    let mut url = reqwest::Url::parse("https://api.ghostrack.io/").expect("static URL");
     {
         let mut pairs = url.query_pairs_mut();
         if let Some(limit) = query.limit {
@@ -11875,7 +11875,7 @@ fn parse_continent_code(value: &str) -> Result<String, String> {
 impl LocationFilters {
     /// The filters as the location list's query string.
     fn query(&self) -> String {
-        let mut url = reqwest::Url::parse("https://api.gigahost.cloud/").expect("static URL");
+        let mut url = reqwest::Url::parse("https://api.ghostrack.io/").expect("static URL");
         let mut query = url.query_pairs_mut();
         for (name, value) in [("country", &self.country), ("continent", &self.continent)] {
             if let Some(value) = value {
@@ -11959,7 +11959,7 @@ impl OfferingFilters {
             (_, Some(kind)) => kind,
             (requested, None) => requested.unwrap_or(KindChoice::Any),
         };
-        let mut url = reqwest::Url::parse("https://api.gigahost.cloud/").expect("static URL");
+        let mut url = reqwest::Url::parse("https://api.ghostrack.io/").expect("static URL");
         let mut query = url.query_pairs_mut();
         for (name, value) in [
             ("mode", self.mode.map(wire_name)),
@@ -20274,25 +20274,25 @@ mod tests {
     /// The API chooses the claim link, so only its own website's is opened.
     #[test]
     fn only_the_apis_website_is_opened_in_the_browser() {
-        let api = "https://api.gigahost.cloud/";
+        let api = "https://api.ghostrack.io/";
         let opened = |link: &str| browser_link(link, api).map(|url| url.to_string());
         assert_eq!(
-            opened("https://gigahost.cloud/trial/start?claim=abc").as_deref(),
-            Some("https://gigahost.cloud/trial/start?claim=abc")
+            opened("https://ghostrack.io/trial/start?claim=abc").as_deref(),
+            Some("https://ghostrack.io/trial/start?claim=abc")
         );
-        assert!(opened("https://api.gigahost.cloud/trial/start?claim=abc").is_some());
+        assert!(opened("https://api.ghostrack.io/trial/start?claim=abc").is_some());
         for refused in [
             "file:///C:/Users/x/payload.exe",
             "ms-msdt:/id PCWDiagnostic",
             "javascript:alert(1)",
             "-oProxyCommand=evil",
             "--help",
-            "gigahost.cloud/trial/start",
-            "https://user:pass@gigahost.cloud/trial/start",
-            "https://user@gigahost.cloud/trial/start",
+            "ghostrack.io/trial/start",
+            "https://user:pass@ghostrack.io/trial/start",
+            "https://user@ghostrack.io/trial/start",
             "https://evil.example/trial/start",
-            "https://notgigahost.cloud/trial/start",
-            "https://gigahost.cloud.evil.example/trial/start",
+            "https://notghostrack.io/trial/start",
+            "https://ghostrack.io.evil.example/trial/start",
             "https://cloud/trial/start",
             "https://127.0.0.1/trial/start",
         ] {
@@ -20487,13 +20487,13 @@ mod tests {
     fn signing_up_and_enrolling_name_the_terms() {
         assert_eq!(
             signup_terms_line("signing up"),
-            "By signing up you agree to the Terms of Service and the Acceptable Use Policy, and ask that the service starts at once: https://gigahost.cloud/terms"
+            "By signing up you agree to the Terms of Service and the Acceptable Use Policy, and ask that the service starts at once: https://ghostrack.io/terms"
         );
         assert!(
             signup_terms_line("activating the account")
                 .starts_with("By activating the account you agree")
         );
-        assert!(provider_terms_line().ends_with("https://gigahost.cloud/terms#providers"));
+        assert!(provider_terms_line().ends_with("https://ghostrack.io/terms#providers"));
     }
 
     /// Unlinking needs `--yes` and sends nothing without it.

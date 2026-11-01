@@ -233,23 +233,23 @@ mod tests {
     #[test]
     fn the_console_server_is_the_apis_domain_on_2222() {
         assert_eq!(
-            console_server("https://api.gigahost.cloud", None).unwrap(),
-            ("console.gigahost.cloud".to_owned(), 2222)
+            console_server("https://api.ghostrack.io", None).unwrap(),
+            ("console.ghostrack.io".to_owned(), 2222)
         );
         assert_eq!(
             console_server("http://127.0.0.1:8080", None).unwrap(),
             ("console.127.0.0.1".to_owned(), 2222)
         );
         assert_eq!(
-            console_server("https://api.gigahost.cloud", Some("localhost:2200")).unwrap(),
+            console_server("https://api.ghostrack.io", Some("localhost:2200")).unwrap(),
             ("localhost".to_owned(), 2200)
         );
         assert_eq!(
-            console_server("https://api.gigahost.cloud", Some("[::1]:2201")).unwrap(),
+            console_server("https://api.ghostrack.io", Some("[::1]:2201")).unwrap(),
             ("::1".to_owned(), 2201)
         );
         assert_eq!(
-            console_server("https://api.gigahost.cloud", Some("console.example")).unwrap(),
+            console_server("https://api.ghostrack.io", Some("console.example")).unwrap(),
             ("console.example".to_owned(), 2222)
         );
     }
@@ -266,7 +266,7 @@ mod tests {
             "gigahost-console ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHeHGO1Mp+d9SZrDhuNTitg9vmYCj0pZiw+EuZbKDbM0\n"
         );
         let instance = uuid::Uuid::from_u128(7);
-        let argv = ssh_argv("console.gigahost.cloud", 2222, instance, &known_hosts);
+        let argv = ssh_argv("console.ghostrack.io", 2222, instance, &known_hosts);
         let argv: Vec<String> = argv
             .iter()
             .map(|argument| argument.to_string_lossy().into_owned())
@@ -298,7 +298,7 @@ mod tests {
             "-l",
             "00000000-0000-0000-0000-000000000007",
             "--",
-            "console.gigahost.cloud",
+            "console.ghostrack.io",
         ];
         assert_eq!(argv, expected);
     }
