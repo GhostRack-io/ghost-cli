@@ -3249,8 +3249,8 @@ pub struct InstanceUpgradeView {
     /// What the upgrade adds to the balance the instance holds; the
     /// balance must cover it.
     pub balance_reservation_increase_microusd: u64,
-    /// Whether the instance's NUMA node and root pool have room for the
-    /// size right now, beside what the instance holds already.
+    /// Whether its host has room for the size on the instance's root pool
+    /// right now, beside what the instance holds already.
     pub available: bool,
 }
 
