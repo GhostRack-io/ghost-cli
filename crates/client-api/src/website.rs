@@ -3726,7 +3726,7 @@ pub struct InstanceView {
     /// The limit or block on the instance's new outgoing connections, while
     /// one is in force. Absent otherwise, and from older backends.
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub egress_restriction: Option<InstanceEgressRestriction>,
+    pub egress_restriction: Option<InstanceEgressNotice>,
     /// The latest reset of the instance's SSH access and what the guest reported of it. Absent when
     /// there was none, and from older backends.
     #[serde(default)]
@@ -3777,7 +3777,7 @@ pub enum InstanceEgressLevel {
 /// A limit or block of an instance's new outgoing connections, as its
 /// renter reads it: the level, why and since when.
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
-pub struct InstanceEgressRestriction {
+pub struct InstanceEgressNotice {
     pub level: InstanceEgressLevel,
     /// The facts, as the renter's notice gave them.
     pub reason: String,
