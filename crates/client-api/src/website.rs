@@ -3723,6 +3723,10 @@ pub struct InstanceView {
     /// older backends.
     #[serde(default)]
     pub hold: Option<InstanceHoldView>,
+    /// The limit or block on the instance's new outgoing connections, while
+    /// one is in force. Absent otherwise, and from older backends.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub egress_restriction: Option<InstanceEgressRestriction>,
     /// The latest reset of the instance's SSH access and what the guest reported of it. Absent when
     /// there was none, and from older backends.
     #[serde(default)]
@@ -3755,6 +3759,33 @@ pub struct InstanceHoldView {
     pub reason: String,
     pub rule: String,
     pub held_at: DateTime<Utc>,
+}
+
+/// How far an instance's new outgoing connections are restricted. A level
+/// a client of before does not know reads as [`Self::Unknown`].
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum InstanceEgressLevel {
+    /// Slowed to a rate.
+    Limited,
+    /// Dropped.
+    Blocked,
+    #[serde(other)]
+    Unknown,
+}
+
+/// A limit or block of an instance's new outgoing connections, as its
+/// renter reads it: the level, why and since when.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct InstanceEgressRestriction {
+    pub level: InstanceEgressLevel,
+    /// The facts, as the renter's notice gave them.
+    pub reason: String,
+    /// The rule an operator named.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub rule: Option<String>,
+    /// When it reached this level.
+    pub since: DateTime<Utc>,
 }
 
 /// What a container instance runs.

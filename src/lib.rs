@@ -85,11 +85,11 @@ use gigahost_client_api::{
         CreateHostEnrollmentTokenRequest, CreateInstanceRequest, CreateProviderPayoutRequest,
         CreateSupportTicketRequest, DeclareHostEmergencyRequest, GatewayTier, GatewayTrafficView,
         GithubUnlinked, HandOverCloudIpPoolRequest, HostAgentUpdateView, HostEnrollmentToken,
-        HostModeFilter, HostPrivacyView, ImageView, InstanceConsoleLogView, InstanceKind,
-        InstanceListQuery, InstanceMeshView, InstanceProjectionView, InstanceSort, InstanceSource,
-        InstanceState, InstanceStateFilter, InstanceTagView, InstanceUpgradeView, InstanceView,
-        IpChoice, JobAccepted, JobEventView, JobKind, JobPage, JobState, JobStateFilter,
-        JobStepState, JobView, KindChoice, LedgerKind, LocationView, LoginGrant,
+        HostModeFilter, HostPrivacyView, ImageView, InstanceConsoleLogView, InstanceEgressLevel,
+        InstanceKind, InstanceListQuery, InstanceMeshView, InstanceProjectionView, InstanceSort,
+        InstanceSource, InstanceState, InstanceStateFilter, InstanceTagView, InstanceUpgradeView,
+        InstanceView, IpChoice, JobAccepted, JobEventView, JobKind, JobPage, JobState,
+        JobStateFilter, JobStepState, JobView, KindChoice, LedgerKind, LocationView, LoginGrant,
         MAX_SSH_PUBLIC_KEYS, MigrateAccountSeedRequest, MoveGatewayLocationRequest, OfferingView,
         PortForwardChange, PrivateRenterView, ProviderBalanceView, ProviderHostDetailView,
         ProviderHostView, ProviderIncidentSeverity, ProviderIncidentState, ProviderIncidentView,
@@ -3137,7 +3137,8 @@ pub async fn closing_notes(cli: &Cli, output: &Value) -> Vec<String> {
         InstanceCommand::Get { .. } if cli.output_format() == OutputFormat::Readable => {
             serde_json::from_value::<InstanceView>(output.clone())
                 .map(|instance| {
-                    let mut notes = access_reset_notes(&instance);
+                    let mut notes = egress_notes(&instance);
+                    notes.extend(access_reset_notes(&instance));
                     notes.extend(rescue_notes(&instance));
                     notes
                 })
@@ -3314,6 +3315,24 @@ fn rescue_notes_with(instance: &InstanceView, login: Result<String>) -> Vec<Stri
     }
     notes.push(format!("End the rescue: ghost instance rescue {id} --exit"));
     notes
+}
+
+/// The limit or block of the instance's new outgoing connections
+/// (`ghost instance get`), in a line.
+fn egress_notes(instance: &InstanceView) -> Vec<String> {
+    let Some(restriction) = &instance.egress_restriction else {
+        return Vec::new();
+    };
+    let level = match restriction.level {
+        InstanceEgressLevel::Limited => "limited",
+        InstanceEgressLevel::Blocked => "blocked",
+        InstanceEgressLevel::Unknown => "restricted",
+    };
+    vec![format!(
+        "warning: new outgoing connections {level} since {}: {}",
+        restriction.since.format("%Y-%m-%d %H:%M UTC"),
+        escape_control(&restriction.reason)
+    )]
 }
 
 /// What the guest reported of the instance's latest SSH access reset
@@ -17929,6 +17948,45 @@ mod tests {
         let read = format!("GET /v1/instances/{id}");
         let post = format!("POST /api/mut/v1/instances/{id}/reinstall");
         assert_eq!(request_lines(&received), [&*read, &post, &read, &post]);
+    }
+
+    /// `ghost instance get` says a limit or block in a line, a control byte
+    /// of the reason neutralized, and nothing without one; `--json` has the
+    /// object, and a level of a later backend still reads.
+    #[test]
+    fn a_restricted_instance_says_so_in_a_line() {
+        let view = |restriction: Value| -> InstanceView {
+            serde_json::from_value(json!({"instance_id": Uuid::nil(), "offering_id": "o",
+                "hostname": "vm", "root_disk_bytes": 12_u64 << 30, "state": "running",
+                "desired_power_state": "running", "holds_capacity": true,
+                "network_microusd_per_tib": 0, "created_at": Utc::now(),
+                "balance_reservation_microusd": 0, "egress_restriction": restriction}))
+            .unwrap()
+        };
+        let restriction = |level: &str| {
+            json!({"level": level, "reason": "4100 addresses in 5 minutes\u{1b}[2J",
+                "since": "2026-11-02T08:00:00Z"})
+        };
+        assert!(egress_notes(&view(Value::Null)).is_empty());
+        for (level, word) in [
+            ("limited", "limited"),
+            ("blocked", "blocked"),
+            ("later_level", "restricted"),
+        ] {
+            let notes = egress_notes(&view(restriction(level)));
+            assert_eq!(notes.len(), 1);
+            assert!(
+                notes[0].starts_with(&format!(
+                    "warning: new outgoing connections {word} since 2026-11-02 08:00 UTC: 4100 addresses in 5 minutes"
+                )),
+                "{notes:?}"
+            );
+            assert!(!notes[0].contains('\u{1b}'), "{notes:?}");
+        }
+        let json = serde_json::to_value(view(restriction("blocked"))).unwrap();
+        assert_eq!(json["egress_restriction"]["level"], "blocked");
+        let json = serde_json::to_value(view(Value::Null)).unwrap();
+        assert!(json.get("egress_restriction").is_none());
     }
 
     /// `instance rescue` sends the keys given with --ssh-key and none of
