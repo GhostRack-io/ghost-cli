@@ -15011,6 +15011,7 @@ mod tests {
             bandwidth: None,
             sla: None,
             hold: None,
+            egress_restriction: None,
             access_reset: None,
             rescue: None,
         };

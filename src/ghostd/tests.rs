@@ -349,6 +349,7 @@ fn instance_fixture() -> InstanceView {
         bandwidth: None,
         sla: None,
         hold: None,
+        egress_restriction: None,
         access_reset: None,
         rescue: None,
     }
