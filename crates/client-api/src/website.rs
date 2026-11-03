@@ -1621,7 +1621,7 @@ impl BackupStateFilter {
 }
 
 /// Where the backups a list keeps are (`destination=` of
-/// [`AccountBackupListQuery`]): hosted by Gigahost, or local on their
+/// [`AccountBackupListQuery`]): hosted by GhostRack, or local on their
 /// instance's host.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -3926,7 +3926,7 @@ pub struct StockImage {
     /// `<name>-<version>`, such as `debian-13`: what a renter names it by.
     pub slug: String,
     pub display_name: String,
-    /// `ghcr.io/gigahost-apps/<name>@sha256:HEX`: the image pinned by its
+    /// `ghcr.io/ghostrack-io/<name>@sha256:HEX`: the image pinned by its
     /// digest.
     pub reference: String,
     pub init_system: StockImageInit,
@@ -4943,7 +4943,7 @@ pub struct AccountProjectionView {
     pub traffic_microusd: u64,
     /// The storage of the backups kept on hosts.
     pub local_backups_microusd: u64,
-    /// The storage of the backups Gigahost hosts.
+    /// The storage of the backups GhostRack hosts.
     pub hosted_backups_microusd: u64,
     /// The four together.
     pub total_microusd: u64,

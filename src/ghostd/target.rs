@@ -18,7 +18,7 @@ use std::{
 };
 
 use anyhow::{Context as _, Result, bail};
-use gigahost_client_api::{
+use ghostrack_client_api::{
     api::GetInstance,
     website::{GatewayTier, InstanceKind, InstanceState, InstanceView},
 };
@@ -625,14 +625,15 @@ pub(crate) struct InstanceAddress {
     pub(crate) port: u16,
 }
 
-/// The repository prefix of the platform's stock images
-/// (gigahost-apps/container-images): an older backend's view of a
-/// container instance does not name its stock image, and one of an image
-/// from there may be one. This is a best guess, and it also applies to a
-/// newer backend's view, where a missing `stock_image` reads as null: a
-/// renter's own image from there is then tried over SSH instead of being
-/// refused early.
-const STOCK_IMAGE_REPOSITORIES: &str = "ghcr.io/gigahost-apps/";
+/// The repository prefixes of the platform's stock images
+/// (ghostrack-io/container-images), new and old, as an instance keeps the
+/// image it was created with: an older backend's view of a container
+/// instance does not name its stock image, and one of an image from there
+/// may be one. This is a best guess, and it also applies to a newer
+/// backend's view, where a missing `stock_image` reads as null: a renter's
+/// own image from there is then tried over SSH instead of being refused
+/// early.
+const STOCK_IMAGE_REPOSITORIES: [&str; 2] = ["ghcr.io/ghostrack-io/", "ghcr.io/gigahost-apps/"];
 
 /// Whether `instance` may answer SSH with the account's keys: a VM, or a
 /// container instance of a stock image, whose init writes them. A
@@ -642,7 +643,10 @@ fn answers_ssh(instance: &InstanceView) -> bool {
         return true;
     }
     instance.container.as_ref().is_none_or(|container| {
-        container.stock_image.is_some() || container.image.starts_with(STOCK_IMAGE_REPOSITORIES)
+        container.stock_image.is_some()
+            || STOCK_IMAGE_REPOSITORIES
+                .iter()
+                .any(|repository| container.image.starts_with(repository))
     })
 }
 

@@ -78,7 +78,7 @@ def main():
     version, revision = package.source()
     prefix = PREFIX
     bucket = os.environ.get('CDN_STORAGE_ZONE') or 'gigahost-apps'
-    public_base = os.environ.get('CDN_PUBLIC_BASE') or 'https://apps.gigahost.cloud'
+    public_base = os.environ.get('CDN_PUBLIC_BASE') or 'https://apps.ghostrack.io'
     endpoint = os.environ.get('CDN_STORAGE_ENDPOINT') or 'https://sg.storage.bunnycdn.com'
     client = cdn.BunnyHTTPStorage(endpoint, 'dry-run' if args.dry_run else os.environ.get('CDN_STORAGE_PASSWORD'))
     client.object_url(bucket, prefix + '/latest.json')

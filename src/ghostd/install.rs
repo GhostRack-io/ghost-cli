@@ -40,11 +40,11 @@ use super::{
 /// The script that installs a given ref from source: `$1` is the ref. It
 /// downloads install.sh with curl, else wget (Alpine has busybox wget), to
 /// a file first, so that a failed download fails the install.
-pub(crate) const INSTALL_REF_SCRIPT: &str = r#"t=$(mktemp) || exit 1; if command -v curl >/dev/null 2>&1; then curl -fsSL -o "$t" "https://raw.githubusercontent.com/gigahost-apps/ghostd/$1/install.sh"; else wget -q -O "$t" "https://raw.githubusercontent.com/gigahost-apps/ghostd/$1/install.sh"; fi && sh "$t" --ref "$1"; r=$?; rm -f "$t"; exit $r"#;
+pub(crate) const INSTALL_REF_SCRIPT: &str = r#"t=$(mktemp) || exit 1; if command -v curl >/dev/null 2>&1; then curl -fsSL -o "$t" "https://raw.githubusercontent.com/ghostrack-io/ghostd/$1/install.sh"; else wget -q -O "$t" "https://raw.githubusercontent.com/ghostrack-io/ghostd/$1/install.sh"; fi && sh "$t" --ref "$1"; r=$?; rm -f "$t"; exit $r"#;
 
 /// The script that installs install.sh's own default (the latest tag, else
 /// main) from source, fetched from main.
-pub(crate) const INSTALL_DEFAULT_SCRIPT: &str = r#"t=$(mktemp) || exit 1; if command -v curl >/dev/null 2>&1; then curl -fsSL -o "$t" "https://raw.githubusercontent.com/gigahost-apps/ghostd/main/install.sh"; else wget -q -O "$t" "https://raw.githubusercontent.com/gigahost-apps/ghostd/main/install.sh"; fi && sh "$t"; r=$?; rm -f "$t"; exit $r"#;
+pub(crate) const INSTALL_DEFAULT_SCRIPT: &str = r#"t=$(mktemp) || exit 1; if command -v curl >/dev/null 2>&1; then curl -fsSL -o "$t" "https://raw.githubusercontent.com/ghostrack-io/ghostd/main/install.sh"; else wget -q -O "$t" "https://raw.githubusercontent.com/ghostrack-io/ghostd/main/install.sh"; fi && sh "$t"; r=$?; rm -f "$t"; exit $r"#;
 
 /// The command that names the target's machine; the channel builds
 /// x86-64 only.
@@ -97,7 +97,7 @@ pub(crate) const ALREADY_INSTALLED: &str = "is already installed at";
 /// The arguments of `sh` that install a channel release: `-c SCRIPT`, then
 /// `sh` and the validated release, commit and SHA-256 (`$0` to `$3`).
 pub(crate) fn channel_arguments(version: &str, commit: &str, sha256: &str) -> Result<Vec<String>> {
-    if !gigahost_client_api::release::is_release_version(version) {
+    if !ghostrack_client_api::release::is_release_version(version) {
         bail!("the release version {version:?} has an invalid format");
     }
     if !lowercase_hex(commit, 40) {

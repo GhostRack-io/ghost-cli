@@ -16,7 +16,7 @@
 use std::{fmt::Write as _, io::IsTerminal};
 
 use chrono::{DateTime, Utc};
-use gigahost_client_api::hypervisor::{CpuTier, size_cpu_text};
+use ghostrack_client_api::hypervisor::{CpuTier, size_cpu_text};
 use serde::Deserialize as _;
 use serde_json::{Map, Number, Value};
 
@@ -1155,7 +1155,7 @@ mod tests {
     /// as none.
     #[test]
     fn the_images_show_their_minimum_memory_as_a_size() {
-        let images: Vec<gigahost_client_api::website::ImageView> = serde_json::from_value(json!([
+        let images: Vec<ghostrack_client_api::website::ImageView> = serde_json::from_value(json!([
             {"image_id": "01a00000-0000-7000-8000-000000000026", "slug": "ubuntu-26.04",
              "display_name": "Ubuntu 26.04 LTS", "architecture": "x86_64",
              "minimum_disk_bytes": 8_589_934_592_u64, "minimum_memory_bytes": 1_073_741_824_u64},

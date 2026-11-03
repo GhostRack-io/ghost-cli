@@ -1,4 +1,4 @@
-use gigahost_client_api::api::{ALL, Access, Endpoint, GetOffering};
+use ghostrack_client_api::api::{ALL, Access, Endpoint, GetOffering};
 
 #[test]
 fn customer_routes_are_unique_and_escape_parameters() {
@@ -25,7 +25,7 @@ fn customer_routes_are_unique_and_escape_parameters() {
 }
 
 mod external_macro_consumer {
-    gigahost_client_api::endpoints! {
+    ghostrack_client_api::endpoints! {
         Probe { name: String } = user GET "/probe/{name}" => String;
     }
 }

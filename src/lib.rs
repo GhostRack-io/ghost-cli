@@ -37,7 +37,7 @@ pub use api::{Answered, ApiClient, MutationKey};
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use chrono::{DateTime, Utc};
 use clap::{Args, CommandFactory as _, FromArgMatches as _, Parser, Subcommand, ValueEnum};
-use gigahost_client_api::{
+use ghostrack_client_api::{
     account_auth::{
         BackupBillingAuthorizationInput, SeedMigrationInput,
         canonical_backup_billing_authorization, canonical_seed_migration,
@@ -168,7 +168,7 @@ pub struct GlobalOptions {
 #[command(
     name = "ghost",
     version = version_text(),
-    about = "Manage Gigahost instances, backups, jobs, and account keys"
+    about = "Manage GhostRack instances, backups, jobs, and account keys"
 )]
 pub struct Cli {
     #[command(flatten)]
@@ -826,7 +826,7 @@ enum ProviderAgentUpdateCommand {
         /// Host ID, from `ghost provider hosts`.
         host_id: Uuid,
         /// `manual` waits for your approval of each release; `automatic`
-        /// takes the releases Gigahost rolls out.
+        /// takes the releases GhostRack rolls out.
         #[arg(long, value_enum)]
         policy: Option<AgentUpdatePolicyChoice>,
         /// The window's UTC days, such as `mon,thu`. Needs --start and
@@ -2234,7 +2234,7 @@ enum BackupCommand {
         /// given replaces --all: list `deleted` to see deleted ones.
         #[arg(long = "state", value_name = "STATE", value_enum)]
         states: Vec<BackupStateFilter>,
-        /// Only backups hosted by Gigahost.
+        /// Only backups hosted by GhostRack.
         #[arg(long, conflicts_with = "local")]
         hosted: bool,
         /// Only backups stored on their instance's host.
@@ -2948,7 +2948,7 @@ pub(crate) fn release() -> &'static str {
         std::env::current_exe()
             .ok()
             .and_then(|executable| installed_release(&executable))
-            .unwrap_or_else(|| gigahost_client_api::support_window::DEVELOPMENT_RELEASE.to_owned())
+            .unwrap_or_else(|| ghostrack_client_api::support_window::DEVELOPMENT_RELEASE.to_owned())
     });
     &RELEASE
 }
@@ -3923,7 +3923,7 @@ impl Summary {
     /// when there is one, and shows the image it ran: a stock image's slug,
     /// or the reference of the renter's image.
     fn backups(backups: Vec<BackupView>) -> Self {
-        use gigahost_client_api::website::{BackupPurpose, BackupState};
+        use ghostrack_client_api::website::{BackupPurpose, BackupState};
         // An available backup in a backup pool its host is missing is
         // unavailable, and says why.
         let unavailable = |backup: &BackupView| {
@@ -4012,7 +4012,7 @@ impl Summary {
                         } else {
                             backup.storage_cost_microusd_per_month.or_else(|| {
                                 backup.size_bytes.map(|size| {
-                                    gigahost_client_api::website::backup_byte_charge(
+                                    ghostrack_client_api::website::backup_byte_charge(
                                         size,
                                         backup.storage_charge_microusd_per_gib_month,
                                     )
@@ -4032,7 +4032,7 @@ impl Summary {
     /// Ledger entries by the part of the balance they move: what is
     /// available, what instances hold, or credit at a provider. A hold
     /// moves an amount from the first to the second, and its release back.
-    fn history(page: gigahost_client_api::website::HistoryPage) -> Self {
+    fn history(page: ghostrack_client_api::website::HistoryPage) -> Self {
         Self {
             columns: vec![
                 "posted_at",
@@ -4143,7 +4143,7 @@ impl Summary {
                         "kinds": kinds_text(&offering),
                         "cpu": format!(
                             "{} {}",
-                            gigahost_client_api::hypervisor::size_cpu_text(offering.vcpu_count),
+                            ghostrack_client_api::hypervisor::size_cpu_text(offering.vcpu_count),
                             short_cpu_model(&offering.cpu_model)
                         ),
                         "ram": match memory_technology(&offering) {
@@ -4202,7 +4202,7 @@ impl Summary {
                 .map(|upgrade| {
                     json!({
                         "offering_id": upgrade.offering_id,
-                        "cpu": gigahost_client_api::hypervisor::size_cpu_text(upgrade.vcpu_count),
+                        "cpu": ghostrack_client_api::hypervisor::size_cpu_text(upgrade.vcpu_count),
                         "ram": pretty::binary_size(upgrade.memory_bytes),
                         "disk": pretty::binary_size(upgrade.root_disk_bytes),
                         "base_per_month": pretty::dollars(upgrade.base_price_microusd_per_month),
@@ -4378,7 +4378,7 @@ fn kinds_text(offering: &OfferingView) -> String {
 fn size_text(vcpu_count: u32, memory_bytes: u64, root_disk_bytes: u64) -> String {
     format!(
         "{}, {} RAM, {} disk",
-        gigahost_client_api::hypervisor::size_cpu_text(vcpu_count),
+        ghostrack_client_api::hypervisor::size_cpu_text(vcpu_count),
         pretty::binary_size(memory_bytes),
         pretty::binary_size(root_disk_bytes)
     )
@@ -4414,7 +4414,7 @@ fn kept_words(instances: u32, local_backups: u32) -> Option<String> {
 /// cannot resume until its path is verified.
 fn host_admission(host: &ProviderHostView) -> &str {
     let retiring = host.retirement_notice.as_ref().is_some_and(|notice| {
-        notice.state != gigahost_client_api::website::HostRetirementState::Completed
+        notice.state != ghostrack_client_api::website::HostRetirementState::Completed
     });
     let unverified = host.mode == HostMode::CloudRouted && host.public_path_verified_at.is_none();
     match host.status.as_str() {
@@ -4502,7 +4502,7 @@ fn disk_text(offering: &OfferingView) -> String {
         offering.software_raid_levels.is_empty() && !offering.hardware_raid_levels.is_empty();
     let mut parts = vec![pretty::binary_size(offering.root_disk_bytes)];
     if !hardware {
-        parts.extend(gigahost_client_api::hypervisor::drive_kinds(
+        parts.extend(ghostrack_client_api::hypervisor::drive_kinds(
             &offering.storage_devices,
         ));
     }
@@ -4551,12 +4551,12 @@ fn memory_technology(offering: &OfferingView) -> Option<String> {
 /// of a tier, for a shared one at one of its `gateway_locations`.
 struct NetworkOption<'a> {
     tier: Option<GatewayTier>,
-    location: Option<&'a gigahost_client_api::website::GatewayLocationView>,
+    location: Option<&'a ghostrack_client_api::website::GatewayLocationView>,
     base_microusd_per_month: u64,
     traffic_microusd_per_tib: u64,
     /// The bandwidth limit of the option, by its tier; none from a backend
     /// of before.
-    bandwidth: Option<gigahost_client_api::website::BandwidthView>,
+    bandwidth: Option<ghostrack_client_api::website::BandwidthView>,
 }
 
 /// Every network option of `offering`. The catalog prices a shared gateway
@@ -4615,7 +4615,7 @@ fn network_options(offering: &OfferingView) -> Vec<NetworkOption<'_>> {
 }
 
 /// A bandwidth limit as `ghost` writes it: `200 Mbit/s`, or `no limit`.
-fn bandwidth_text(bandwidth: gigahost_client_api::website::BandwidthView) -> String {
+fn bandwidth_text(bandwidth: ghostrack_client_api::website::BandwidthView) -> String {
     bandwidth
         .limit_mbit
         .map_or_else(|| "no limit".to_owned(), |mbit| format!("{mbit} Mbit/s"))
@@ -4626,7 +4626,7 @@ fn bandwidth_text(bandwidth: gigahost_client_api::website::BandwidthView) -> Str
 /// A cloud offering's shared IP is included in its host's fixed price, so
 /// `cloud` says "included" for it where a gateway's tier names a price.
 fn network_prices_text(
-    prices: &[gigahost_client_api::website::NetworkPriceView],
+    prices: &[ghostrack_client_api::website::NetworkPriceView],
     cloud: bool,
 ) -> String {
     let rows = prices
@@ -4767,7 +4767,7 @@ fn located(text: String, location: Option<&str>) -> String {
 
 /// The best network test readings of a host or an offering, upload first.
 fn network_summary_fields(
-    summary: &gigahost_client_api::website::NetworkTestSummaryView,
+    summary: &ghostrack_client_api::website::NetworkTestSummaryView,
 ) -> pretty::Section {
     pretty::Section::Fields(vec![
         (
@@ -4833,7 +4833,7 @@ fn readable_sections(command: &Command, output: &Value, terminal: Terminal) -> O
             .get("mmx_exchange_rate")
             .filter(|rate| !rate.is_null())
         {
-            let rate: gigahost_client_api::website::MmxExchangeRateView =
+            let rate: ghostrack_client_api::website::MmxExchangeRateView =
                 serde_json::from_value(rate.clone()).ok()?;
             fields.insert(
                 "mmx_exchange_rate".to_owned(),
@@ -4883,7 +4883,7 @@ fn readable_sections(command: &Command, output: &Value, terminal: Terminal) -> O
                 ),
                 "Before enrolling it again:".to_owned(),
                 "  1. Stop the hypervisor service on that host.".to_owned(),
-                "  2. Run: gigahost-hypervisor reset-enrollment --config PATH --yes".to_owned(),
+                "  2. Run: ghostrack-hypervisor reset-enrollment --config PATH --yes".to_owned(),
                 "  3. Enroll it with a new token.".to_owned(),
             ]
             .join("\n"),
@@ -5050,7 +5050,7 @@ fn readable_sections(command: &Command, output: &Value, terminal: Terminal) -> O
             Some(pretty::render_sections(&map, &sections, terminal))
         }
         CatalogCommand::NetworkTest { .. } => {
-            let tests: gigahost_client_api::website::HostNetworkTestsView =
+            let tests: ghostrack_client_api::website::HostNetworkTestsView =
                 serde_json::from_value(output.clone()).ok()?;
             let mut map = serde_json::Map::new();
             map.insert("host_id".to_owned(), json!(tests.host_id));
@@ -5776,8 +5776,8 @@ async fn execute_catalog(api: &ApiClient, command: &CatalogCommand) -> Result<Va
             to_value(images)
         }
         CatalogCommand::Status => {
-            let status: gigahost_client_api::website::PlatformStatusView =
-                api.read(&gigahost_client_api::api::GetStatus, "").await?;
+            let status: ghostrack_client_api::website::PlatformStatusView =
+                api.read(&ghostrack_client_api::api::GetStatus, "").await?;
             to_value(status)
         }
         CatalogCommand::Provider { provider } => {
@@ -5841,7 +5841,7 @@ async fn execute_catalog(api: &ApiClient, command: &CatalogCommand) -> Result<Va
             ))
         }
         CatalogCommand::NetworkTest { host_id } => {
-            let tests: gigahost_client_api::website::HostNetworkTestsView = api
+            let tests: ghostrack_client_api::website::HostNetworkTestsView = api
                 .read(&GetHostNetworkTests { host_id: *host_id }, "")
                 .await?;
             to_value(tests)
@@ -5998,7 +5998,7 @@ fn provider_record(
 /// Mark notifications read or unread. Marking is idempotent, so a repeat
 /// needs no key.
 async fn execute_notification(api: &ApiClient, command: &NotificationCommand) -> Result<Value> {
-    use gigahost_client_api::{
+    use ghostrack_client_api::{
         api::{MarkNotificationsRead, SetNotificationRead},
         website::{NotificationsReadView, SetNotificationReadRequest},
     };
@@ -6219,7 +6219,7 @@ async fn execute_provider(api: &ApiClient, command: &ProviderCommand) -> Result<
             }
             api.write_retryable(
                 &UpdateHostPricing { host_id: *host_id },
-                &gigahost_client_api::website::UpdateHostPricingRequest {
+                &ghostrack_client_api::website::UpdateHostPricingRequest {
                     expected_revision: *expected_revision,
                     values,
                     change_reason: reason.clone(),
@@ -6387,7 +6387,7 @@ async fn execute_provider(api: &ApiClient, command: &ProviderCommand) -> Result<
                     .await?;
                 Ok(json!({
                     "host": host,
-                    "next_step": "Stop the hypervisor service, then run `gigahost-hypervisor reset-enrollment --config PATH --yes` on that host before enrolling it again with a new token."
+                    "next_step": "Stop the hypervisor service, then run `ghostrack-hypervisor reset-enrollment --config PATH --yes` on that host before enrolling it again with a new token."
                 }))
             }
             ProviderHostCommand::Retire {
@@ -6510,7 +6510,7 @@ async fn execute_provider(api: &ApiClient, command: &ProviderCommand) -> Result<
                     "instance retirement requires at least 7 full days"
                 );
             }
-            let notice: gigahost_client_api::website::InstanceProviderTerminationView = api
+            let notice: ghostrack_client_api::website::InstanceProviderTerminationView = api
                 .write_retryable(
                     &ScheduleInstanceRetirement {
                         instance_id: *instance_id,
@@ -6761,7 +6761,7 @@ async fn execute_provider(api: &ApiClient, command: &ProviderCommand) -> Result<
 
 /// A new website password for the account `account_alias`, drawn from
 /// `rng`, and the request that sets it: only the public key derived from
-/// it ([`gigahost_client_api::website_password::signing_key`]).
+/// it ([`ghostrack_client_api::website_password::signing_key`]).
 fn website_password_request(
     account_alias: &str,
     expires_in_days: Option<u32>,
@@ -6790,7 +6790,7 @@ async fn execute_account(cli: &Cli, api: &ApiClient, command: &AccountCommand) -
                 &WriteProviderReview {
                     provider_id: *provider_id,
                 },
-                &gigahost_client_api::website::WriteProviderReviewRequest {
+                &ghostrack_client_api::website::WriteProviderReviewRequest {
                     expected_revision: *expected_revision,
                     rating: *rating,
                     body: message.clone(),
@@ -6816,7 +6816,7 @@ async fn execute_account(cli: &Cli, api: &ApiClient, command: &AccountCommand) -
             .into_iter()
             .filter_map(|(name, value)| Some((name, value?)))
             .collect::<Vec<_>>();
-            let page: gigahost_client_api::website::HistoryPage = api
+            let page: ghostrack_client_api::website::HistoryPage = api
                 .read(&AccountHistory, &page.query_after(&filters))
                 .await?;
             to_value(page)
@@ -7049,10 +7049,10 @@ async fn execute_account(cli: &Cli, api: &ApiClient, command: &AccountCommand) -
                 ProtectionCommand::Set { usd } => Some(*usd),
                 ProtectionCommand::Default => None,
             };
-            let view: gigahost_client_api::website::ProtectedBalanceView = api
+            let view: ghostrack_client_api::website::ProtectedBalanceView = api
                 .write(
-                    &gigahost_client_api::api::SetProtectedBalance,
-                    &gigahost_client_api::website::SetProtectedBalanceRequest {
+                    &ghostrack_client_api::api::SetProtectedBalance,
+                    &ghostrack_client_api::website::SetProtectedBalanceRequest {
                         protected_balance_microusd,
                     },
                     None,
@@ -7062,8 +7062,8 @@ async fn execute_account(cli: &Cli, api: &ApiClient, command: &AccountCommand) -
         }
         AccountCommand::SshKeys { command } => match command {
             SshKeyCommand::List => {
-                let keys: Vec<gigahost_client_api::website::AccountSshKeyView> = api
-                    .read(&gigahost_client_api::api::ListAccountSshKeys, "")
+                let keys: Vec<ghostrack_client_api::website::AccountSshKeyView> = api
+                    .read(&ghostrack_client_api::api::ListAccountSshKeys, "")
                     .await?;
                 to_value(keys)
             }
@@ -7080,10 +7080,10 @@ async fn execute_account(cli: &Cli, api: &ApiClient, command: &AccountCommand) -
                         "give exactly one public key: a file holding one line, or --key"
                     );
                 };
-                let saved: gigahost_client_api::website::AccountSshKeyView = api
+                let saved: ghostrack_client_api::website::AccountSshKeyView = api
                     .write(
-                        &gigahost_client_api::api::AddAccountSshKey,
-                        &gigahost_client_api::website::AddAccountSshKeyRequest {
+                        &ghostrack_client_api::api::AddAccountSshKey,
+                        &ghostrack_client_api::website::AddAccountSshKeyRequest {
                             label: label.clone(),
                             public_key: public_key.clone(),
                         },
@@ -7093,9 +7093,9 @@ async fn execute_account(cli: &Cli, api: &ApiClient, command: &AccountCommand) -
                 to_value(saved)
             }
             SshKeyCommand::Remove { ssh_key_id } => {
-                let removed: gigahost_client_api::website::AccountSshKeyView = api
+                let removed: ghostrack_client_api::website::AccountSshKeyView = api
                     .write(
-                        &gigahost_client_api::api::RemoveAccountSshKey {
+                        &ghostrack_client_api::api::RemoveAccountSshKey {
                             ssh_key_id: *ssh_key_id,
                         },
                         &(),
@@ -7170,7 +7170,7 @@ async fn approve_browser_operation(
     id: Uuid,
     yes: bool,
 ) -> Result<Value> {
-    use gigahost_client_api::website::{BrowserOperation, BrowserOperationView};
+    use ghostrack_client_api::website::{BrowserOperation, BrowserOperationView};
     let intent: BrowserOperationView = api.read(&GetOperationIntent { id }, "").await?;
     if intent.completed_job_id.is_some() {
         return to_value(intent);
@@ -7228,7 +7228,7 @@ async fn approve_browser_operation(
             if backup.destination == BackupDestinationKind::GigahostS3
                 && job.steps.iter().any(|step| {
                     step.step_key == "await_restore_authorization"
-                        && step.state != gigahost_client_api::website::JobStepState::Succeeded
+                        && step.state != ghostrack_client_api::website::JobStepState::Succeeded
                 })
             {
                 let key = mutation.key();
@@ -7316,7 +7316,7 @@ async fn approve_browser_operation(
     let _: BrowserOperationView = api
         .write(
             &CompleteOperationIntent { id },
-            &gigahost_client_api::website::CompleteOperationIntentRequest {
+            &ghostrack_client_api::website::CompleteOperationIntentRequest {
                 job_id: Uuid::parse_str(job_id).context("operation returned an invalid job ID")?,
             },
             Some(&*format!("browser-intent-complete-{id}")),
@@ -7331,10 +7331,10 @@ async fn approve_browser_operation(
 /// otherwise (JSON for a program, or `--compact` with no quote) it names
 /// the charges itself and tells the reader to inspect the request.
 fn approval_notice(
-    operation: &gigahost_client_api::website::BrowserOperation,
+    operation: &ghostrack_client_api::website::BrowserOperation,
     quote_above: bool,
 ) -> &'static str {
-    use gigahost_client_api::website::BrowserOperation;
+    use ghostrack_client_api::website::BrowserOperation;
     match (operation, quote_above) {
         (BrowserOperation::RestoreBackup { .. }, true) => {
             "Approving lets the host replace the instance's disk with the backup and charges what is shown above."
@@ -7397,9 +7397,9 @@ fn restore_screen(
 async fn quote_operation(
     api: &ApiClient,
     intent_id: Uuid,
-    operation: &gigahost_client_api::website::BrowserOperation,
+    operation: &ghostrack_client_api::website::BrowserOperation,
 ) -> Result<()> {
-    use gigahost_client_api::website::BrowserOperation;
+    use ghostrack_client_api::website::BrowserOperation;
     let colors = Terminal::stderr().colors;
     match operation {
         BrowserOperation::RestoreBackup {
@@ -8711,7 +8711,7 @@ fn reinstall_start_note(instance: &InstanceView) -> Option<String> {
 /// What `instance delete` says about the instance's backups: they outlive it
 /// and are billed for storage until they are deleted. None when it has none.
 fn kept_backups_note(backups: &[BackupView]) -> Option<String> {
-    use gigahost_client_api::website::BackupState;
+    use ghostrack_client_api::website::BackupState;
     let kept = backups
         .iter()
         .filter(|backup| {
@@ -8762,7 +8762,7 @@ fn kept_backups_note(backups: &[BackupView]) -> Option<String> {
 /// available backup in a backup pool its host is missing is refused with
 /// `backup_pool_unavailable`.
 fn ensure_backup_available(backup: &BackupView, action: &str) -> Result<()> {
-    use gigahost_client_api::website::BackupState;
+    use ghostrack_client_api::website::BackupState;
     let being_created = "; retry once its creation has finished";
     let (status, hint) = match backup.status {
         BackupState::Available => {
@@ -9538,7 +9538,7 @@ fn unlisted_gateway_warning(offering_id: &str, tier: GatewayTier) -> String {
 
 /// The prices to choose from after a refusal's "give --gateway-tier": a
 /// colon and the table, or nothing when no prices are listed.
-fn tier_choices(prices: &[gigahost_client_api::website::NetworkPriceView], cloud: bool) -> String {
+fn tier_choices(prices: &[ghostrack_client_api::website::NetworkPriceView], cloud: bool) -> String {
     if prices.is_empty() {
         String::new()
     } else {
@@ -10690,8 +10690,8 @@ async fn require_login_material(
     user_data: Option<(&Path, &str)>,
 ) -> Result<()> {
     let saved = if ssh_public_keys.is_empty() {
-        api.read::<gigahost_client_api::api::ListAccountSshKeys>(
-            &gigahost_client_api::api::ListAccountSshKeys,
+        api.read::<ghostrack_client_api::api::ListAccountSshKeys>(
+            &ghostrack_client_api::api::ListAccountSshKeys,
             "",
         )
         .await?
@@ -10742,8 +10742,8 @@ async fn require_stock_image_keys(api: &ApiClient, ssh_public_keys: &[String]) -
         return Ok(());
     }
     let saved = api
-        .read::<gigahost_client_api::api::ListAccountSshKeys>(
-            &gigahost_client_api::api::ListAccountSshKeys,
+        .read::<ghostrack_client_api::api::ListAccountSshKeys>(
+            &ghostrack_client_api::api::ListAccountSshKeys,
             "",
         )
         .await?
@@ -10966,7 +10966,7 @@ fn redeploy_request(args: &RedeployArgs) -> Result<RedeployInstanceRequest> {
         Some(spec.volumes.clone())
     };
     if let Some(volumes) = &volumes
-        && let Err(message) = gigahost_client_api::website::validate_container_volumes(volumes)
+        && let Err(message) = ghostrack_client_api::website::validate_container_volumes(volumes)
     {
         return Err(Refusal {
             code: "invalid_request",
@@ -11132,7 +11132,7 @@ fn container_env(files: &[PathBuf], literals: &[String]) -> Result<Vec<Container
 fn check_env_name(name: &str, place: &dyn Fn() -> String) -> Result<()> {
     let bytes = name.as_bytes();
     let valid = !bytes.is_empty()
-        && bytes.len() <= gigahost_client_api::website::MAXIMUM_CONTAINER_ENV_NAME_BYTES
+        && bytes.len() <= ghostrack_client_api::website::MAXIMUM_CONTAINER_ENV_NAME_BYTES
         && (bytes[0].is_ascii_alphabetic() || bytes[0] == b'_')
         && bytes
             .iter()
@@ -11142,7 +11142,7 @@ fn check_env_name(name: &str, place: &dyn Fn() -> String) -> Result<()> {
             "invalid_request",
             "{} does not start with a variable's name before its first =: a name is letters, digits and _, not starting with a digit, of at most {} bytes",
             place(),
-            gigahost_client_api::website::MAXIMUM_CONTAINER_ENV_NAME_BYTES
+            ghostrack_client_api::website::MAXIMUM_CONTAINER_ENV_NAME_BYTES
         );
     }
     Ok(())
@@ -11160,23 +11160,23 @@ fn set_env(env: &mut Vec<ContainerEnvVar>, name: &str, value: &str) {
 }
 
 /// A container image reference for `--container`, in the platform's
-/// grammar ([`gigahost_client_api::container_image::ImageReference`]); sent as
+/// grammar ([`ghostrack_client_api::container_image::ImageReference`]); sent as
 /// given, which the backend puts in its canonical form.
 fn parse_container_image(value: &str) -> Result<String, String> {
     value
-        .parse::<gigahost_client_api::container_image::ImageReference>()
+        .parse::<ghostrack_client_api::container_image::ImageReference>()
         .map(|_| value.to_owned())
         .map_err(|error| error.to_string())
 }
 
 /// A stock image's slug for `--stock-image`.
 fn parse_stock_image(value: &str) -> Result<String, String> {
-    if gigahost_client_api::website::is_stock_image_slug(value) {
+    if ghostrack_client_api::website::is_stock_image_slug(value) {
         Ok(value.to_owned())
     } else {
         Err(format!(
             "must be a stock image's slug, such as debian-13, from `ghost catalog container-images`: lowercase letters, digits, . and -, of at most {} bytes",
-            gigahost_client_api::website::MAXIMUM_STOCK_IMAGE_SLUG_BYTES
+            ghostrack_client_api::website::MAXIMUM_STOCK_IMAGE_SLUG_BYTES
         ))
     }
 }
@@ -11445,8 +11445,8 @@ fn read_argument_file(argument: &str, path: &Path, maximum: u64) -> Result<Strin
 
 /// A host pricing file: what to earn, with the compute earnings in exactly
 /// one of their two forms (the backend refuses neither and both too).
-fn host_pricing_input(text: &str) -> Result<gigahost_client_api::website::HostPricingInput> {
-    let input: gigahost_client_api::website::HostPricingInput =
+fn host_pricing_input(text: &str) -> Result<ghostrack_client_api::website::HostPricingInput> {
+    let input: ghostrack_client_api::website::HostPricingInput =
         serde_json::from_str(text).context("parse host pricing JSON")?;
     input
         .compute()
@@ -12382,14 +12382,14 @@ mod tests {
             "compute_earnings": {"microusd_per_month": 2_295_000, "vcpus": 1},
             "saleable_vcpus": 16
         });
-        let view: gigahost_client_api::website::HostPricingView =
+        let view: ghostrack_client_api::website::HostPricingView =
             serde_json::from_value(output.clone()).unwrap();
         assert_eq!(view.saleable_vcpus, Some(16));
         assert_eq!(
             host_pricing_input(&output["values"].to_string())
                 .unwrap()
                 .compute(),
-            Ok(gigahost_client_api::website::ComputeEarningsForm::WholeHost(36_720_000))
+            Ok(ghostrack_client_api::website::ComputeEarningsForm::WholeHost(36_720_000))
         );
         let host = Uuid::nil().to_string();
         let cli = Cli::try_parse_from(["ghost", "provider", "pricing", &host]).unwrap();
@@ -12403,7 +12403,7 @@ mod tests {
     /// host, as every `pricing.json` before did, exactly one of the two.
     #[test]
     fn a_pricing_file_gives_its_compute_earnings_one_way() {
-        use gigahost_client_api::website::{ComputeEarningsForm, ComputeEarningsInput};
+        use ghostrack_client_api::website::{ComputeEarningsForm, ComputeEarningsInput};
         let file = |compute: &str| {
             format!(
                 r#"{{{compute} "network_earnings_microusd_per_tib": 0, "sla_target_basis_points": 9900}}"#
@@ -13165,7 +13165,7 @@ mod tests {
         let now = Utc::now();
         serde_json::to_string(&JobView {
             job_id: Uuid::nil(),
-            kind: gigahost_client_api::website::JobKind::RestoreBackup,
+            kind: ghostrack_client_api::website::JobKind::RestoreBackup,
             state,
             resource_id: Uuid::nil(),
             progress_permyriad: 0,
@@ -13179,7 +13179,7 @@ mod tests {
             completed_at: None,
             steps: steps
                 .iter()
-                .map(|(key, state)| gigahost_client_api::website::JobStepView {
+                .map(|(key, state)| ghostrack_client_api::website::JobStepView {
                     step_id: Uuid::now_v7(),
                     step_key: (*key).to_owned(),
                     state: *state,
@@ -13549,8 +13549,8 @@ mod tests {
             .with_read_retry_delays(&pauses);
         let error = api
             .write(
-                &gigahost_client_api::api::RedeemLoginGrant,
-                &gigahost_client_api::website::RedeemLoginGrantRequest {
+                &ghostrack_client_api::api::RedeemLoginGrant,
+                &ghostrack_client_api::website::RedeemLoginGrantRequest {
                     token: "token".to_owned(),
                 },
                 None,
@@ -13824,8 +13824,8 @@ mod tests {
         assert!(
             help.contains(&format!(
                 "for an account of at most {},{:03} current instances",
-                gigahost_client_api::website::MAXIMUM_PRICE_SORTED_INSTANCES / 1000,
-                gigahost_client_api::website::MAXIMUM_PRICE_SORTED_INSTANCES % 1000
+                ghostrack_client_api::website::MAXIMUM_PRICE_SORTED_INSTANCES / 1000,
+                ghostrack_client_api::website::MAXIMUM_PRICE_SORTED_INSTANCES % 1000
             )),
             "{help}"
         );
@@ -13979,7 +13979,7 @@ mod tests {
         let url = format!("http://{}/", listener.local_addr().unwrap());
         // A backend refuses a release, never a build that names none: this
         // stand-in answers as for an older release.
-        let refusal = gigahost_client_api::support_window::ClientReleaseUnsupported::new(
+        let refusal = ghostrack_client_api::support_window::ClientReleaseUnsupported::new(
             "ghost",
             Some("20260101T000000Z-0123456789ab"),
             "20260201T000000Z-0123456789ab",
@@ -14007,7 +14007,7 @@ mod tests {
         let identity = keys::authentication_identity(&[3_u8; 32]).unwrap();
         let api = ApiClient::new(&url, Some(identity)).unwrap();
         let error = api
-            .read(&gigahost_client_api::api::GetAccountBalance, "")
+            .read(&ghostrack_client_api::api::GetAccountBalance, "")
             .await
             .unwrap_err();
         let head = server.await.unwrap();
@@ -14685,8 +14685,8 @@ mod tests {
         let unanswered = ApiClient::new(&url, None)
             .unwrap()
             .write(
-                &gigahost_client_api::api::RedeemLoginGrant,
-                &gigahost_client_api::website::RedeemLoginGrantRequest {
+                &ghostrack_client_api::api::RedeemLoginGrant,
+                &ghostrack_client_api::website::RedeemLoginGrantRequest {
                     token: "token".to_owned(),
                 },
                 None,
@@ -14802,7 +14802,7 @@ mod tests {
             code(ensure_backup_available(&backup, "restored").unwrap_err()),
             "backup_not_available"
         );
-        backup.status = gigahost_client_api::website::BackupState::Available;
+        backup.status = ghostrack_client_api::website::BackupState::Available;
         backup.disk_bytes = Some(96 << 30);
         let (home, cloud) = (
             listed_offering(HostMode::HomeGateway),
@@ -14843,9 +14843,9 @@ mod tests {
         let seed = directory.path().join("account.seed");
         keys::generate_seed(&seed).unwrap();
         let intent_id = Uuid::now_v7();
-        let expired = gigahost_client_api::website::BrowserOperationView {
+        let expired = ghostrack_client_api::website::BrowserOperationView {
             intent_id,
-            operation: gigahost_client_api::website::BrowserOperation::RestoreBackup {
+            operation: ghostrack_client_api::website::BrowserOperation::RestoreBackup {
                 instance_id: Uuid::nil(),
                 backup_id: Uuid::nil(),
             },
@@ -14965,7 +14965,7 @@ mod tests {
         let seed = seed.to_str().unwrap().to_owned();
         let instance_id = Uuid::now_v7();
         let instance = InstanceView {
-            kind: gigahost_client_api::website::InstanceKind::Vm,
+            kind: ghostrack_client_api::website::InstanceKind::Vm,
             container: None,
             instance_id,
             offering_id: "offering".to_owned(),
@@ -14975,7 +14975,7 @@ mod tests {
             redundant_tags: Vec::new(),
             name: "vm".to_owned(),
             root_disk_bytes: 10 << 30,
-            state: gigahost_client_api::website::InstanceState::Running,
+            state: ghostrack_client_api::website::InstanceState::Running,
             desired_power_state: PowerState::Running,
             holds_capacity: true,
             public_ipv4: None,
@@ -15017,17 +15017,17 @@ mod tests {
         };
         let pricing = BackupPricingView {
             pricing_revision: 7,
-            hosted: gigahost_client_api::website::BackupPrices {
+            hosted: ghostrack_client_api::website::BackupPrices {
                 creation_charge_microusd_per_gib: 20_000,
                 restore_charge_microusd_per_gib: 20_000,
                 storage_charge_microusd_per_gib_month: 30_000,
             },
-            local: gigahost_client_api::website::BackupPrices {
+            local: ghostrack_client_api::website::BackupPrices {
                 creation_charge_microusd_per_gib: 2_000,
                 restore_charge_microusd_per_gib: 2_000,
                 storage_charge_microusd_per_gib_month: 10_000,
             },
-            billing_unit_bytes: gigahost_client_api::website::BACKUP_BILLING_UNIT_BYTES,
+            billing_unit_bytes: ghostrack_client_api::website::BACKUP_BILLING_UNIT_BYTES,
             balance_margin_microusd: 1_000_000,
         };
         let (first_url, first_requests) = canned_server(vec![
@@ -15095,7 +15095,7 @@ mod tests {
     /// completed with that job instead of admitting another.
     #[tokio::test]
     async fn approving_a_website_request_resumes_the_job_it_started() {
-        use gigahost_client_api::website::{BackupState, BrowserOperation, BrowserOperationView};
+        use ghostrack_client_api::website::{BackupState, BrowserOperation, BrowserOperationView};
 
         let directory = tempfile::tempdir().unwrap();
         let seed = directory.path().join("account.seed");
@@ -15124,7 +15124,7 @@ mod tests {
                 instance_id: Uuid::now_v7(),
                 destination,
                 status: BackupState::Restoring,
-                purpose: gigahost_client_api::website::BackupPurpose::Regular,
+                purpose: ghostrack_client_api::website::BackupPurpose::Regular,
                 funding_lifecycle_id: None,
                 size_bytes: Some(1 << 30),
                 restore_pricing_revision: 1,
@@ -15317,7 +15317,7 @@ mod tests {
     /// the request.
     #[tokio::test]
     async fn approving_a_started_hosted_restore_authorizes_it_for_the_new_instance() {
-        use gigahost_client_api::website::{
+        use ghostrack_client_api::website::{
             BackupPurpose, BackupState, BrowserOperation, BrowserOperationView,
         };
         use hpke::{Kem as _, Serializable as _, kem::X25519HkdfSha256};
@@ -15670,7 +15670,7 @@ mod tests {
         offering.memory_profiles = offering
             .hardware_profiles
             .iter()
-            .map(gigahost_client_api::website::MemoryProfile::of)
+            .map(ghostrack_client_api::website::MemoryProfile::of)
             .collect();
         offering.gateway_locations = serde_json::from_value(json!([
             {"location": "sg-singapore", "location_name": "Singapore", "country_code": "SG",
@@ -16977,7 +16977,7 @@ mod tests {
     /// cores they share, nor the tier.
     #[test]
     fn a_size_says_its_vcpus_alone() {
-        use gigahost_client_api::hypervisor::CpuTier;
+        use ghostrack_client_api::hypervisor::CpuTier;
         let mut offering = listed_offering(HostMode::CloudRouted);
         offering.cpu_tier = CpuTier::Shared2x;
         offering.vcpu_count = 4;
@@ -16998,7 +16998,7 @@ mod tests {
     /// them.
     #[test]
     fn the_upgrades_of_an_instance_say_the_vcpus_of_each_size() {
-        use gigahost_client_api::hypervisor::CpuTier;
+        use ghostrack_client_api::hypervisor::CpuTier;
         let upgrade = |cpu_tier, memory_bytes: u64| InstanceUpgradeView {
             offering_id: format!("of2_{cpu_tier:?}"),
             cpu_tier,
@@ -17047,7 +17047,7 @@ mod tests {
     fn the_bandwidth_limits_are_shown_beside_the_traffic_prices() {
         let limited = |mut offering: OfferingView| {
             for price in &mut offering.network_prices {
-                price.bandwidth = Some(gigahost_client_api::website::BandwidthView {
+                price.bandwidth = Some(ghostrack_client_api::website::BandwidthView {
                     limit_mbit: match price.gateway_tier {
                         Some(GatewayTier::HighBandwidth) => None,
                         Some(GatewayTier::SharedIp) => Some(20),
@@ -17164,7 +17164,7 @@ mod tests {
         // price, and is no gateway.
         addressed
             .network_prices
-            .push(gigahost_client_api::website::NetworkPriceView {
+            .push(ghostrack_client_api::website::NetworkPriceView {
                 gateway_tier: Some(GatewayTier::SharedIp),
                 gateway_base_charge_microusd_per_month: 0,
                 combined_microusd_per_tib: 240_000,
@@ -17229,11 +17229,11 @@ mod tests {
         offering.full_utilization_price_microusd_per_month = 7_060_000;
         offering.balance_reservation_microusd = 1_000_000;
         offering.address_microusd_per_month = 0;
-        offering.network_prices = vec![gigahost_client_api::website::NetworkPriceView {
+        offering.network_prices = vec![ghostrack_client_api::website::NetworkPriceView {
             gateway_tier: Some(GatewayTier::SharedIp),
             gateway_base_charge_microusd_per_month: 500_000,
             combined_microusd_per_tib: 10_000_000,
-            bandwidth: Some(gigahost_client_api::website::BandwidthView {
+            bandwidth: Some(ghostrack_client_api::website::BandwidthView {
                 limit_mbit: Some(20),
             }),
         }];
@@ -17263,7 +17263,7 @@ mod tests {
         );
         let id = Uuid::nil();
         let output = json!({"request": {}, "approve_command": format!("ghost account approve {id} --yes"),
-            "notice": approval_notice(&gigahost_client_api::website::BrowserOperation::CreateFromBackup {
+            "notice": approval_notice(&ghostrack_client_api::website::BrowserOperation::CreateFromBackup {
                 offering_id: "o".to_owned(), backup_id: id, gateway_tier: None, hostname: None, name: None, tags: None }, true)});
         let cli = Cli::try_parse_from(["ghost", "account", "approve", &id.to_string()]).unwrap();
         assert_eq!(
@@ -17340,7 +17340,7 @@ mod tests {
     /// of a kind this release does not know is the update advice.
     #[test]
     fn the_approval_notice_points_at_the_quote_only_where_it_is_shown() {
-        use gigahost_client_api::website::BrowserOperation;
+        use ghostrack_client_api::website::BrowserOperation;
         let create = BrowserOperation::CreateFromBackup {
             offering_id: "o".to_owned(),
             backup_id: Uuid::nil(),
@@ -18420,7 +18420,7 @@ mod tests {
             );
         }
         assert_eq!(
-            gigahost_client_api::website::MAXIMUM_CONSOLE_LOG_BYTES,
+            ghostrack_client_api::website::MAXIMUM_CONSOLE_LOG_BYTES,
             65_536,
             "--bytes offers what the API returns"
         );
@@ -18751,7 +18751,7 @@ mod tests {
         let heads = heads.lock().unwrap();
         let signed = |head: &String| {
             head.to_ascii_lowercase()
-                .contains(gigahost_client_api::account_auth::AUTH_KEY_ID_HEADER)
+                .contains(ghostrack_client_api::account_auth::AUTH_KEY_ID_HEADER)
         };
         assert!(heads[0].contains("provider=gh-examples"));
         assert!(signed(&heads[0]), "the offerings read is signed");
@@ -18789,7 +18789,7 @@ mod tests {
             .iter()
             .map(|head| {
                 head.to_ascii_lowercase()
-                    .contains(gigahost_client_api::account_auth::AUTH_KEY_ID_HEADER)
+                    .contains(ghostrack_client_api::account_auth::AUTH_KEY_ID_HEADER)
             })
             .collect();
         assert_eq!(signatures, [true, true, false, false]);
@@ -18847,7 +18847,7 @@ mod tests {
             .iter()
             .map(|head| {
                 head.to_ascii_lowercase()
-                    .contains(gigahost_client_api::account_auth::AUTH_KEY_ID_HEADER)
+                    .contains(ghostrack_client_api::account_auth::AUTH_KEY_ID_HEADER)
             })
             .collect();
         assert_eq!(signatures, [true, false, true]);
@@ -20076,7 +20076,10 @@ mod tests {
         );
         let summary = keys::key_summary(&keys::load_seed(&seed).unwrap()).unwrap();
         let head = heads.lock().unwrap()[0].to_lowercase();
-        let key_id_header = format!("{}:", gigahost_client_api::account_auth::AUTH_KEY_ID_HEADER);
+        let key_id_header = format!(
+            "{}:",
+            ghostrack_client_api::account_auth::AUTH_KEY_ID_HEADER
+        );
         let key_id = head
             .lines()
             .find_map(|line| line.strip_prefix(&key_id_header))
@@ -20095,7 +20098,7 @@ mod tests {
         assert!(
             head.contains(&format!(
                 "{}:",
-                gigahost_client_api::account_auth::REQUEST_SIGNATURE_HEADER
+                ghostrack_client_api::account_auth::REQUEST_SIGNATURE_HEADER
             )),
             "the claim carries a signature: {head}"
         );
@@ -20415,7 +20418,7 @@ mod tests {
         assert!(
             head.contains(&format!(
                 "{}:",
-                gigahost_client_api::account_auth::REQUEST_SIGNATURE_HEADER
+                ghostrack_client_api::account_auth::REQUEST_SIGNATURE_HEADER
             )),
             "the link claim carries a signature: {head}"
         );
@@ -20914,7 +20917,7 @@ mod tests {
         let mut container_only = listed_offering(HostMode::CloudRouted);
         container_only.kinds = vec![InstanceKind::Container];
         container_only.default_kind = Some(InstanceKind::Container);
-        container_only.cpu_tier = gigahost_client_api::hypervisor::CpuTier::Shared8x;
+        container_only.cpu_tier = ghostrack_client_api::hypervisor::CpuTier::Shared8x;
         let offerings = json!([both, container_only]);
         let (url, received) = canned_server(vec![(200, offerings.to_string())]).await;
         let cli =
@@ -20961,10 +20964,10 @@ mod tests {
     async fn the_stock_images_are_listed() {
         let images = json!([
             {"slug": "debian-13", "display_name": "Debian 13 (trixie)",
-             "reference": format!("ghcr.io/gigahost-apps/debian@sha256:{}", "1".repeat(64)),
+             "reference": format!("ghcr.io/ghostrack-io/debian@sha256:{}", "1".repeat(64)),
              "init_system": "systemd", "minimum_memory_bytes": 256_u64 << 20, "x86_64_level": 1},
             {"slug": "almalinux-10", "display_name": "AlmaLinux 10",
-             "reference": format!("ghcr.io/gigahost-apps/almalinux@sha256:{}", "2".repeat(64)),
+             "reference": format!("ghcr.io/ghostrack-io/almalinux@sha256:{}", "2".repeat(64)),
              "init_system": "systemd", "minimum_memory_bytes": 512_u64 << 20, "x86_64_level": 3},
         ]);
         let (url, received) = canned_server(vec![(200, images.to_string())]).await;
@@ -21675,7 +21678,7 @@ mod tests {
         let own = container_instance(instance_id, "registry-1.docker.io/library/nginx:1.27", None);
         let mut stock = container_instance(
             instance_id,
-            &format!("ghcr.io/gigahost-apps/debian@sha256:{}", "1".repeat(64)),
+            &format!("ghcr.io/ghostrack-io/debian@sha256:{}", "1".repeat(64)),
             Some("debian-13"),
         );
         stock["gateway_tier"] = json!("shared_ip");
@@ -21731,7 +21734,7 @@ mod tests {
             container_instance(own, "registry-1.docker.io/library/nginx:1.27", None),
             container_instance(
                 stock,
-                "ghcr.io/gigahost-apps/debian@sha256:11",
+                "ghcr.io/ghostrack-io/debian@sha256:11",
                 Some("debian-13")
             ),
             virtual_machine,
@@ -21979,7 +21982,7 @@ mod tests {
     fn quoted_upgrade(available: bool) -> InstanceUpgradeView {
         InstanceUpgradeView {
             offering_id: "of2_up".to_owned(),
-            cpu_tier: gigahost_client_api::hypervisor::CpuTier::Shared2x,
+            cpu_tier: ghostrack_client_api::hypervisor::CpuTier::Shared2x,
             vcpu_count: 4,
             memory_bytes: 8 << 30,
             root_disk_bytes: 40 << 30,

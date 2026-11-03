@@ -85,8 +85,8 @@ jobs:
           cargo fmt -- --check
           cargo clippy --locked --workspace --all-targets --all-features --target "$RELEASE_TARGET" -- -D warnings
           cargo test --locked --workspace --target "$RELEASE_TARGET"
-          cargo test --locked -p gigahost-client-api --no-default-features --target "$RELEASE_TARGET"
-          cargo test --locked -p gigahost-client-api --all-features --target "$RELEASE_TARGET"
+          cargo test --locked -p ghostrack-client-api --no-default-features --target "$RELEASE_TARGET"
+          cargo test --locked -p ghostrack-client-api --all-features --target "$RELEASE_TARGET"
       - name: Build and check native release archive
         run: |
           set -euo pipefail

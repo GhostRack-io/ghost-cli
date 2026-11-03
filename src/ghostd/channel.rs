@@ -9,7 +9,7 @@ use std::{io::Read as _, time::Duration};
 
 use anyhow::{Context as _, Result, anyhow, bail};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
-use gigahost_client_api::{
+use ghostrack_client_api::{
     api::GetReleaseChannels,
     release::{SignedReleaseManifest, is_release_version},
     website::ReleaseChannelsView,

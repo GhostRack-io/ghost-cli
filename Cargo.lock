@@ -817,7 +817,7 @@ dependencies = [
  "flate2",
  "ghostd-client",
  "ghostd-protocol",
- "gigahost-client-api",
+ "ghostrack-client-api",
  "hkdf 0.12.4",
  "hpke",
  "postcard",
@@ -840,7 +840,7 @@ dependencies = [
 [[package]]
 name = "ghostd-client"
 version = "0.2.0"
-source = "git+https://github.com/gigahost-apps/ghostd?rev=74bd8368c0b9ab746990929aaeb3ec3af765b110#74bd8368c0b9ab746990929aaeb3ec3af765b110"
+source = "git+https://github.com/ghostrack-io/ghostd?rev=74bd8368c0b9ab746990929aaeb3ec3af765b110#74bd8368c0b9ab746990929aaeb3ec3af765b110"
 dependencies = [
  "ghostd-protocol",
  "thiserror",
@@ -850,7 +850,7 @@ dependencies = [
 [[package]]
 name = "ghostd-protocol"
 version = "0.2.0"
-source = "git+https://github.com/gigahost-apps/ghostd?rev=74bd8368c0b9ab746990929aaeb3ec3af765b110#74bd8368c0b9ab746990929aaeb3ec3af765b110"
+source = "git+https://github.com/ghostrack-io/ghostd?rev=74bd8368c0b9ab746990929aaeb3ec3af765b110#74bd8368c0b9ab746990929aaeb3ec3af765b110"
 dependencies = [
  "postcard",
  "serde",
@@ -859,7 +859,7 @@ dependencies = [
 ]
 
 [[package]]
-name = "gigahost-client-api"
+name = "ghostrack-client-api"
 version = "0.1.0"
 dependencies = [
  "base64",
