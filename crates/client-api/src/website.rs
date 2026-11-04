@@ -2729,6 +2729,25 @@ pub fn is_stock_image_slug(slug: &str) -> bool {
         })
 }
 
+/// The longest operating-system family code ([`is_os_family`]).
+pub const MAXIMUM_OS_FAMILY_BYTES: usize = 32;
+
+/// Whether `code` is an operating-system family's code, as an image's
+/// `os_family` names it (`debian`, `rocky`): 1 to
+/// [`MAXIMUM_OS_FAMILY_BYTES`] lowercase letters, digits and `-`,
+/// starting with a letter.
+#[must_use]
+pub fn is_os_family(code: &str) -> bool {
+    code.len() <= MAXIMUM_OS_FAMILY_BYTES
+        && code
+            .bytes()
+            .next()
+            .is_some_and(|first| first.is_ascii_lowercase())
+        && code
+            .bytes()
+            .all(|byte| byte.is_ascii_lowercase() || byte.is_ascii_digit() || byte == b'-')
+}
+
 /// What a container instance's request runs: an image of the renter's, or
 /// one of the platform's stock images by its slug.
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -3563,6 +3582,11 @@ pub struct ImageView {
     /// The least memory a size needs to run this image; 0 for none.
     #[serde(default)]
     pub minimum_memory_bytes: u64,
+    /// The operating system's family ([`is_os_family`]: `debian`,
+    /// `ubuntu`, `rocky`), which the website shows its icon by; none for
+    /// an image of none, and from older backends.
+    #[serde(default)]
+    pub os_family: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -3940,6 +3964,10 @@ pub struct StockImage {
     /// The x86-64 microarchitecture level its distribution is built for,
     /// 1 to 4, which its host's CPU must have.
     pub x86_64_level: u8,
+    /// Its distribution's family ([`is_os_family`]), as
+    /// [`ImageView::os_family`]; none in a configuration stored before.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub os_family: Option<String>,
 }
 
 /// A stock image a container instance may run (`ListContainerImages`).
@@ -3956,6 +3984,10 @@ pub struct ContainerImageView {
     /// The x86-64 level its host's CPU must have; only hosts that have it
     /// are given it.
     pub x86_64_level: u8,
+    /// Its distribution's family, as [`ImageView::os_family`]; none from
+    /// older backends.
+    #[serde(default)]
+    pub os_family: Option<String>,
 }
 
 impl From<&StockImage> for ContainerImageView {
@@ -3967,6 +3999,7 @@ impl From<&StockImage> for ContainerImageView {
             init_system: image.init_system,
             minimum_memory_bytes: image.minimum_memory_bytes,
             x86_64_level: image.x86_64_level,
+            os_family: image.os_family.clone(),
         }
     }
 }
