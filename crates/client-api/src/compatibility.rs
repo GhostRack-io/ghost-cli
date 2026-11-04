@@ -18,6 +18,8 @@ pub const CLIENT_DECODED_ENUMS: &[&str] = &[
     "AccessResetState",
     "AccountFundingState",
     "AgentUpdatePolicy",
+    "AgentUpdateSequenceHostPhase",
+    "AgentUpdateSequenceState",
     "AgentUpdateState",
     "BackupDestinationKind",
     "BackupPurpose",
@@ -46,6 +48,7 @@ pub const CLIENT_DECODED_ENUMS: &[&str] = &[
     "MeshLinkState",
     "MeshNoLinkReason",
     "MeshPath",
+    "ProviderAgentState",
     "ProviderIncidentSeverity",
     "ProviderIncidentState",
     "ProviderPayoutState",
@@ -97,6 +100,9 @@ macro_rules! fallback {
 
 fallback!(
     crate::website::AgentUpdatePolicy,
+    crate::website::AgentUpdateSequenceHostPhase,
+    crate::website::AgentUpdateSequenceState,
+    crate::website::ProviderAgentState,
     crate::website::AccountFundingState,
     crate::website::BackupDestinationKind,
     crate::website::BackupPurpose,

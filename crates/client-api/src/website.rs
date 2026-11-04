@@ -5854,6 +5854,149 @@ pub struct AgentUpdateAttemptRequest {
     pub update_id: Uuid,
 }
 
+/// Where a host's agent stands on the provider's Agents tab, decided once
+/// by the backend.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProviderAgentState {
+    UpToDate,
+    /// The channel's newest release is newer than the host's.
+    UpdateAvailable,
+    /// An approved attempt is on its way or being applied.
+    Updating,
+    /// The newest attempt failed or was rolled back, and the host is on no
+    /// newer release since.
+    Failed,
+    /// The host is not reporting, whatever else holds.
+    Offline,
+    /// The agent cannot update itself: it is updated by hand.
+    ManualOnly,
+    /// A state of a newer backend.
+    #[serde(other)]
+    Unknown,
+}
+
+/// Where an update of all of a provider's hosts is.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentUpdateSequenceState {
+    Running,
+    /// Every host was updated or skipped.
+    Completed,
+    /// The provider stopped it.
+    Stopped,
+    /// A host's update failed, which stopped it.
+    Failed,
+    /// A state of a newer backend.
+    #[serde(other)]
+    Unknown,
+}
+
+/// Where one host of an update of all hosts is.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum AgentUpdateSequenceHostPhase {
+    Waiting,
+    Updating,
+    Succeeded,
+    Failed,
+    /// Its turn came and it could not take the update; `reason` says why.
+    Skipped,
+    /// It was not updated: the sequence stopped, or its update was
+    /// cancelled; `reason` says which.
+    Cancelled,
+    /// A phase of a newer backend.
+    #[serde(other)]
+    Unknown,
+}
+
+/// One enrolled host's agent on the provider's Agents tab.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[expect(clippy::struct_excessive_bools, reason = "each is a fact of its own")]
+pub struct ProviderAgentHostView {
+    pub host_id: Uuid,
+    pub host_label: String,
+    /// The release its agent last reported.
+    pub installed_release: Option<String>,
+    /// Whether its agent can update itself.
+    pub remote_updates: bool,
+    /// Whether it reports to the platform.
+    pub online: bool,
+    pub policy: AgentUpdatePolicy,
+    /// Whether a pause holds now.
+    pub paused: bool,
+    /// Whether the host's own file refuses remote updates.
+    pub locally_disabled: bool,
+    pub window: Option<AgentUpdateWindow>,
+    pub state: ProviderAgentState,
+    /// Its open attempt, or else its newest.
+    pub attempt: Option<AgentUpdateAttemptView>,
+}
+
+/// One host of an update of all hosts.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct AgentUpdateSequenceHostView {
+    pub host_id: Uuid,
+    pub host_label: String,
+    /// Its turn, from 1.
+    pub position: u32,
+    pub phase: AgentUpdateSequenceHostPhase,
+    /// Why it was skipped or cancelled: `offline`, `paused`,
+    /// `locally_disabled`, `window_closed`, `other_update`, `retired`,
+    /// `cannot_update`, `refused`, `stopped`, `sequence_failed`,
+    /// `update_cancelled`, `provider_inactive`; or a newer backend's word.
+    pub reason: Option<String>,
+    /// The attempt its turn approved or took over.
+    pub update_id: Option<Uuid>,
+    pub started_at: Option<DateTime<Utc>>,
+    pub finished_at: Option<DateTime<Utc>>,
+}
+
+/// An update of all of a provider's hosts to one release, one host at a
+/// time (`StartAgentUpdateSequence`).
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct AgentUpdateSequenceView {
+    pub sequence_id: Uuid,
+    pub release: String,
+    pub state: AgentUpdateSequenceState,
+    pub started_at: DateTime<Utc>,
+    pub finished_at: Option<DateTime<Utc>>,
+    /// Whether the provider asked it to stop.
+    #[serde(default)]
+    pub stop_requested: bool,
+    /// The host whose failure stopped it.
+    pub failed_host_id: Option<Uuid>,
+    /// That host's failure code.
+    pub failure: Option<String>,
+    /// Its hosts in their turn's order.
+    pub hosts: Vec<AgentUpdateSequenceHostView>,
+}
+
+/// The provider's Agents tab (`GetProviderAgents`): every enrolled host
+/// that is not retired, by label, at most 500.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct ProviderAgentsView {
+    /// The newest release of the hypervisor channel, when it is known.
+    pub channel_release: Option<String>,
+    pub hosts: Vec<ProviderAgentHostView>,
+    /// Whether the provider has more hosts than are listed.
+    #[serde(default)]
+    pub truncated: bool,
+    /// The update of all hosts that runs, or the last one when it ended in
+    /// the last 24 hours.
+    #[serde(default)]
+    pub sequence: Option<AgentUpdateSequenceView>,
+}
+
+/// Update every host that can take `release` now, one at a time
+/// (`StartAgentUpdateSequence`). `release` is the channel's newest, as the
+/// page or command read it: one that is no longer the channel's is refused.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct StartAgentUpdateSequenceRequest {
+    pub release: String,
+}
+
 /// Make a host private or public again (`SetHostPrivate`).
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
