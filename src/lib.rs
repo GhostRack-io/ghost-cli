@@ -13986,7 +13986,7 @@ mod tests {
     /// With both records, the GhostRack one names the release, even where
     /// it is invalid: the other is an older install's.
     #[test]
-    fn the_ghostrack_record_wins_over_the_gigahost_one() {
+    fn the_ghostrack_record_wins_over_the_legacy_one() {
         let prefix = tempfile::tempdir().unwrap();
         let executable = prefix.path().join("bin/ghost");
         for directory in ["lib/ghostrack", "lib/gigahost"] {
