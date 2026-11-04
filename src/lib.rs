@@ -54,19 +54,20 @@ use ghostrack_client_api::{
         GetHostNetworkTests, GetHostPricing, GetHostPrivacy, GetIncident, GetInstance,
         GetInstanceConsoleLog, GetInstanceGatewayTraffic, GetInstanceLogs, GetInstanceMesh,
         GetInstanceMeshUsage, GetInstanceUsage, GetJob, GetOffering, GetOperationIntent,
-        GetProviderBalance, GetProviderHost, GetProviderHostInstanceUsage, GetProviderHostMetrics,
-        GetProviderOutage, GetProviderReliability, GetProviderUptime, GetTicket, HandOverIpPool,
-        ListAuthKeys, ListBackups, ListContainerImages, ListImages, ListIncidents,
-        ListInstanceBackups, ListInstanceTags, ListInstanceUpgrades, ListInstances, ListIpPools,
-        ListJobs, ListLocations, ListNotifications, ListOfferings, ListPayouts, ListPrivateRenters,
-        ListProviderHosts, ListProviderOutages, ListProviderReviews, ListSessions, ListTickets,
-        MigrateAccountSeed, MoveGatewayLocation, RedeployInstance, ReinstallInstance,
-        RemoveIpAddress, RemovePrivateRenter, RemoveWebsitePassword, RenameInstance,
-        RescueInstance, ResetInstanceAccess, RestoreBackup, RetireHost, RetryHostAgentUpdate,
-        RevokeSession, RevokeSessions, RotateGatewayKeys, ScheduleHostRetirement,
-        ScheduleInstanceRetirement, SetBackupSchedule, SetHostAgentUpdatePolicy, SetHostPrivate,
-        SetHostRentalAdmission, SetIncidentState, SetInstancePower, SetPayoutAddress,
-        SetPortForwards, SetTagRedundant, SetTicketState, SetWebsitePassword, TagInstance,
+        GetProviderAgents, GetProviderBalance, GetProviderHost, GetProviderHostInstanceUsage,
+        GetProviderHostMetrics, GetProviderOutage, GetProviderReliability, GetProviderUptime,
+        GetTicket, HandOverIpPool, ListAuthKeys, ListBackups, ListContainerImages, ListImages,
+        ListIncidents, ListInstanceBackups, ListInstanceTags, ListInstanceUpgrades, ListInstances,
+        ListIpPools, ListJobs, ListLocations, ListNotifications, ListOfferings, ListPayouts,
+        ListPrivateRenters, ListProviderHosts, ListProviderOutages, ListProviderReviews,
+        ListSessions, ListTickets, MigrateAccountSeed, MoveGatewayLocation, RedeployInstance,
+        ReinstallInstance, RemoveIpAddress, RemovePrivateRenter, RemoveWebsitePassword,
+        RenameInstance, RescueInstance, ResetInstanceAccess, RestoreBackup, RetireHost,
+        RetryHostAgentUpdate, RevokeSession, RevokeSessions, RotateGatewayKeys,
+        ScheduleHostRetirement, ScheduleInstanceRetirement, SetBackupSchedule,
+        SetHostAgentUpdatePolicy, SetHostPrivate, SetHostRentalAdmission, SetIncidentState,
+        SetInstancePower, SetPayoutAddress, SetPortForwards, SetTagRedundant, SetTicketState,
+        SetWebsitePassword, StartAgentUpdateSequence, StopAgentUpdateSequence, TagInstance,
         UnlinkGithub, UpdateHostPricing, UpdateInstance, UpgradeInstance, WriteProviderReview,
     },
     hypervisor::{GuestInitializationStatus, HostMode, PowerState, RestartPolicy},
@@ -75,9 +76,10 @@ use ghostrack_client_api::{
         AccountBalanceView, AccountGithubView, AccountProjectionView, AccountView,
         ActivateAccountRequest, ActiveSessionView, AddCloudIpAddressesRequest,
         AddPrivateRenterRequest, AddSupportTicketMessageRequest, AgentUpdateAttemptRequest,
-        AgentUpdateAttemptView, AgentUpdatePolicy, AgentUpdateState, AgentUpdateWindow,
-        ApproveAgentUpdateRequest, AuthorizeBackupRestoreRequest, BackupDestinationFilter,
-        BackupDestinationKind, BackupPricingView, BackupScheduleFrequency, BackupScheduleRuleInput,
+        AgentUpdateAttemptView, AgentUpdatePolicy, AgentUpdateSequenceHostPhase,
+        AgentUpdateSequenceView, AgentUpdateState, AgentUpdateWindow, ApproveAgentUpdateRequest,
+        AuthorizeBackupRestoreRequest, BackupDestinationFilter, BackupDestinationKind,
+        BackupPricingView, BackupScheduleFrequency, BackupScheduleRuleInput,
         BackupScheduleRuleView, BackupScheduleView, BackupSort, BackupStateFilter, BackupView,
         BillingAuthorization, ChangeGatewayRequest, CloudIpAddressInput, CloudIpPoolScope,
         CloudIpPoolView, ContainerEnvVar, ContainerImageView, ContainerLogView,
@@ -91,17 +93,18 @@ use ghostrack_client_api::{
         InstanceView, IpChoice, JobAccepted, JobEventView, JobKind, JobPage, JobState,
         JobStateFilter, JobStepState, JobView, KindChoice, LedgerKind, LocationView, LoginGrant,
         MAX_SSH_PUBLIC_KEYS, MigrateAccountSeedRequest, MoveGatewayLocationRequest, OfferingView,
-        PortForwardChange, PrivateRenterView, ProviderBalanceView, ProviderHostDetailView,
-        ProviderHostView, ProviderIncidentSeverity, ProviderIncidentState, ProviderIncidentView,
-        ProviderOutageDetailView, ProviderOutagePage, ProviderPayoutAddressView,
-        ProviderPayoutView, ProviderReliabilityView, ProviderUptimeView, RedeployInstanceRequest,
-        RedeploySetting, ReinstallInstanceRequest, RenameInstanceRequest, RescueInstanceRequest,
-        ResetInstanceAccessRequest, RestoreBackupRequest, RotateGatewayKeysRequest,
-        SSH_PUBLIC_KEY_TYPES, ScheduleHostRetirementRequest, ScheduleInstanceRetirementRequest,
-        SessionRevocationView, SetAgentUpdatePolicyRequest, SetBackupScheduleRequest,
-        SetHostPrivateRequest, SetHostRentalPauseRequest, SetPortForwardsRequest,
-        SetPowerStateRequest, SetProviderIncidentStateRequest, SetProviderPayoutAddressRequest,
-        SetSupportTicketStateRequest, SetTagRedundantRequest, SetWebsitePasswordRequest, SortOrder,
+        PortForwardChange, PrivateRenterView, ProviderAgentsView, ProviderBalanceView,
+        ProviderHostDetailView, ProviderHostView, ProviderIncidentSeverity, ProviderIncidentState,
+        ProviderIncidentView, ProviderOutageDetailView, ProviderOutagePage,
+        ProviderPayoutAddressView, ProviderPayoutView, ProviderReliabilityView, ProviderUptimeView,
+        RedeployInstanceRequest, RedeploySetting, ReinstallInstanceRequest, RenameInstanceRequest,
+        RescueInstanceRequest, ResetInstanceAccessRequest, RestoreBackupRequest,
+        RotateGatewayKeysRequest, SSH_PUBLIC_KEY_TYPES, ScheduleHostRetirementRequest,
+        ScheduleInstanceRetirementRequest, SessionRevocationView, SetAgentUpdatePolicyRequest,
+        SetBackupScheduleRequest, SetHostPrivateRequest, SetHostRentalPauseRequest,
+        SetPortForwardsRequest, SetPowerStateRequest, SetProviderIncidentStateRequest,
+        SetProviderPayoutAddressRequest, SetSupportTicketStateRequest, SetTagRedundantRequest,
+        SetWebsitePasswordRequest, SortOrder, StartAgentUpdateSequenceRequest,
         SupportTicketCategory, SupportTicketPriority, SupportTicketResourceInput,
         SupportTicketState, SupportTicketSummaryView, SupportTicketView, SupportWaitingOn,
         TAG_RULE, TagInstanceRequest, TrialClaimStatus, TrialClaimStatusView, TrialClaimView,
@@ -884,6 +887,23 @@ enum ProviderAgentUpdateCommand {
     Cancel {
         /// Host ID, from `ghost provider hosts`.
         host_id: Uuid,
+        #[command(flatten)]
+        mutation: IdempotencyArgs,
+    },
+    /// List your hosts' agents: the release each runs and where it stands,
+    /// the channel's newest release, and the update of all hosts.
+    List,
+    /// Update every host that can take the channel's newest release, one at
+    /// a time: the next starts once the one before runs it, and a failure
+    /// stops the rest. Hosts offline, paused or outside their window when
+    /// their turn comes are skipped.
+    All {
+        #[command(flatten)]
+        mutation: IdempotencyArgs,
+    },
+    /// Stop the update of all hosts: the hosts not started yet stay as they
+    /// are, and the one updating finishes.
+    Stop {
         #[command(flatten)]
         mutation: IdempotencyArgs,
     },
@@ -4861,14 +4881,20 @@ fn readable_sections(command: &Command, output: &Value, terminal: Terminal) -> O
         }
         return Some(pretty::render(&Value::Object(fields), terminal));
     }
-    if matches!(
-        command,
-        Command::Provider {
-            command: ProviderCommand::AgentUpdate { .. }
-        }
-    ) {
-        let view: HostAgentUpdateView = serde_json::from_value(output.clone()).ok()?;
-        return Some(pretty::render(&agent_update_record(&view), terminal));
+    if let Command::Provider {
+        command: ProviderCommand::AgentUpdate { command },
+    } = command
+    {
+        let record = match command {
+            ProviderAgentUpdateCommand::List => {
+                agents_record(&serde_json::from_value(output.clone()).ok()?)
+            }
+            ProviderAgentUpdateCommand::All { .. } | ProviderAgentUpdateCommand::Stop { .. } => {
+                sequence_record(&serde_json::from_value(output.clone()).ok()?)
+            }
+            _ => agent_update_record(&serde_json::from_value(output.clone()).ok()?),
+        };
+        return Some(pretty::render(&record, terminal));
     }
     if let Command::Provider {
         command:
@@ -5949,6 +5975,107 @@ fn agent_update_record(view: &HostAgentUpdateView) -> Value {
     Value::Object(record)
 }
 
+/// Where the update of all hosts is, in words: `running: fra-a2 updating,
+/// 2 of 5, 1 skipped`.
+fn sequence_text(sequence: &AgentUpdateSequenceView) -> String {
+    use AgentUpdateSequenceHostPhase as Phase;
+    let count = |phase| {
+        sequence
+            .hosts
+            .iter()
+            .filter(|host| host.phase == phase)
+            .count()
+    };
+    let mut text = format!(
+        "{}: {} of {} updated",
+        wire_name(sequence.state),
+        count(Phase::Succeeded),
+        sequence.hosts.len()
+    );
+    if let Some(host) = sequence
+        .hosts
+        .iter()
+        .find(|host| host.phase == Phase::Updating)
+    {
+        text = format!("{text}, {} updating", host.host_label);
+    }
+    match count(Phase::Skipped) {
+        0 => {}
+        skipped => text = format!("{text}, {skipped} skipped"),
+    }
+    if sequence.stop_requested && sequence.finished_at.is_none() {
+        text.push_str(", stopping");
+    }
+    if let Some(failure) = &sequence.failure {
+        let host = sequence
+            .failed_host_id
+            .and_then(|id| sequence.hosts.iter().find(|host| host.host_id == id))
+            .map_or_else(|| "a host".to_owned(), |host| host.host_label.clone());
+        text = format!("{text}, {host} failed: {failure}");
+    }
+    text
+}
+
+/// The update of all hosts with its hosts in their turn's order.
+fn sequence_record(sequence: &AgentUpdateSequenceView) -> Value {
+    json!({
+        "sequence_id": sequence.sequence_id,
+        "release": sequence.release,
+        "state": sequence_text(sequence),
+        "started_at": sequence.started_at,
+        "finished_at": sequence.finished_at,
+        "hosts": sequence.hosts.iter().map(|host| json!({
+            "host": host.host_label,
+            "host_id": host.host_id,
+            "phase": wire_name(host.phase),
+            "reason": host.reason,
+        })).collect::<Vec<_>>(),
+    })
+}
+
+/// `ghost provider agent-update list`: the channel's release, the update
+/// of all hosts, and a row per host with its turn in it.
+fn agents_record(view: &ProviderAgentsView) -> Value {
+    let turn = |host_id| {
+        view.sequence.as_ref().and_then(|sequence| {
+            sequence
+                .hosts
+                .iter()
+                .find(|host| host.host_id == host_id)
+                .map(|host| match &host.reason {
+                    Some(reason) => format!("{} ({reason})", wire_name(host.phase)),
+                    None => wire_name(host.phase),
+                })
+        })
+    };
+    let mut record = Map::new();
+    record.insert("channel_release".to_owned(), json!(view.channel_release));
+    record.insert(
+        "update_all".to_owned(),
+        json!(view.sequence.as_ref().map(sequence_text)),
+    );
+    if view.truncated {
+        record.insert("listed".to_owned(), json!("the first 500 hosts"));
+    }
+    record.insert(
+        "hosts".to_owned(),
+        view.hosts
+            .iter()
+            .map(|host| {
+                json!({
+                    "host": host.host_label,
+                    "host_id": host.host_id,
+                    "installed": host.installed_release,
+                    "state": wire_name(host.state),
+                    "attempt": host.attempt.as_ref().map(agent_update_attempt_text),
+                    "update_all": turn(host.host_id),
+                })
+            })
+            .collect(),
+    );
+    Value::Object(record)
+}
+
 /// A provider as the catalog shows it: its name and the offerings it lists
 /// now (the catalog's first 500 of that provider's), its rating
 /// from its reviews' `summary`, and its `reliability`. A provider without
@@ -6145,6 +6272,30 @@ async fn execute_agent_update(
                 )
                 .await?;
             to_value(view)
+        }
+        ProviderAgentUpdateCommand::List => {
+            let view: ProviderAgentsView = api.read(&GetProviderAgents, "").await?;
+            to_value(view)
+        }
+        ProviderAgentUpdateCommand::All { mutation } => {
+            let view: ProviderAgentsView = api.read(&GetProviderAgents, "").await?;
+            let Some(release) = view.channel_release else {
+                bail!("the channel's newest release is not known yet: try again in a minute");
+            };
+            let sequence: AgentUpdateSequenceView = api
+                .write_retryable(
+                    &StartAgentUpdateSequence,
+                    &StartAgentUpdateSequenceRequest { release },
+                    &mutation.key(),
+                )
+                .await?;
+            to_value(sequence)
+        }
+        ProviderAgentUpdateCommand::Stop { mutation } => {
+            let sequence: AgentUpdateSequenceView = api
+                .write_retryable(&StopAgentUpdateSequence, &(), &mutation.key())
+                .await?;
+            to_value(sequence)
         }
         ProviderAgentUpdateCommand::Cancel { host_id, mutation } => {
             let view = read(*host_id).await?;
@@ -16448,6 +16599,165 @@ mod tests {
         })));
         assert_eq!(hand["update"], "by hand");
         assert_eq!(hand["install_command"], "curl | sudo sh");
+    }
+
+    /// `list`, `all` and `stop` parse; `all` and `stop` take a key.
+    #[test]
+    fn the_update_of_all_hosts_parses() {
+        let parse = |arguments: &[&str]| {
+            Cli::try_parse_from(
+                ["ghost", "provider", "agent-update"]
+                    .iter()
+                    .chain(arguments),
+            )
+            .map(|cli| cli.command)
+        };
+        assert!(matches!(
+            parse(&["list"]),
+            Ok(Command::Provider {
+                command: ProviderCommand::AgentUpdate {
+                    command: ProviderAgentUpdateCommand::List
+                }
+            })
+        ));
+        assert!(matches!(
+            parse(&["all", "--idempotency-key", "agents-update-all-1"]),
+            Ok(Command::Provider {
+                command: ProviderCommand::AgentUpdate {
+                    command: ProviderAgentUpdateCommand::All { .. }
+                }
+            })
+        ));
+        assert!(matches!(
+            parse(&["stop"]),
+            Ok(Command::Provider {
+                command: ProviderCommand::AgentUpdate {
+                    command: ProviderAgentUpdateCommand::Stop { .. }
+                }
+            })
+        ));
+        assert!(parse(&["list", "extra"]).is_err());
+    }
+
+    /// `all` starts the update of all hosts at the release the read named,
+    /// and `stop` sends no body.
+    #[tokio::test]
+    async fn update_all_sends_the_channel_s_release_and_stop_no_body() {
+        let directory = tempfile::tempdir().unwrap();
+        let seed = directory.path().join("account.seed");
+        keys::generate_seed(&seed).unwrap();
+        let agents = json!({"channel_release": "20261010T000000Z-bbbbbbbbbbbb", "hosts": []});
+        let sequence = json!({
+            "sequence_id": Uuid::from_u128(9), "release": "20261010T000000Z-bbbbbbbbbbbb",
+            "state": "running", "started_at": "2026-11-01T00:00:00Z", "finished_at": null,
+            "failed_host_id": null, "failure": null, "hosts": [],
+        });
+        let (url, received) = canned_server(vec![
+            (200, agents.to_string()),
+            (200, sequence.to_string()),
+            (200, sequence.to_string()),
+        ])
+        .await;
+        for arguments in [
+            vec!["provider", "agent-update", "all"],
+            vec!["provider", "agent-update", "stop"],
+        ] {
+            execute(&account_command(&url, &seed, &arguments))
+                .await
+                .unwrap();
+        }
+        let received = received.lock().unwrap().clone();
+        assert!(
+            received[0].0.starts_with("GET /v1/provider/agents"),
+            "{}",
+            received[0].0
+        );
+        assert!(
+            received[1]
+                .0
+                .starts_with("POST /api/mut/v1/provider/agents/update-all "),
+            "{}",
+            received[1].0
+        );
+        let body: Value = serde_json::from_slice(&received[1].1).unwrap();
+        assert_eq!(body, json!({"release": "20261010T000000Z-bbbbbbbbbbbb"}));
+        assert!(
+            received[2]
+                .0
+                .starts_with("POST /api/mut/v1/provider/agents/update-all/stop"),
+            "{}",
+            received[2].0
+        );
+        assert!(received[2].1.is_empty());
+    }
+
+    /// The agents read as a table with the update of all hosts above it,
+    /// from a backend of before (no `truncated` or `sequence`) and with a
+    /// state of a newer one alike.
+    #[test]
+    fn the_agents_and_their_update_read_plainly() {
+        use ghostrack_client_api::website::AgentUpdateSequenceState;
+
+        let host = |label: &str, state: &str| {
+            json!({
+                "host_id": Uuid::from_u128(u128::from(label.as_bytes()[5])),
+                "host_label": label, "installed_release": "20261001T000000Z-aaaaaaaaaaaa",
+                "remote_updates": true, "online": true, "policy": "manual", "paused": false,
+                "locally_disabled": false, "window": null, "state": state, "attempt": null,
+            })
+        };
+        let older: ProviderAgentsView = serde_json::from_value(json!({
+            "channel_release": "20261010T000000Z-bbbbbbbbbbbb",
+            "hosts": [host("fra-a1", "update_available"), host("fra-a2", "from_the_future")],
+        }))
+        .unwrap();
+        assert!(!older.truncated && older.sequence.is_none());
+        let record = agents_record(&older);
+        assert_eq!(record["hosts"][0]["state"], "update_available");
+        assert_eq!(record["hosts"][1]["state"], "unknown");
+        assert_eq!(record["update_all"], Value::Null);
+
+        let turn = |label: &str, position: u32, phase: &str, reason: Option<&str>| {
+            json!({
+                "host_id": Uuid::from_u128(u128::from(label.as_bytes()[5])),
+                "host_label": label, "position": position, "phase": phase, "reason": reason,
+                "update_id": null, "started_at": null, "finished_at": null,
+            })
+        };
+        let mut view = serde_json::to_value(&older).unwrap();
+        view["sequence"] = json!({
+            "sequence_id": Uuid::from_u128(9), "release": "20261010T000000Z-bbbbbbbbbbbb",
+            "state": "running", "started_at": "2026-11-01T00:00:00Z", "finished_at": null,
+            "failed_host_id": null, "failure": null,
+            "hosts": [turn("fra-a1", 1, "skipped", Some("offline")), turn("fra-a2", 2, "updating", None), turn("fra-a3", 3, "waiting", None)],
+        });
+        let view: ProviderAgentsView = serde_json::from_value(view).unwrap();
+        let record = agents_record(&view);
+        assert_eq!(
+            record["update_all"],
+            "running: 0 of 3 updated, fra-a2 updating, 1 skipped"
+        );
+        assert_eq!(record["hosts"][0]["update_all"], "skipped (offline)");
+        assert_eq!(record["hosts"][1]["update_all"], "updating");
+
+        let mut failed = view.sequence.clone().unwrap();
+        failed.state = AgentUpdateSequenceState::Failed;
+        failed.failed_host_id = Some(failed.hosts[1].host_id);
+        failed.failure = Some("crash_loop".to_owned());
+        failed.finished_at = Some(failed.started_at);
+        failed.hosts[1].phase = AgentUpdateSequenceHostPhase::Failed;
+        let record = sequence_record(&failed);
+        assert_eq!(
+            record["state"],
+            "failed: 0 of 3 updated, 1 skipped, fra-a2 failed: crash_loop"
+        );
+        assert_eq!(record["hosts"][1]["phase"], "failed");
+        let rendered = render_result(
+            &Cli::try_parse_from(["ghost", "provider", "agent-update", "stop"]).unwrap(),
+            &serde_json::to_value(&failed).unwrap(),
+            Terminal::plain(),
+        );
+        assert!(rendered.contains("fra-a2 failed: crash_loop"), "{rendered}");
     }
 
     /// `ghost catalog` alone lists offerings, with their filters; a filter
