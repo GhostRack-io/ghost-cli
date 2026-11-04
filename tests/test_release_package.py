@@ -218,7 +218,7 @@ class Packages(unittest.TestCase):
                 with zipfile.ZipFile(path) as archive: members = {n: archive.read(n) for n in archive.namelist()}
             else:
                 with tarfile.open(path) as archive: members = {m.name: archive.extractfile(m).read() for m in archive}
-            for name in ('LICENSE', 'build.json', 'lib/gigahost/cli-release', 'bin/' + pkg.TARGETS[target][2]):
+            for name in ('LICENSE', 'build.json', 'lib/ghostrack/cli-release', 'bin/' + pkg.TARGETS[target][2]):
                 mutated = {**members, name: b'tampered'}
                 if path.suffix == '.zip':
                     with zipfile.ZipFile(path, 'w') as archive:

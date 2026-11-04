@@ -157,7 +157,7 @@ def validate(directory, target, version, revision):
     if (directory / 'sha256sums').read_bytes() != checksums:
         raise ValueError('Archive checksum differs')
     members = {}
-    allowed = {'bin/' + executable, 'lib/gigahost/cli-release', 'LICENSE', 'build.json'}
+    allowed = {'bin/' + executable, 'lib/ghostrack/cli-release', 'LICENSE', 'build.json'}
     if extension == 'zip':
         with zipfile.ZipFile(path) as archive:
             for info in archive.infolist():
@@ -178,7 +178,7 @@ def validate(directory, target, version, revision):
         raise ValueError('Archive member allowlist differs')
     if members['build.json'] != record_bytes or members['LICENSE'] != (ROOT / 'LICENSE').read_bytes().replace(b'\r\n', b'\n'):
         raise ValueError('Embedded build record or license differs')
-    if members['lib/gigahost/cli-release'] != (record['release_id'] + '\n').encode():
+    if members['lib/ghostrack/cli-release'] != (record['release_id'] + '\n').encode():
         raise ValueError('Embedded release identity differs')
     if record['sha256'][executable] != sha(members['bin/' + executable]):
         raise ValueError('Executable hash differs')
@@ -221,7 +221,7 @@ def package(binary, target, directory, version, revision):
     record = json_bytes({'cli': {'commit': revision, 'dirty': False}, 'target': target,
                          'version': version, 'release_id': release_id(revision), 'sha256': {executable: sha(data)}})
     directory.mkdir(parents=True, exist_ok=False)
-    members = {'bin/' + executable: data, 'lib/gigahost/cli-release': (release_id(revision) + '\n').encode(), 'LICENSE': (ROOT / 'LICENSE').read_bytes().replace(b'\r\n', b'\n'), 'build.json': record}
+    members = {'bin/' + executable: data, 'lib/ghostrack/cli-release': (release_id(revision) + '\n').encode(), 'LICENSE': (ROOT / 'LICENSE').read_bytes().replace(b'\r\n', b'\n'), 'build.json': record}
     path = directory / archive_name(version, target)
     if path.suffix == '.zip':
         with zipfile.ZipFile(path, 'w', compression=zipfile.ZIP_DEFLATED) as archive:

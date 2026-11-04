@@ -2013,7 +2013,7 @@ fn the_channel_install_script_is_fixed_and_takes_its_values_as_arguments() {
     // binary's SHA-256.
     assert!(
         install::CHANNEL_INSTALL_SCRIPT
-            .contains(r#"echo "$1 $3" >"$p/lib/gigahost/ghostd-release""#)
+            .contains(r#"echo "$1 $3" >"$p/lib/ghostrack/ghostd-release""#)
     );
     assert!(install::CHANNEL_INSTALL_SCRIPT.contains(install::ALREADY_INSTALLED));
 }
@@ -2091,7 +2091,7 @@ fn the_channel_script_leaves_the_release_that_is_there_and_its_daemon_alone() {
         std::fs::write(fake.join("daemon_version"), daemon_version).unwrap();
     };
     let installed = home.join(".local/bin/ghostd");
-    let record = home.join(".local/lib/gigahost/ghostd-release");
+    let record = home.join(".local/lib/ghostrack/ghostd-release");
     let first = fake_ghostd(1);
     let first_sha = ops::hex(&Sha256::digest(&first));
     let setup = format!("setup --origin channel --ref {VERSION} --commit {COMMIT}");
@@ -2111,6 +2111,7 @@ fn the_channel_script_leaves_the_release_that_is_there_and_its_daemon_alone() {
         std::fs::read_to_string(&record).unwrap(),
         format!("{VERSION} {first_sha}\n")
     );
+    assert!(!home.join(".local/lib/gigahost").exists());
 
     // The same release again, its daemon running it: nothing replaced,
     // set up again, the daemon kept.

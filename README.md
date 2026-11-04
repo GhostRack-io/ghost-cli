@@ -27,7 +27,7 @@ Python 3.10+ runs `scripts/package-release.py` after the pinned Rust build. It
 checks the native executable's version/help, architecture, static Linux linkage,
 source identity, public console pin, license and archive contents. Each archive
 contains only `bin/ghost` (`bin/ghost.exe` on Windows),
-`lib/gigahost/cli-release`, `LICENSE` and `build.json`. Extract the whole archive
+`lib/ghostrack/cli-release`, `LICENSE` and `build.json`. Extract the whole archive
 into one directory and add its `bin` directory to `PATH`; keep `lib` beside `bin`.
 The release identity comes from the source commit's UTC timestamp and hash and
 is identical across the four native targets. The Action runs the extracted

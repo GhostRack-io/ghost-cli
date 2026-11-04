@@ -56,9 +56,10 @@ pub(crate) const ARCH_COMMAND: &str = "uname -sm";
 /// the channel's install script does, writes a temporary `.ghostd.$$` (one
 /// per process, so that two installs at once do not share it), checks its
 /// SHA-256, moves it over `ghostd`, runs `ghostd setup`, records the
-/// release as the channel's install script does (`lib/gigahost/ghostd-release`:
+/// release as the channel's install script does (`lib/ghostrack/ghostd-release`:
 /// the release and the binary's SHA-256, which that script checks against
-/// the binary before it calls the release installed) and stops a daemon
+/// the binary before it calls the release installed, reading the record of
+/// an older `ghost` in `lib/gigahost` too) and stops a daemon
 /// that still runs the old binary (its jobs keep running), never failing
 /// the install over that.
 ///
@@ -79,7 +80,7 @@ pub(crate) const CHANNEL_INSTALL_SCRIPT: &str = concat!(
     r#"chmod 755 "$n"; mv -f "$n" "$b"; "#,
     r#"echo "ghostd install: installed $b (release $1)" >&2; fi; "#,
     r#""$b" setup --origin channel --ref "$1" --commit "$2"; "#,
-    r#"mkdir -p "$p/lib/gigahost" && echo "$1 $3" >"$p/lib/gigahost/ghostd-release" || echo "ghostd install: could not record release $1 under $p/lib/gigahost" >&2; "#,
+    r#"mkdir -p "$p/lib/ghostrack" && echo "$1 $3" >"$p/lib/ghostrack/ghostd-release" || echo "ghostd install: could not record release $1 under $p/lib/ghostrack" >&2; "#,
     r#"j=$("$b" status 2>/dev/null) || j=; "#,
     r#"case $j in *running?:true*) "#,
     r#"d=$(printf "%s" "$j" | sed -e "s/.*daemon_version.:.//" -e "s/[^0-9A-Za-z.+-].*//"); "#,

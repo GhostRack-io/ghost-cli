@@ -2953,13 +2953,21 @@ pub(crate) fn release() -> &'static str {
     &RELEASE
 }
 
-/// The release ID the install script wrote to
-/// `PREFIX/lib/gigahost/cli-release` when it installed `PREFIX/bin/ghost`,
-/// for the binary at `executable`. A release ID embeds the hash of the
-/// built binary, so the binary cannot carry its own.
+/// Where the install script records the release of `PREFIX/bin/ghost`, in
+/// the order `ghost` reads them: `lib/ghostrack`, which it writes for a
+/// `ghost` that names that record, else `lib/gigahost`, the only one every
+/// `ghost` from before the GhostRack names reads.
+const RELEASE_RECORDS: [&str; 2] = ["lib/ghostrack/cli-release", "lib/gigahost/cli-release"];
+
+/// The release ID the install script recorded when it installed
+/// `PREFIX/bin/ghost` ([`RELEASE_RECORDS`], the first there), for the
+/// binary at `executable`. A release ID embeds the hash of the built
+/// binary, so the binary cannot carry its own.
 fn installed_release(executable: &Path) -> Option<String> {
     let prefix = executable.parent()?.parent()?;
-    let recorded = fs::read_to_string(prefix.join("lib/gigahost/cli-release")).ok()?;
+    let recorded = RELEASE_RECORDS
+        .into_iter()
+        .find_map(|record| fs::read_to_string(prefix.join(record)).ok())?;
     let release = recorded.trim_end_matches(['\r', '\n']);
     is_release_id(release).then(|| release.to_owned())
 }
@@ -13947,25 +13955,56 @@ mod tests {
 
     #[test]
     fn the_version_is_the_release_recorded_next_to_the_installed_binary() {
+        for directory in ["lib/ghostrack", "lib/gigahost"] {
+            let prefix = tempfile::tempdir().unwrap();
+            let executable = prefix.path().join("bin/ghost");
+            let record = prefix.path().join(directory).join("cli-release");
+            assert_eq!(installed_release(&executable), None);
+            fs::create_dir_all(record.parent().unwrap()).unwrap();
+            fs::write(&record, "20260927T074123Z-3d98cd281141\n").unwrap();
+            assert_eq!(
+                installed_release(&executable).as_deref(),
+                Some("20260927T074123Z-3d98cd281141"),
+                "{directory}"
+            );
+            for invalid in [
+                "",
+                "0.1.0",
+                "20260927T074123Z-3D98CD281141",
+                "20260927T074123Z-3d98cd28114",
+            ] {
+                fs::write(&record, invalid).unwrap();
+                assert_eq!(
+                    installed_release(&executable),
+                    None,
+                    "{directory}: {invalid:?}"
+                );
+            }
+        }
+    }
+
+    /// With both records, the GhostRack one names the release, even where
+    /// it is invalid: the other is an older install's.
+    #[test]
+    fn the_ghostrack_record_wins_over_the_gigahost_one() {
         let prefix = tempfile::tempdir().unwrap();
         let executable = prefix.path().join("bin/ghost");
-        let record = prefix.path().join("lib/gigahost/cli-release");
-        assert_eq!(installed_release(&executable), None);
-        fs::create_dir_all(record.parent().unwrap()).unwrap();
-        fs::write(&record, "20260927T074123Z-3d98cd281141\n").unwrap();
+        for directory in ["lib/ghostrack", "lib/gigahost"] {
+            fs::create_dir_all(prefix.path().join(directory)).unwrap();
+        }
+        let new = prefix.path().join("lib/ghostrack/cli-release");
+        fs::write(&new, "20261104T000000Z-0123456789ab\n").unwrap();
+        fs::write(
+            prefix.path().join("lib/gigahost/cli-release"),
+            "20260927T074123Z-3d98cd281141\n",
+        )
+        .unwrap();
         assert_eq!(
             installed_release(&executable).as_deref(),
-            Some("20260927T074123Z-3d98cd281141")
+            Some("20261104T000000Z-0123456789ab")
         );
-        for invalid in [
-            "",
-            "0.1.0",
-            "20260927T074123Z-3D98CD281141",
-            "20260927T074123Z-3d98cd28114",
-        ] {
-            fs::write(&record, invalid).unwrap();
-            assert_eq!(installed_release(&executable), None, "{invalid:?}");
-        }
+        fs::write(&new, "0.1.0\n").unwrap();
+        assert_eq!(installed_release(&executable), None);
     }
 
     /// Every request names this ghost and its release; a backend that no
