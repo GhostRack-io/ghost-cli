@@ -3585,7 +3585,7 @@ pub struct ImageView {
     /// The operating system's family ([`is_os_family`]: `debian`,
     /// `ubuntu`, `rocky`), which the website shows its icon by; none for
     /// an image of none, and from older backends.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub os_family: Option<String>,
 }
 
@@ -3986,7 +3986,7 @@ pub struct ContainerImageView {
     pub x86_64_level: u8,
     /// Its distribution's family, as [`ImageView::os_family`]; none from
     /// older backends.
-    #[serde(default)]
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub os_family: Option<String>,
 }
 

@@ -608,8 +608,12 @@ fn shown(key: &str) -> bool {
     // A hosted backup's data key, wrapped for the account's recovery key,
     // is for `ghost` to rewrap on a restore, not for reading. A job's steps
     // and events name each step by its key; no command takes a step's ID,
-    // which readers took for the job's.
-    !matches!(key, "cpu_tier" | "wrapped_data_key" | "step_id")
+    // which readers took for the job's. An image's operating-system family
+    // is for the website's icons; the CLI shows images as before.
+    !matches!(
+        key,
+        "cpu_tier" | "wrapped_data_key" | "step_id" | "os_family"
+    )
 }
 
 /// The endings of field names that say the unit of their number, which
@@ -1161,10 +1165,12 @@ mod tests {
              "minimum_disk_bytes": 8_589_934_592_u64, "minimum_memory_bytes": 1_073_741_824_u64},
             {"image_id": "01a00000-0000-7000-8000-000000000024", "slug": "ubuntu-24.04",
              "display_name": "Ubuntu 24.04 LTS", "architecture": "x86_64",
-             "minimum_disk_bytes": 4_294_967_296_u64},
+             "minimum_disk_bytes": 4_294_967_296_u64, "os_family": "ubuntu"},
         ]))
         .unwrap();
         assert_eq!(images[1].minimum_memory_bytes, 0);
+        // The family is the website's: not shown.
+        assert_eq!(images[1].os_family.as_deref(), Some("ubuntu"));
         assert_eq!(
             render(&serde_json::to_value(&images).unwrap(), PLAIN),
             "  IMAGE_ID                              DISPLAY_NAME      SLUG          \
