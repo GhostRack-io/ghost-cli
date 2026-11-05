@@ -239,7 +239,7 @@ class Packages(unittest.TestCase):
             def read(path, *args, **kwargs):
                 text = original(path, *args, **kwargs)
                 if mutation == 'version' and path.name == 'Cargo.toml':
-                    return text.replace('version = "1.0.1"', 'version = "2.0.0"', 1)
+                    return text.replace('version = "1.0.2"', 'version = "2.0.0"', 1)
                 if mutation == 'pin' and path.name == 'console-host-key.pub':
                     return 'ssh-ed25519 PLACEHOLDER\n'
                 return text
@@ -282,7 +282,7 @@ class RealGitSource(unittest.TestCase):
             git('checkout', '--detach', original)
             git('replace', original, replacement)
             with patch.object(pkg, 'ROOT', root), patch.dict(os.environ, {'GITHUB_REF': '', 'SOURCE_DATE_EPOCH': '1'}):
-                self.assertEqual(pkg.source(), ('1.0.1', original))
+                self.assertEqual(pkg.source(), ('1.0.2', original))
                 self.assertEqual(pkg.release_id(original), '20261029T000000Z-' + original[:12])
                 (root / 'tracked').write_text('replacement')
                 with self.assertRaisesRegex(ValueError, 'clean source'): pkg.source()
