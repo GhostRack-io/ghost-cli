@@ -3452,6 +3452,10 @@ pub struct SaveHttpProxyEntryRequest {
 pub struct HttpProxyEntry {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub redirect_http_to_https: Option<bool>,
+    /// Send a PROXY protocol v2 header with the client's address before the
+    /// TLS stream (HTTPS passthrough only); omitted keeps the saved value.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub send_proxy_protocol: Option<bool>,
     #[serde(
         default,
         deserialize_with = "custom_hostname_patch",
@@ -3474,6 +3478,10 @@ pub struct HttpProxyEntry {
 pub struct HttpProxyEntryView {
     #[serde(default = "crate::http_proxy::default_redirect_http_to_https")]
     pub redirect_http_to_https: bool,
+    /// Whether a PROXY protocol v2 header precedes the TLS stream; false on
+    /// older servers.
+    #[serde(default)]
+    pub send_proxy_protocol: bool,
     #[serde(default)]
     pub custom_hostname: Option<String>,
     #[serde(default)]
