@@ -8808,13 +8808,8 @@ fn restore_charge(backup: &BackupView) -> Option<u64> {
 /// The row that says what restoring `backup` costs, posted when the
 /// restore is accepted and kept whatever becomes of it.
 fn restore_row(backup: &BackupView) -> Option<QuoteRow> {
-    restore_charge(backup).map(|charge| {
-        QuoteRow::Money(
-            "Now",
-            pretty::dollars(charge),
-            "backup restore".to_owned(),
-        )
-    })
+    restore_charge(backup)
+        .map(|charge| QuoteRow::Money("Now", pretty::dollars(charge), "backup restore".to_owned()))
 }
 
 /// The line that says what restoring `backup` costs, as a block of one row.
@@ -13163,7 +13158,7 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let seed = directory.path().join("ghost").join("account.seed");
         let given = directory.path().join("given.seed");
-        fs::write(&given, "gigahost-account-seed-v1:not-a-key!\n").unwrap();
+        fs::write(&given, "ghostrack-account-seed-v1:not-a-key!\n").unwrap();
         let import = |extra: &[&str]| {
             let mut arguments = vec!["key", "import", "--from", given.to_str().unwrap()];
             arguments.extend(extra);
@@ -13188,7 +13183,7 @@ mod tests {
         let text = fs::read_to_string(&given).unwrap();
         let secret = text
             .trim()
-            .strip_prefix("gigahost-account-seed-v1:")
+            .strip_prefix("ghostrack-account-seed-v1:")
             .unwrap();
         assert!(!error_output(&error).to_string().contains(secret));
         assert_eq!(fs::read(&seed).unwrap(), original);

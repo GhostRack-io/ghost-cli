@@ -1,5 +1,5 @@
 {
-  "description": "Fixed vectors of the account key (src/keys.rs): the seed file's text, the HKDF-SHA-256 materials, the Ed25519 and X25519 (RFC 9180 DeriveKeyPair) keys, their SHA-256 fingerprints, the key ID, the deposit memo and a request signed with the authentication key. Every client that reads an account key or signs a request reproduces them byte for byte. Regenerate with `cargo test -p ghost -- --ignored write_account_seed_vectors`.",
+  "description": "Fixed vectors of the account key (src/keys.rs): the seed file's text as clients write it (ghostrack_seed_file) and as keys saved before the rename have it (seed_file), both read as the same seed, the HKDF-SHA-256 materials, the Ed25519 and X25519 (RFC 9180 DeriveKeyPair) keys, their SHA-256 fingerprints, the key ID, the deposit memo and a request signed with the authentication key. Every client that reads an account key or signs a request reproduces them byte for byte. Regenerate with `cargo test -p ghost -- --ignored write_account_seed_vectors`.",
   "vectors": [
     {
       "authentication_key_fingerprint_b64url": "IMGR8f2FAJh9mhvBDdPEW-uZGS72fu3tLuMA51n5DZM",
@@ -10,6 +10,7 @@
       "billing_material_hex": "e113ab6336d600472defed70b6bd2b0ec2b247b32afaa6d450af4110a4190195",
       "billing_public_key_b64url": "g_zia9b9QQD3JTNtUuJN0h7kZxR1hN4pNFBa9mbLiCQ",
       "deposit_memo": "cxjn4gq4OtRSyGa9",
+      "ghostrack_seed_file": "ghostrack-account-seed-v1:AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA\n",
       "name": "zero",
       "recovery_key_fingerprint_b64url": "7x55tHr14bHgiOACz4yUUhE3qlATDZvlEJh429uow2w",
       "recovery_material_hex": "5966ac2e605d57472da632eb021cb473a33aee700aabb660b263d382b9ea14de",
@@ -37,6 +38,7 @@
       "billing_material_hex": "9cbb9d9a7ff0cd07d3f1bb66186d4f7876abd3fc0a99e720a2a6d09e9b0c73de",
       "billing_public_key_b64url": "zdP4IVbnN7IdRNXpXNKPCjOkmYiFmNSa2pBXyBAySGU",
       "deposit_memo": "SLJ263QS4HYaGM0M",
+      "ghostrack_seed_file": "ghostrack-account-seed-v1:BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc\n",
       "name": "sevens",
       "recovery_key_fingerprint_b64url": "Yk6-41llhxrpIJ00JC7UUZayac65_V1XufLcXbQOhuQ",
       "recovery_material_hex": "544a2eea489478df7d1ee8a713716d2fcfa670da7ca0ccf36cf0c7ba702f4701",
@@ -64,6 +66,7 @@
       "billing_material_hex": "167072585ca00ded4261ae8b6998d46f51f92fbef2ee7c736afdcb4bbddb713b",
       "billing_public_key_b64url": "i0ff3zBsU5ZJFTO9jNhZVFmsuRz3cMt5PvzOeMJzKaY",
       "deposit_memo": "a3YmKb9XBduYDKUF",
+      "ghostrack_seed_file": "ghostrack-account-seed-v1:wpCPlIWd5oB0ErTWPYEwRhpLzyKYq-dqY8BKUErauMo\n",
       "name": "random",
       "recovery_key_fingerprint_b64url": "NVJ-wHhVwrUa7dypVexN_ngGY-Ua6BoklxfPNwSUBK0",
       "recovery_material_hex": "0f847a63f29745569fe3dbea36e12d092971eab6c3265176a722493bb76605cb",

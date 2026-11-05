@@ -15,7 +15,7 @@ use std::{
 use serde_json::Value;
 
 /// The key every vector-free test here imports: 32 sevens.
-const LINE: &str = "gigahost-account-seed-v1:BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc";
+const LINE: &str = "ghostrack-account-seed-v1:BwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwcHBwc";
 
 /// A backend that answers every request, one connection at a time, as the
 /// backend answers a key no account is registered for.
@@ -217,7 +217,7 @@ fn a_malformed_piped_key_writes_nothing() {
     let output = import(
         &seed,
         "http://127.0.0.1:9/",
-        b"gigahost-account-seed-v1:c2hvcnQ\n",
+        b"ghostrack-account-seed-v1:c2hvcnQ\n",
     );
     assert!(!output.status.success());
     let value: Value = serde_json::from_slice(&output.stdout).unwrap();

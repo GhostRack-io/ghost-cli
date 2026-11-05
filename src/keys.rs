@@ -18,7 +18,12 @@ use sha2::{Digest as _, Sha256};
 use uuid::Uuid;
 use zeroize::Zeroizing;
 
-const SEED_PREFIX: &[u8] = b"gigahost-account-seed-v1:";
+/// The label an account key's line starts with, which every client
+/// writes. The label is no part of the key: nothing is derived from it.
+const SEED_PREFIX: &[u8] = b"ghostrack-account-seed-v1:";
+/// The label of an account key written before the rename to GhostRack,
+/// read as [`SEED_PREFIX`] is and never written.
+const LEGACY_SEED_PREFIX: &[u8] = b"gigahost-account-seed-v1:";
 const DERIVATION_SALT: &[u8] = b"GIGAHOST-ACCOUNT-SEED-V1";
 const AUTHENTICATION_KEY_LABEL: &[u8] = b"account-authentication-ed25519-v1";
 const RECOVERY_KEY_LABEL: &[u8] = b"backup-recovery-x25519-v1";
@@ -340,12 +345,17 @@ pub fn load_seed(path: &Path) -> Result<Zeroizing<[u8; 32]>> {
 /// The seed of a seed file's text. Surrounding ASCII whitespace is no part
 /// of the key: a seed file saved from a pasted line by any editor (a
 /// `\r\n`, a space, no newline) loads, as the website's `seed.js` reads the
-/// same text.
+/// same text. The line starts with [`SEED_PREFIX`] or, as keys saved
+/// before the rename do, [`LEGACY_SEED_PREFIX`]; the same seed under
+/// either is the same key.
 pub fn parse_seed(contents: &[u8]) -> Result<Zeroizing<[u8; 32]>> {
+    let contents = contents.trim_ascii();
     let encoded = contents
-        .trim_ascii()
         .strip_prefix(SEED_PREFIX)
-        .context("account key has an unsupported format")?;
+        .or_else(|| contents.strip_prefix(LEGACY_SEED_PREFIX))
+        .context(
+            "account key has an unsupported format: it starts with ghostrack-account-seed-v1:",
+        )?;
     let decoded = Zeroizing::new(
         URL_SAFE_NO_PAD
             .decode(encoded)
@@ -935,25 +945,30 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("account.seed");
         let seed = [7_u8; 32];
-        let line = format!("gigahost-account-seed-v1:{}", URL_SAFE_NO_PAD.encode(seed));
-        for text in [
-            format!("{line}\n"),
-            format!("{line}\r\n"),
-            line.clone(),
-            format!("  {line} \t\r\n\n"),
-            format!("\n{line}\n"),
-        ] {
-            write_private(&path, text.as_bytes());
-            assert_eq!(*load_seed(&path).unwrap(), seed, "{text:?}");
-        }
-        for text in [
-            format!("{line}x\n"),
-            format!("{line}=\n"),
-            line.replace("gigahost", "Gigahost"),
-            format!("{line} {line}"),
-        ] {
-            write_private(&path, text.as_bytes());
-            assert!(load_seed(&path).is_err(), "{text:?}");
+        for prefix in ["ghostrack-account-seed-v1:", "gigahost-account-seed-v1:"] {
+            let line = format!("{prefix}{}", URL_SAFE_NO_PAD.encode(seed));
+            for text in [
+                format!("{line}\n"),
+                format!("{line}\r\n"),
+                line.clone(),
+                format!("  {line} \t\r\n\n"),
+                format!("\n{line}\n"),
+            ] {
+                write_private(&path, text.as_bytes());
+                assert_eq!(*load_seed(&path).unwrap(), seed, "{text:?}");
+            }
+            for text in [
+                format!("{line}x\n"),
+                format!("{line}=\n"),
+                line.replace("ghostrack", "GhostRack"),
+                line.replace("gigahost", "Gigahost"),
+                format!("{line} {line}"),
+            ] {
+                if text != line {
+                    write_private(&path, text.as_bytes());
+                    assert!(load_seed(&path).is_err(), "{text:?}");
+                }
+            }
         }
     }
 
@@ -963,27 +978,53 @@ mod tests {
     fn imported_keys_are_parsed_as_seed_files_are() {
         let file: serde_json::Value = serde_json::from_str(VECTORS).unwrap();
         for entry in file["vectors"].as_array().unwrap() {
-            let text = entry["seed_file"].as_str().unwrap();
-            let line = text.trim_end();
-            for given in [
-                text.to_owned(),
-                format!("{line}\r\n"),
-                format!("  {line}  "),
-                line.to_owned(),
-            ] {
-                assert_eq!(
-                    hex(parse_imported_seed(given.as_bytes()).unwrap().as_ref()),
-                    entry["seed_hex"].as_str().unwrap(),
-                    "{given:?}"
-                );
+            for field in ["ghostrack_seed_file", "seed_file"] {
+                let text = entry[field].as_str().unwrap();
+                let line = text.trim_end();
+                for given in [
+                    text.to_owned(),
+                    format!("{line}\r\n"),
+                    format!("  {line}  "),
+                    line.to_owned(),
+                ] {
+                    assert_eq!(
+                        hex(parse_imported_seed(given.as_bytes()).unwrap().as_ref()),
+                        entry["seed_hex"].as_str().unwrap(),
+                        "{given:?}"
+                    );
+                }
             }
         }
-        let encoded =
-            |bytes: &[u8]| format!("gigahost-account-seed-v1:{}", URL_SAFE_NO_PAD.encode(bytes));
+        let encoded = |bytes: &[u8]| {
+            format!(
+                "ghostrack-account-seed-v1:{}",
+                URL_SAFE_NO_PAD.encode(bytes)
+            )
+        };
         let refused = |given: &[u8]| parse_imported_seed(given).unwrap_err().to_string();
+        // Only the two labels, as written: no other case, spacing or
+        // version.
+        let key = URL_SAFE_NO_PAD.encode([7; 32]);
+        for prefix in [
+            "GhostRack-account-seed-v1:",
+            "GIGAHOST-ACCOUNT-SEED-V1:",
+            "ghostrack-account-seed-v1 :",
+            "ghostrack account seed v1:",
+            "ghostrack-account-seed:",
+            "ghostrack-account-seed-v2:",
+            "gigahost-account-seed-v2:",
+            "ghostrack-account-seed-v1",
+            "",
+        ] {
+            assert_eq!(
+                refused(format!("{prefix}{key}").as_bytes()),
+                "account key has an unsupported format: it starts with ghostrack-account-seed-v1:",
+                "{prefix:?}"
+            );
+        }
         assert_eq!(
-            refused(encoded(&[7; 32]).replace("gigahost", "Gigahost").as_bytes()),
-            "account key has an unsupported format"
+            refused(format!("ghostrack-account-seed-v1: {key}").as_bytes()),
+            "account key is not valid unpadded base64url"
         );
         assert_eq!(
             refused(format!("{}!", encoded(&[7; 32])).as_bytes()),
@@ -1061,7 +1102,7 @@ mod tests {
 
     fn seed_text(seed: &[u8; 32]) -> String {
         format!(
-            "gigahost-account-seed-v1:{}\n",
+            "ghostrack-account-seed-v1:{}\n",
             URL_SAFE_NO_PAD.encode(seed)
         )
     }
@@ -1088,16 +1129,25 @@ mod tests {
             assert_eq!(mode(&created), 0o700, "{}", created.display());
         }
         assert_eq!(names(path.parent().unwrap()), ["account.seed"]);
-        // The website's keys, from the shared vectors, inspect to the
-        // vectors' identities.
+        // The website's keys, from the shared vectors, under either label,
+        // inspect to the vectors' identities, and an import writes the
+        // label clients write now.
         let file: serde_json::Value = serde_json::from_str(VECTORS).unwrap();
-        for entry in file["vectors"].as_array().unwrap() {
+        for (entry, field) in file["vectors"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .flat_map(|entry| [(entry, "seed_file"), (entry, "ghostrack_seed_file")])
+        {
             let destination = directory
                 .path()
-                .join(format!("{}.seed", entry["name"].as_str().unwrap()));
-            let seed =
-                parse_imported_seed(entry["seed_file"].as_str().unwrap().as_bytes()).unwrap();
+                .join(format!("{}-{field}.seed", entry["name"].as_str().unwrap()));
+            let seed = parse_imported_seed(entry[field].as_str().unwrap().as_bytes()).unwrap();
             import_seed(&destination, &seed, false).unwrap();
+            assert_eq!(
+                fs::read_to_string(&destination).unwrap(),
+                entry["ghostrack_seed_file"].as_str().unwrap()
+            );
             let summary = key_summary(&load_seed(&destination).unwrap()).unwrap();
             assert_eq!(
                 summary.authentication_key_id,
@@ -1349,6 +1399,11 @@ mod tests {
             "seed_hex": hex(&seed),
             "seed_file": format!(
                 "{}{}\n",
+                std::str::from_utf8(LEGACY_SEED_PREFIX).unwrap(),
+                URL_SAFE_NO_PAD.encode(seed)
+            ),
+            "ghostrack_seed_file": format!(
+                "{}{}\n",
                 std::str::from_utf8(SEED_PREFIX).unwrap(),
                 URL_SAFE_NO_PAD.encode(seed)
             ),
@@ -1391,7 +1446,7 @@ mod tests {
     fn vectors() -> serde_json::Value {
         let random: [u8; 32] = Sha256::digest(b"gigahost account seed vector 3").into();
         serde_json::json!({
-            "description": "Fixed vectors of the account key (src/keys.rs): the seed file's text, the HKDF-SHA-256 materials, the Ed25519 and X25519 (RFC 9180 DeriveKeyPair) keys, their SHA-256 fingerprints, the key ID, the deposit memo and a request signed with the authentication key. Every client that reads an account key or signs a request reproduces them byte for byte. Regenerate with `cargo test -p ghost -- --ignored write_account_seed_vectors`.",
+            "description": "Fixed vectors of the account key (src/keys.rs): the seed file's text as clients write it (ghostrack_seed_file) and as keys saved before the rename have it (seed_file), both read as the same seed, the HKDF-SHA-256 materials, the Ed25519 and X25519 (RFC 9180 DeriveKeyPair) keys, their SHA-256 fingerprints, the key ID, the deposit memo and a request signed with the authentication key. Every client that reads an account key or signs a request reproduces them byte for byte. Regenerate with `cargo test -p ghost -- --ignored write_account_seed_vectors`.",
             "vectors": [
                 vector("zero", [0; 32], &VectorRequest {
                     method: "POST",
@@ -1433,12 +1488,27 @@ mod tests {
         let directory = tempfile::tempdir().unwrap();
         let path = directory.path().join("account.seed");
         for entry in file["vectors"].as_array().unwrap() {
-            write_private(&path, entry["seed_file"].as_str().unwrap().as_bytes());
-            assert_eq!(
-                hex(load_seed(&path).unwrap().as_ref()),
-                entry["seed_hex"].as_str().unwrap()
-            );
+            for field in ["ghostrack_seed_file", "seed_file"] {
+                write_private(&path, entry[field].as_str().unwrap().as_bytes());
+                assert_eq!(
+                    hex(load_seed(&path).unwrap().as_ref()),
+                    entry["seed_hex"].as_str().unwrap()
+                );
+            }
         }
+        // A new key's file is the vector's line as clients write it.
+        let generated = directory.path().join("generated.seed");
+        import_seed(&generated, &[7; 32], false).unwrap();
+        let sevens = file["vectors"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|entry| entry["name"] == "sevens")
+            .unwrap();
+        assert_eq!(
+            fs::read_to_string(&generated).unwrap(),
+            sevens["ghostrack_seed_file"].as_str().unwrap()
+        );
     }
 
     #[test]
