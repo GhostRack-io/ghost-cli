@@ -8808,13 +8808,8 @@ fn restore_charge(backup: &BackupView) -> Option<u64> {
 /// The row that says what restoring `backup` costs, posted when the
 /// restore is accepted and kept whatever becomes of it.
 fn restore_row(backup: &BackupView) -> Option<QuoteRow> {
-    restore_charge(backup).map(|charge| {
-        QuoteRow::Money(
-            "Now",
-            pretty::dollars(charge),
-            "backup restore".to_owned(),
-        )
-    })
+    restore_charge(backup)
+        .map(|charge| QuoteRow::Money("Now", pretty::dollars(charge), "backup restore".to_owned()))
 }
 
 /// The line that says what restoring `backup` costs, as a block of one row.
