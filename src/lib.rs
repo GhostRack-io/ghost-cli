@@ -13098,6 +13098,12 @@ mod tests {
             serde_json::to_value(keys::key_summary(&[7; 32]).unwrap()).unwrap()
         );
         assert_eq!(*keys::load_seed(&seed).unwrap(), [7; 32]);
+        // A key saved under the old label is written with the new one.
+        assert!(
+            fs::read_to_string(&seed)
+                .unwrap()
+                .starts_with("ghostrack-account-seed-v1:")
+        );
         assert_eq!(request_lines(&received), ["GET /v1/account"]);
         let readable = readable_sections(&cli.command, &output, Terminal::plain()).unwrap();
         assert!(
