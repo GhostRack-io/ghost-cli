@@ -354,7 +354,7 @@ pub fn parse_seed(contents: &[u8]) -> Result<Zeroizing<[u8; 32]>> {
         .strip_prefix(SEED_PREFIX)
         .or_else(|| contents.strip_prefix(LEGACY_SEED_PREFIX))
         .context(
-            "account key has an unsupported format: it starts with ghostrack-account-seed-v1:",
+            "account key has an unsupported format: an account key starts with ghostrack-account-seed-v1:",
         )?;
     let decoded = Zeroizing::new(
         URL_SAFE_NO_PAD
@@ -1018,7 +1018,7 @@ mod tests {
         ] {
             assert_eq!(
                 refused(format!("{prefix}{key}").as_bytes()),
-                "account key has an unsupported format: it starts with ghostrack-account-seed-v1:",
+                "account key has an unsupported format: an account key starts with ghostrack-account-seed-v1:",
                 "{prefix:?}"
             );
         }
