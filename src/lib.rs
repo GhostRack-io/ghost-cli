@@ -8812,7 +8812,7 @@ fn restore_row(backup: &BackupView) -> Option<QuoteRow> {
         QuoteRow::Money(
             "Now",
             pretty::dollars(charge),
-            "backup restore, not refunded".to_owned(),
+            "backup restore".to_owned(),
         )
     })
 }
@@ -9970,13 +9970,13 @@ fn offering_quote(
     rows.push(QuoteRow::Money(
         "Now",
         pretty::dollars(offering.instance_creation_charge_microusd),
-        "creation fee, refunded if the creation fails unless you caused it".to_owned(),
+        "creation fee".to_owned(),
     ));
     if let Some(restore) = restore {
         rows.push(QuoteRow::Money(
             "",
             pretty::dollars(restore),
-            "backup restore, not refunded".to_owned(),
+            "backup restore".to_owned(),
         ));
     }
     rows.push(QuoteRow::Money(
@@ -17463,7 +17463,7 @@ mod tests {
                 "  Location   Warsaw (pl-warsaw)\n",
                 "  Host       cloud, provider Example Hosting\n",
                 "\n",
-                "  Now        $0.13  creation fee, refunded if the creation fails unless you caused it\n",
+                "  Now        $0.13  creation fee\n",
                 "  Monthly    $3.24  base, up to $4.86 at full CPU\n",
                 "  Traffic    $0.24  per TiB\n",
                 "  Held       $7.00  of your balance while the instance exists"
@@ -17482,7 +17482,7 @@ mod tests {
                 "  Host       home, provider Example Hosting\n",
                 "  Network    high bandwidth gateway\n",
                 "\n",
-                "  Now         $0.13  creation fee, refunded if the creation fails unless you caused it\n",
+                "  Now         $0.13  creation fee\n",
                 "  Monthly     $3.24  base, up to $4.86 at full CPU\n",
                 "             $15.00  high bandwidth gateway\n",
                 "  Traffic     $5.24  per TiB\n",
@@ -17501,7 +17501,7 @@ mod tests {
                 "  Location   Warsaw (pl-warsaw)\n",
                 "  Host       cloud, provider Example Hosting\n",
                 "\n",
-                "  Now         $0.13  creation fee, refunded if the creation fails unless you caused it\n",
+                "  Now         $0.13  creation fee\n",
                 "  Monthly     $3.24  base, up to $4.86 at full CPU\n",
                 "              $3.00  address\n",
                 "  Traffic     $0.24  per TiB\n",
@@ -17528,7 +17528,7 @@ mod tests {
                 "  Host       cloud, provider Example Hosting\n",
                 "  Network    shared IP, included\n",
                 "\n",
-                "  Now        $0.13  creation fee, refunded if the creation fails unless you caused it\n",
+                "  Now        $0.13  creation fee\n",
                 "  Monthly    $3.24  base, up to $4.86 at full CPU\n",
                 "  Traffic    $0.24  per TiB\n",
                 "  Held       $7.00  of your balance while the instance exists"
@@ -17596,8 +17596,8 @@ mod tests {
                 "  Host       home, provider gh-4a2l3v67\n",
                 "  Network    shared IP gateway, 20 Mbit/s\n",
                 "\n",
-                "  Now          $0.05  creation fee, refunded if the creation fails unless you caused it\n",
-                "             $0.0062  backup restore, not refunded\n",
+                "  Now          $0.05  creation fee\n",
+                "             $0.0062  backup restore\n",
                 "  Monthly      $2.35  base, up to $7.06 at full CPU\n",
                 "               $0.50  shared IP gateway\n",
                 "  Traffic     $10.00  per TiB\n",
@@ -17646,7 +17646,7 @@ mod tests {
                 "  Backup     00000000-0000-0000-0000-000000000002\n",
                 "  Instance   web (00000000-0000-0000-0000-000000000003)\n",
                 "\n",
-                "  Now        $0.007  backup restore, not refunded\n",
+                "  Now        $0.007  backup restore\n",
             )
         );
         // An instance that could not be read is shown by its ID.
@@ -17658,7 +17658,7 @@ mod tests {
                 "  Backup     00000000-0000-0000-0000-000000000002\n",
                 "  Instance   00000000-0000-0000-0000-000000000003\n",
                 "\n",
-                "  Now        $0.007  backup restore, not refunded\n",
+                "  Now        $0.007  backup restore\n",
             )
         );
         // A name is the server's text: no control character reaches the
@@ -17764,7 +17764,7 @@ mod tests {
         .join("\n");
         assert!(
             quote.contains(
-                "\n  Now          $0.13  creation fee, refunded if the creation fails unless you caused it\n             $0.0129  backup restore, not refunded\n"
+                "\n  Now          $0.13  creation fee\n             $0.0129  backup restore\n"
             ),
             "{quote}"
         );
@@ -17779,7 +17779,7 @@ mod tests {
         assert_eq!(restore_charge(&backup), Some(7_002));
         assert_eq!(
             restore_quote(&backup, false).unwrap(),
-            "  Now   $0.007  backup restore, not refunded"
+            "  Now   $0.007  backup restore"
         );
         backup.size_bytes = None;
         assert_eq!(restore_quote(&backup, false), None);
