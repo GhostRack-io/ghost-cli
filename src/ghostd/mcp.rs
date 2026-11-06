@@ -2411,7 +2411,9 @@ says so).",
         &self,
         Parameters(input): Parameters<TargetInput>,
     ) -> Result<CallToolResult, ErrorData> {
-        let (status, notices) = conn::collecting(self.status(input)).await;
+        // Boxed: the status's future holds an instance's view, which grows
+        // with the API's fields.
+        let (status, notices) = Box::pin(conn::collecting(self.status(input))).await;
         answer(status.map(|(mut summary, mut status)| {
             if !notices.is_empty() {
                 let notice = notices.join("; ");

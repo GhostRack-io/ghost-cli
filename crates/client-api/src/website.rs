@@ -3675,6 +3675,10 @@ pub struct InstanceView {
     pub provider_id: Option<Uuid>,
     #[serde(default)]
     pub provider_name: String,
+    /// The provider's account alias, shown beside a name it chose (item
+    /// 82); empty from older backends.
+    #[serde(default)]
+    pub provider_alias: String,
     #[serde(default)]
     pub host_mode: Option<HostMode>,
     /// The location code of the instance's host.
@@ -5064,6 +5068,10 @@ pub struct InstanceProjectionView {
 pub struct AccountProviderCreditView {
     pub provider_id: Uuid,
     pub provider_display_name: String,
+    /// The provider's account alias, shown beside a name it chose (item
+    /// 82); empty from older backends.
+    #[serde(default)]
+    pub provider_alias: String,
     pub balance_microusd: i64,
 }
 
@@ -6104,6 +6112,9 @@ pub enum ProviderDisplayNameStatus {
 /// the request open or last refused (`GetProviderDisplayName`, item 82).
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub struct ProviderDisplayNameView {
+    /// The provider, whose public page shows the name.
+    #[serde(default)]
+    pub provider_id: Option<Uuid>,
     /// The name shown: the alias until the operator approves one.
     pub name: String,
     /// The account's alias, shown beside a chosen name everywhere.

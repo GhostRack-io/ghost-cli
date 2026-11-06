@@ -54,21 +54,23 @@ use ghostrack_client_api::{
         GetHostNetworkTests, GetHostPricing, GetHostPrivacy, GetIncident, GetInstance,
         GetInstanceConsoleLog, GetInstanceGatewayTraffic, GetInstanceLogs, GetInstanceMesh,
         GetInstanceMeshUsage, GetInstanceUsage, GetJob, GetOffering, GetOperationIntent,
-        GetProviderAgents, GetProviderBalance, GetProviderHost, GetProviderHostInstanceUsage,
-        GetProviderHostMetrics, GetProviderOutage, GetProviderReliability, GetProviderUptime,
-        GetTicket, HandOverIpPool, ListAuthKeys, ListBackups, ListContainerImages, ListImages,
-        ListIncidents, ListInstanceBackups, ListInstanceTags, ListInstanceUpgrades, ListInstances,
-        ListIpPools, ListJobs, ListLocations, ListNotifications, ListOfferings, ListPayouts,
-        ListPrivateRenters, ListProviderHosts, ListProviderOutages, ListProviderReviews,
-        ListSessions, ListTickets, MigrateAccountSeed, MoveGatewayLocation, RedeployInstance,
-        ReinstallInstance, RemoveIpAddress, RemovePrivateRenter, RemoveWebsitePassword,
-        RenameInstance, RescueInstance, ResetInstanceAccess, RestoreBackup, RetireHost,
+        GetProviderAgents, GetProviderBalance, GetProviderDisplayName, GetProviderHost,
+        GetProviderHostInstanceUsage, GetProviderHostMetrics, GetProviderOutage,
+        GetProviderReliability, GetProviderUptime, GetTicket, HandOverIpPool, ListAuthKeys,
+        ListBackups, ListContainerImages, ListImages, ListIncidents, ListInstanceBackups,
+        ListInstanceTags, ListInstanceUpgrades, ListInstances, ListIpPools, ListJobs,
+        ListLocations, ListNotifications, ListOfferings, ListPayouts, ListPrivateRenters,
+        ListProviderHosts, ListProviderOutages, ListProviderReviews, ListSessions, ListTickets,
+        MigrateAccountSeed, MoveGatewayLocation, RedeployInstance, ReinstallInstance,
+        RemoveIpAddress, RemovePrivateRenter, RemoveWebsitePassword, RenameInstance,
+        RequestProviderDisplayName, RescueInstance, ResetInstanceAccess, RestoreBackup, RetireHost,
         RetryHostAgentUpdate, RevokeSession, RevokeSessions, RotateGatewayKeys,
         ScheduleHostRetirement, ScheduleInstanceRetirement, SetBackupSchedule,
         SetHostAgentUpdatePolicy, SetHostPrivate, SetHostRentalAdmission, SetIncidentState,
         SetInstancePower, SetPayoutAddress, SetPortForwards, SetTagRedundant, SetTicketState,
         SetWebsitePassword, StartAgentUpdateSequence, StopAgentUpdateSequence, TagInstance,
-        UnlinkGithub, UpdateHostPricing, UpdateInstance, UpgradeInstance, WriteProviderReview,
+        UnlinkGithub, UpdateHostPricing, UpdateInstance, UpgradeInstance,
+        WithdrawProviderDisplayName, WriteProviderReview,
     },
     hypervisor::{GuestInitializationStatus, HostMode, PowerState, RestartPolicy},
     website::{
@@ -94,23 +96,25 @@ use ghostrack_client_api::{
         JobStateFilter, JobStepState, JobView, KindChoice, LedgerKind, LocationView, LoginGrant,
         MAX_SSH_PUBLIC_KEYS, MigrateAccountSeedRequest, MoveGatewayLocationRequest, OfferingView,
         PortForwardChange, PrivateRenterView, ProviderAgentsView, ProviderBalanceView,
-        ProviderHostDetailView, ProviderHostView, ProviderIncidentSeverity, ProviderIncidentState,
-        ProviderIncidentView, ProviderOutageDetailView, ProviderOutagePage,
-        ProviderPayoutAddressView, ProviderPayoutView, ProviderReliabilityView, ProviderUptimeView,
-        RedeployInstanceRequest, RedeploySetting, ReinstallInstanceRequest, RenameInstanceRequest,
-        RescueInstanceRequest, ResetInstanceAccessRequest, RestoreBackupRequest,
-        RotateGatewayKeysRequest, SSH_PUBLIC_KEY_TYPES, ScheduleHostRetirementRequest,
-        ScheduleInstanceRetirementRequest, SessionRevocationView, SetAgentUpdatePolicyRequest,
-        SetBackupScheduleRequest, SetHostPrivateRequest, SetHostRentalPauseRequest,
-        SetPortForwardsRequest, SetPowerStateRequest, SetProviderIncidentStateRequest,
-        SetProviderPayoutAddressRequest, SetSupportTicketStateRequest, SetTagRedundantRequest,
-        SetWebsitePasswordRequest, SortOrder, StartAgentUpdateSequenceRequest,
-        SupportTicketCategory, SupportTicketPriority, SupportTicketResourceInput,
-        SupportTicketState, SupportTicketSummaryView, SupportTicketView, SupportWaitingOn,
-        TAG_RULE, TagInstanceRequest, TrialClaimStatus, TrialClaimStatusView, TrialClaimView,
-        UpdateInstanceRequest, UpgradeInstanceRequest, UserNotificationView,
-        WebsitePasswordRemoved, WebsitePasswordView, backup_byte_charge, readable_console_log,
-        readable_console_output, valid_hostname, valid_ssh_public_key, valid_tag,
+        ProviderDisplayNameView, ProviderHostDetailView, ProviderHostView,
+        ProviderIncidentSeverity, ProviderIncidentState, ProviderIncidentView,
+        ProviderOutageDetailView, ProviderOutagePage, ProviderPayoutAddressView,
+        ProviderPayoutView, ProviderReliabilityView, ProviderUptimeView, RedeployInstanceRequest,
+        RedeploySetting, ReinstallInstanceRequest, RenameInstanceRequest,
+        RequestProviderDisplayNameRequest, RescueInstanceRequest, ResetInstanceAccessRequest,
+        RestoreBackupRequest, RotateGatewayKeysRequest, SSH_PUBLIC_KEY_TYPES,
+        ScheduleHostRetirementRequest, ScheduleInstanceRetirementRequest, SessionRevocationView,
+        SetAgentUpdatePolicyRequest, SetBackupScheduleRequest, SetHostPrivateRequest,
+        SetHostRentalPauseRequest, SetPortForwardsRequest, SetPowerStateRequest,
+        SetProviderIncidentStateRequest, SetProviderPayoutAddressRequest,
+        SetSupportTicketStateRequest, SetTagRedundantRequest, SetWebsitePasswordRequest, SortOrder,
+        StartAgentUpdateSequenceRequest, SupportTicketCategory, SupportTicketPriority,
+        SupportTicketResourceInput, SupportTicketState, SupportTicketSummaryView,
+        SupportTicketView, SupportWaitingOn, TAG_RULE, TagInstanceRequest, TrialClaimStatus,
+        TrialClaimStatusView, TrialClaimView, UpdateInstanceRequest, UpgradeInstanceRequest,
+        UserNotificationView, WebsitePasswordRemoved, WebsitePasswordView, backup_byte_charge,
+        readable_console_log, readable_console_output, valid_hostname, valid_ssh_public_key,
+        valid_tag,
     },
     website_password,
 };
@@ -814,6 +818,13 @@ enum ProviderCommand {
         #[command(subcommand)]
         command: ProviderPrivateRentersCommand,
     },
+    /// Show your provider name and your account's alias, which renters see
+    /// beside a name you chose; ask the operator for a name, or withdraw
+    /// your request.
+    Name {
+        #[command(subcommand)]
+        command: Option<ProviderNameCommand>,
+    },
     /// Show a host's agent updates, or change how it takes them.
     AgentUpdate {
         #[command(subcommand)]
@@ -1008,6 +1019,25 @@ fn agent_update_policy_request(
         // Read just now, and a retry under its key must send the same body.
         policy_revision: None,
     })
+}
+
+#[derive(Subcommand)]
+enum ProviderNameCommand {
+    /// Ask the operator for a name: 3 to 40 letters, digits, spaces, `.`,
+    /// `-` and `&`. The charge `ghost provider name` shows is held from
+    /// your balance until the operator decides: an approval charges it, a
+    /// rejection or a withdrawal releases it.
+    Request {
+        /// The name, quoted when it has spaces.
+        name: String,
+        #[command(flatten)]
+        mutation: IdempotencyArgs,
+    },
+    /// Withdraw your open request: its charge is released.
+    Withdraw {
+        #[command(flatten)]
+        mutation: IdempotencyArgs,
+    },
 }
 
 #[derive(Subcommand)]
@@ -6658,6 +6688,28 @@ async fn execute_provider(api: &ApiClient, command: &ProviderCommand) -> Result<
                 to_value(renter)
             }
         },
+        ProviderCommand::Name { command } => match command {
+            None => {
+                let name: ProviderDisplayNameView = api.read(&GetProviderDisplayName, "").await?;
+                to_value(name)
+            }
+            Some(ProviderNameCommand::Request { name, mutation }) => {
+                let name: ProviderDisplayNameView = api
+                    .write_retryable(
+                        &RequestProviderDisplayName,
+                        &RequestProviderDisplayNameRequest { name: name.clone() },
+                        &mutation.key(),
+                    )
+                    .await?;
+                to_value(name)
+            }
+            Some(ProviderNameCommand::Withdraw { mutation }) => {
+                let name: ProviderDisplayNameView = api
+                    .write_retryable(&WithdrawProviderDisplayName, &(), &mutation.key())
+                    .await?;
+                to_value(name)
+            }
+        },
         ProviderCommand::AgentUpdate { command } => execute_agent_update(api, command)
             .await
             .map_err(|error| api::reword_conflict(error, "this host cannot take that update now")),
@@ -9895,6 +9947,18 @@ fn gateway_tier_words(tier: GatewayTier) -> String {
     }
 }
 
+/// A provider as renters see it (item 82): its name, and its account's
+/// alias beside a name it chose, "Northwind Compute (gh-p4v9abcd)"; the
+/// alias alone once.
+fn provider_words(name: &str, alias: &str) -> String {
+    let alias = alias.trim();
+    if alias.is_empty() || alias.eq_ignore_ascii_case(name.trim()) {
+        name.to_owned()
+    } else {
+        format!("{name} ({alias})")
+    }
+}
+
 /// What an offering is and what renting it costs, as the lines of a block
 /// of labelled rows, with the `restore` charge of a creation from a backup.
 fn offering_quote(
@@ -9961,7 +10025,10 @@ fn offering_quote(
             format!(
                 "{}, provider {}",
                 host_words(offering.host_mode),
-                escape_control(&offering.provider_name)
+                escape_control(&provider_words(
+                    &offering.provider_name,
+                    &offering.provider_alias
+                ))
             ),
         ),
     ];
@@ -12569,6 +12636,58 @@ mod tests {
         for shown in ["$2.30 per month", "$36.72 per month", "$8.70 per TiB"] {
             assert!(text.contains(shown), "{shown}: {text}");
         }
+    }
+
+    /// `ghost provider name` reads the name; `request` asks for one and
+    /// `withdraw` takes the request back, each retried under its key.
+    #[test]
+    fn the_provider_name_commands_parse() {
+        let cli = Cli::try_parse_from(["ghost", "provider", "name"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Command::Provider {
+                command: ProviderCommand::Name { command: None }
+            }
+        ));
+        let cli =
+            Cli::try_parse_from(["ghost", "provider", "name", "request", "Acme Cloud"]).unwrap();
+        let Command::Provider {
+            command:
+                ProviderCommand::Name {
+                    command: Some(ProviderNameCommand::Request { name, .. }),
+                },
+        } = cli.command
+        else {
+            panic!("a request");
+        };
+        assert_eq!(name, "Acme Cloud");
+        let cli = Cli::try_parse_from(["ghost", "provider", "name", "withdraw"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Command::Provider {
+                command: ProviderCommand::Name {
+                    command: Some(ProviderNameCommand::Withdraw { .. })
+                }
+            }
+        ));
+        assert!(Cli::try_parse_from(["ghost", "provider", "name", "request"]).is_err());
+        let output = json!({
+            "provider_id": Uuid::nil(), "name": "Acme Cloud", "alias": "gh-abcd2345",
+            "chosen": true, "charge_microusd": 100_000_000, "request": null,
+            "last_decision": null
+        });
+        let view: ProviderDisplayNameView = serde_json::from_value(output.clone()).unwrap();
+        assert!(view.chosen);
+        // A backend of before names neither the charge nor the request.
+        let older: ProviderDisplayNameView =
+            serde_json::from_value(json!({"name": "gh-abcd2345", "alias": "gh-abcd2345"})).unwrap();
+        assert!(!older.chosen && older.request.is_none());
+        let cli = Cli::try_parse_from(["ghost", "provider", "name"]).unwrap();
+        let text = render_result(&cli, &output, Terminal::plain());
+        assert!(
+            text.contains("Acme Cloud") && text.contains("gh-abcd2345"),
+            "{text}"
+        );
     }
 
     /// A pricing file gives the compute earnings per vCPU or for the whole
@@ -15207,6 +15326,7 @@ mod tests {
             image: None,
             provider_id: None,
             provider_name: String::new(),
+            provider_alias: String::new(),
             host_mode: None,
             location: String::new(),
             location_name: String::new(),
@@ -17483,7 +17603,7 @@ mod tests {
                 "  Offering   of2_J7hnuv_uO8PmXACeyas4QY\n",
                 "  Size       1 vCPU, 5.5 GiB RAM, 48 GiB disk\n",
                 "  Location   Warsaw (pl-warsaw)\n",
-                "  Host       cloud, provider Example Hosting\n",
+                "  Host       cloud, provider Example Hosting (gh-examples)\n",
                 "\n",
                 "  Now        $0.13  creation fee\n",
                 "  Monthly    $3.24  base, up to $4.86 at full CPU\n",
@@ -17501,7 +17621,7 @@ mod tests {
                 "  Offering   of2_J7hnuv_uO8PmXACeyas4QY\n",
                 "  Size       1 vCPU, 5.5 GiB RAM, 48 GiB disk\n",
                 "  Location   Warsaw (pl-warsaw)\n",
-                "  Host       home, provider Example Hosting\n",
+                "  Host       home, provider Example Hosting (gh-examples)\n",
                 "  Network    high bandwidth gateway\n",
                 "\n",
                 "  Now         $0.13  creation fee\n",
@@ -17521,7 +17641,7 @@ mod tests {
                 "  Offering   of2_J7hnuv_uO8PmXACeyas4QY\n",
                 "  Size       1 vCPU, 5.5 GiB RAM, 48 GiB disk\n",
                 "  Location   Warsaw (pl-warsaw)\n",
-                "  Host       cloud, provider Example Hosting\n",
+                "  Host       cloud, provider Example Hosting (gh-examples)\n",
                 "\n",
                 "  Now         $0.13  creation fee\n",
                 "  Monthly     $3.24  base, up to $4.86 at full CPU\n",
@@ -17547,7 +17667,7 @@ mod tests {
                 "  Offering   of2_J7hnuv_uO8PmXACeyas4QY\n",
                 "  Size       1 vCPU, 5.5 GiB RAM, 48 GiB disk\n",
                 "  Location   Warsaw (pl-warsaw)\n",
-                "  Host       cloud, provider Example Hosting\n",
+                "  Host       cloud, provider Example Hosting (gh-examples)\n",
                 "  Network    shared IP, included\n",
                 "\n",
                 "  Now        $0.13  creation fee\n",
@@ -17594,7 +17714,9 @@ mod tests {
         offering.root_disk_bytes = 20 << 30;
         offering.location = "th-bangkok".to_owned();
         offering.location_name = "Bangkok, Thailand".to_owned();
+        // A provider named by its alias shows it once (item 82).
         offering.provider_name = "gh-4a2l3v67".to_owned();
+        offering.provider_alias = "gh-4a2l3v67".to_owned();
         offering.instance_creation_charge_microusd = 50_000;
         offering.base_price_microusd_per_month = 2_350_000;
         offering.full_utilization_price_microusd_per_month = 7_060_000;

@@ -334,6 +334,7 @@ fn instance_fixture() -> InstanceView {
         image: None,
         provider_id: None,
         provider_name: String::new(),
+        provider_alias: String::new(),
         host_mode: None,
         location: String::new(),
         location_name: String::new(),
