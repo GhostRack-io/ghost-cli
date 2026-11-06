@@ -713,6 +713,12 @@ pub struct OfferingFilters {
     /// host alone can admit ([`OfferingView::available_instances`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub host_id: Option<Uuid>,
+    /// The offerings with a host in this LAN mesh ([`LanMeshView`]), each
+    /// with only those hosts in `host_ids` and their count of instances
+    /// in [`OfferingView::available_instances`]. An ID no LAN mesh has is
+    /// refused; a LAN mesh without hosts now lists none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lan_mesh: Option<Uuid>,
     /// How many to list, 1 to [`OfferingFilters::MAXIMUM_LIMIT`] (that
     /// many without it).
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -722,6 +728,17 @@ pub struct OfferingFilters {
     /// ([`OfferingFilters::after`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub after: Option<String>,
+}
+
+/// The query of `GET /v1/catalog/offerings/{offering_id}` (`GetOffering`).
+/// Unknown parameters are ignored.
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+pub struct OfferingQuery {
+    /// The offering in this LAN mesh ([`LanMeshView`]): only its hosts in
+    /// it, with their count of instances, as
+    /// [`OfferingFilters::lan_mesh`] lists it; 404 when it has none there.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lan_mesh: Option<Uuid>,
 }
 
 impl OfferingFilters {
@@ -2548,6 +2565,11 @@ pub struct CreateInstanceRequest {
     /// none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tags: Option<Vec<String>>,
+    /// Place the instance on a host of this LAN mesh ([`LanMeshView`])
+    /// alone; refused when no host of the offering in it can take the
+    /// instance now. Absent, any host of the offering.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lan_mesh_id: Option<Uuid>,
 }
 
 /// The initial contents for a newly rented instance. Backup restoration is a
@@ -6736,6 +6758,42 @@ pub struct InstanceMeshView {
     /// a LAN link (a home instance's; a cloud instance's is its own traffic
     /// price).
     pub prices: MeshPricesView,
+    /// The LAN mesh ([`LanMeshView`]) the instance's host is in now, whose
+    /// capacity the catalog lists with `lan_mesh`; none otherwise and from
+    /// older backends.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lan_mesh_id: Option<Uuid>,
+}
+
+/// A LAN mesh: the home hosts on one local network, of any providers,
+/// that reach each other directly, between whose instances traffic is
+/// billed at the LAN mesh price (`GET /v1/catalog/lan-meshes/{id}`). Its
+/// ID stays the same for good; the hosts in it are those now.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct LanMeshView {
+    pub id: Uuid,
+    /// How many hosts are in it now (0 when none is).
+    #[serde(default)]
+    pub members: u32,
+    /// The providers of those hosts, by name.
+    #[serde(default)]
+    pub providers: Vec<LanMeshProviderView>,
+    /// The location codes of those hosts, sorted.
+    #[serde(default)]
+    pub locations: Vec<String>,
+    /// What traffic between instances in it costs per TiB sent, now.
+    #[serde(default)]
+    pub lan_mesh_microusd_per_tib: u64,
+}
+
+/// A provider with a host in a LAN mesh.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct LanMeshProviderView {
+    pub provider_id: Uuid,
+    pub provider_name: String,
+    /// Its owner's account alias, such as `gh-abcdefgh`.
+    #[serde(default)]
+    pub provider_alias: String,
 }
 
 /// One UTC day of a host's mesh traffic: what its instances sent and

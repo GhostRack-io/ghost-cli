@@ -1682,6 +1682,7 @@ mod tests {
             startup_command: None,
             ssh_key_ids: None,
             tags: None,
+            lan_mesh_id: None,
         })
         .unwrap();
 

@@ -385,6 +385,11 @@ struct OfferingFilters {
     /// its ID, as an offering's `provider_alias` or `provider_id` shows it.
     #[arg(long, value_name = "PROVIDER", value_parser = parse_provider)]
     provider: Option<ProviderReference>,
+    /// Only offerings with a host in this LAN mesh, each with only those
+    /// hosts and what they can take: the ID a provider's page or an
+    /// instance's Mesh tab links to.
+    #[arg(long, value_name = "LAN_MESH_ID")]
+    lan_mesh: Option<Uuid>,
     /// Only offerings with at least this many vCPUs.
     #[arg(long, alias = "minimum-vcpus", value_parser = clap::value_parser!(u32).range(1..))]
     min_vcpu: Option<u32>,
@@ -7858,6 +7863,7 @@ async fn execute_instance(
                 } else {
                     (!args.tags.is_empty()).then(|| args.tags.clone())
                 },
+                lan_mesh_id: None,
             };
             let accepted = accepted_job(
                 api.write_retryable_answered(&CreateInstance, &request, &key)
@@ -12147,6 +12153,7 @@ impl OfferingFilters {
             ("provider", self.provider.as_ref().map(ToString::to_string)),
             ("minimum_vcpus", self.min_vcpu.map(|n| n.to_string())),
             ("host_id", host.map(|host| host.to_string())),
+            ("lan_mesh", self.lan_mesh.map(|mesh| mesh.to_string())),
             (
                 "minimum_memory_bytes",
                 self.min_ram.map(|bytes| bytes.to_string()),
@@ -12702,12 +12709,14 @@ mod tests {
                 "3",
                 "--host",
                 "0199a1b2-0000-7000-8000-000000000001",
+                "--lan-mesh",
+                "0199a1b2-0000-4000-8000-0000000000aa",
                 "--limit",
                 "50",
                 "--after",
                 "3100000.of2_F95QS_EuMsVz4IG5EulOew",
             ]),
-            "mode=home_gateway&kind=any&location=pl-warsaw&country=PL&continent=EU&provider=gh-examples&minimum_vcpus=4&host_id=0199a1b2-0000-7000-8000-000000000001&minimum_memory_bytes=8589934592&minimum_root_disk_bytes=107374182400&minimum_available=3&limit=50&after=3100000.of2_F95QS_EuMsVz4IG5EulOew"
+            "mode=home_gateway&kind=any&location=pl-warsaw&country=PL&continent=EU&provider=gh-examples&minimum_vcpus=4&host_id=0199a1b2-0000-7000-8000-000000000001&lan_mesh=0199a1b2-0000-4000-8000-0000000000aa&minimum_memory_bytes=8589934592&minimum_root_disk_bytes=107374182400&minimum_available=3&limit=50&after=3100000.of2_F95QS_EuMsVz4IG5EulOew"
         );
         assert_eq!(
             query(&["--minimum-vcpus", "2"]),

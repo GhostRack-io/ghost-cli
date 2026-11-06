@@ -230,6 +230,13 @@ endpoints! {
         public GET "/v1/catalog/providers/reliability" => Vec<ProviderReliabilityView>;
     ListProviderReviews { provider_id: Uuid } =
         public GET "/v1/catalog/providers/{provider_id}/reviews" => Value;
+    /// A LAN mesh: how many hosts are in it now, their providers and
+    /// locations, and its traffic price.
+    GetLanMesh { lan_mesh_id: Uuid } =
+        public GET "/v1/catalog/lan-meshes/{lan_mesh_id}" => crate::website::LanMeshView;
+    /// The LAN meshes the provider has a host in now, by ID, at most 100.
+    ListProviderLanMeshes { provider_id: Uuid } =
+        public GET "/v1/catalog/providers/{provider_id}/lan-meshes" => Vec<crate::website::LanMeshView>;
     /// The public status page's data: every component's state and the
     /// operator's notices, reused for 15 seconds.
     GetStatus = public GET "/v1/status" => crate::website::PlatformStatusView;
