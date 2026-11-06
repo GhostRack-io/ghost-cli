@@ -380,6 +380,11 @@ pub enum BrowserOperation {
         /// backup's instance's when absent, as from a website of before.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         tags: Option<Vec<String>>,
+        /// The LAN mesh whose hosts alone may take the new instance
+        /// ([`CreateInstanceRequest::lan_mesh_id`]), asked from its
+        /// capacity; any host of the offering when absent.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        lan_mesh_id: Option<Uuid>,
     },
     /// A variant of a newer release, which this one does not know.
     #[serde(other)]
@@ -406,6 +411,8 @@ pub enum BrowserOperationInput {
         name: Option<String>,
         #[serde(default, skip_serializing_if = "Option::is_none")]
         tags: Option<Vec<String>>,
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        lan_mesh_id: Option<Uuid>,
     },
 }
 
@@ -426,6 +433,7 @@ impl From<BrowserOperationInput> for BrowserOperation {
                 hostname,
                 name,
                 tags,
+                lan_mesh_id,
             } => Self::CreateFromBackup {
                 offering_id,
                 backup_id,
@@ -433,6 +441,7 @@ impl From<BrowserOperationInput> for BrowserOperation {
                 hostname,
                 name,
                 tags,
+                lan_mesh_id,
             },
         }
     }

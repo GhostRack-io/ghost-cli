@@ -1721,6 +1721,11 @@ struct CreateInstanceArgs {
     /// With --backup, start without the tags of the backup's instance.
     #[arg(long, conflicts_with = "tags")]
     no_tags: bool,
+    /// Place the instance on a host in this LAN mesh only: the ID a
+    /// provider's page or an instance's Mesh tab links to, as
+    /// `ghost catalog offerings --lan-mesh` takes it.
+    #[arg(long, value_name = "LAN_MESH_ID")]
+    lan_mesh: Option<Uuid>,
     /// One-time shell program run by cloud-init on first boot.
     #[arg(long)]
     startup_command: Option<String>,
@@ -7443,6 +7448,7 @@ async fn approve_browser_operation(
                 hostname,
                 name,
                 tags,
+                lan_mesh_id,
             } => {
                 execute_instance(
                     cli,
@@ -7461,6 +7467,7 @@ async fn approve_browser_operation(
                         name,
                         no_tags: tags.as_ref().is_some_and(Vec::is_empty),
                         tags: tags.unwrap_or_default(),
+                        lan_mesh: lan_mesh_id,
                         startup_command: None,
                         startup_command_file: None,
                         authorization_timeout_seconds: 300,
@@ -7608,6 +7615,7 @@ async fn quote_operation(
             hostname,
             name,
             tags,
+            lan_mesh_id,
         } => {
             let backup: BackupView = api
                 .read(
@@ -7630,6 +7638,9 @@ async fn quote_operation(
                 Some([]) => notice("Without the tags of the backup's instance."),
                 Some(tags) => notice(&format!("Tagged {}.", escape_control(&tags.join(", ")))),
                 None => {}
+            }
+            if let Some(mesh) = lan_mesh_id {
+                notice(&format!("On a host in LAN mesh {mesh}."));
             }
             notice("");
             quote_offering(api, offering_id, *gateway_tier, Some(&backup), None, None).await?;
@@ -7863,7 +7874,7 @@ async fn execute_instance(
                 } else {
                     (!args.tags.is_empty()).then(|| args.tags.clone())
                 },
-                lan_mesh_id: None,
+                lan_mesh_id: args.lan_mesh,
             };
             let accepted = accepted_job(
                 api.write_retryable_answered(&CreateInstance, &request, &key)
@@ -15539,6 +15550,7 @@ mod tests {
                     hostname: None,
                     tags: None,
                     name: None,
+                    lan_mesh_id: None,
                 },
                 expires_at: Utc::now() + chrono::Duration::minutes(10),
                 started_job_id: Some(job_id),
@@ -17623,7 +17635,7 @@ mod tests {
         let id = Uuid::nil();
         let output = json!({"request": {}, "approve_command": format!("ghost account approve {id} --yes"),
             "notice": approval_notice(&ghostrack_client_api::website::BrowserOperation::CreateFromBackup {
-                offering_id: "o".to_owned(), backup_id: id, gateway_tier: None, hostname: None, name: None, tags: None }, true)});
+                offering_id: "o".to_owned(), backup_id: id, gateway_tier: None, hostname: None, name: None, tags: None, lan_mesh_id: None }, true)});
         let cli = Cli::try_parse_from(["ghost", "account", "approve", &id.to_string()]).unwrap();
         assert_eq!(
             render_result(&cli, &output, Terminal::plain()),
@@ -17707,6 +17719,7 @@ mod tests {
             hostname: None,
             tags: None,
             name: None,
+            lan_mesh_id: None,
         };
         let restore = BrowserOperation::RestoreBackup {
             instance_id: Uuid::nil(),
@@ -21429,6 +21442,49 @@ mod tests {
             container_log_note(&empty, false),
             "the container's host has sent none of its output yet"
         );
+    }
+
+    /// `instance create --lan-mesh` sends the mesh the instance is placed
+    /// in (item 164); without it the request names none, as before.
+    #[tokio::test]
+    async fn an_instance_is_created_in_the_lan_mesh_it_names() {
+        let directory = tempfile::tempdir().unwrap();
+        let seed = directory.path().join("account.seed");
+        keys::generate_seed(&seed).unwrap();
+        let (image, mesh) = (Uuid::now_v7().to_string(), Uuid::now_v7());
+        let job_id = Uuid::now_v7();
+        let accepted = json!({"job_id": job_id, "resource_id": Uuid::now_v7(),
+            "status_url": format!("/v1/jobs/{job_id}")});
+        let (url, received) = canned_server(vec![
+            (202, accepted.to_string()),
+            (202, accepted.to_string()),
+        ])
+        .await;
+        let mesh_text = mesh.to_string();
+        let base = [
+            "--compact",
+            "instance",
+            "create",
+            "--offering",
+            "o",
+            "--image",
+            &image,
+            "--ssh-key",
+            TEST_PUBLIC_KEY,
+        ];
+        for extra in [&["--lan-mesh", &mesh_text][..], &[]] {
+            execute(&account_command(&url, &seed, &[&base[..], extra].concat()))
+                .await
+                .unwrap();
+        }
+        let bodies: Vec<Value> = received
+            .lock()
+            .unwrap()
+            .iter()
+            .map(|(_, body)| serde_json::from_slice(body).unwrap())
+            .collect();
+        assert_eq!(bodies[0]["lan_mesh_id"], json!(mesh));
+        assert!(bodies[1].get("lan_mesh_id").is_none(), "{}", bodies[1]);
     }
 
     /// `instance create --container` sends the image and every override,
