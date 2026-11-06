@@ -18,11 +18,12 @@ use crate::website::{
     JobAccepted, JobPage, JobView, LocationView, LoginGrant, MigrateAccountSeedRequest,
     NotificationsReadView, OfferingView, PasswordChallenge, PasswordChallengeRequest,
     PasswordLoginRequest, PrivateRenterView, ProtectedBalanceView, ProviderAgentsView,
-    ProviderBalanceView, ProviderHostDetailView, ProviderHostView, ProviderIncidentView,
-    ProviderOutageDetailView, ProviderOutagePage, ProviderPayoutAddressView, ProviderPayoutView,
-    ProviderReliabilityView, ProviderRentalView, ProviderUptimeView, RedeemLoginGrantRequest,
-    RedeemLoginGrantResponse, RedeployInstanceRequest, ReinstallInstanceRequest,
-    ReleaseChannelsView, RenameInstanceRequest, RestoreBackupRequest, RotateGatewayKeysRequest,
+    ProviderBalanceView, ProviderDisplayNameView, ProviderHostDetailView, ProviderHostView,
+    ProviderIncidentView, ProviderOutageDetailView, ProviderOutagePage, ProviderPayoutAddressView,
+    ProviderPayoutView, ProviderReliabilityView, ProviderRentalView, ProviderUptimeView,
+    RedeemLoginGrantRequest, RedeemLoginGrantResponse, RedeployInstanceRequest,
+    ReinstallInstanceRequest, ReleaseChannelsView, RenameInstanceRequest,
+    RequestProviderDisplayNameRequest, RestoreBackupRequest, RotateGatewayKeysRequest,
     ScheduleHostRetirementRequest, ScheduleInstanceRetirementRequest, SessionRevocationView,
     SetAgentUpdatePolicyRequest, SetBackupScheduleRequest, SetHostPrivateRequest,
     SetHostRentalPauseRequest, SetNotificationReadRequest, SetPortForwardsRequest,
@@ -635,6 +636,17 @@ endpoints! {
     /// has on the private hosts stays as it is.
     RemovePrivateRenter { alias: String } = user POST
         "/api/mut/v1/provider/private-renters/{alias}/remove" => PrivateRenterView;
+    /// The provider's display name, its account's alias, what a request
+    /// for another name holds, and the request open or last refused.
+    GetProviderDisplayName = user GET "/v1/provider/display-name" => ProviderDisplayNameView;
+    /// Ask the operator for a display name: the charge is held from the
+    /// account's balance until the operator decides; an approval charges
+    /// it, a rejection releases it. One request at a time.
+    RequestProviderDisplayName = user POST "/api/mut/v1/provider/display-name"
+        (RequestProviderDisplayNameRequest) => ProviderDisplayNameView;
+    /// Withdraw the open request: its charge is released.
+    WithdrawProviderDisplayName = user POST "/api/mut/v1/provider/display-name/withdraw"
+        => ProviderDisplayNameView;
     RetireHost { host_id: Uuid } =
         user DELETE "/api/mut/v1/provider/hosts/{host_id}" => ProviderHostView;
     ScheduleHostRetirement { host_id: Uuid } = user POST

@@ -350,6 +350,12 @@ pub enum LedgerKind {
     RefundForfeit,
     /// A closed account's SLA credit, given back to its provider.
     SlaCreditReturn,
+    /// A provider's request for a display name, holding its charge.
+    DisplayNameHold,
+    /// That charge released: the request was rejected or withdrawn.
+    DisplayNameRelease,
+    /// That charge, paid to the platform: the name was approved.
+    DisplayNameCharge,
     /// A variant of a newer release, which this one does not know.
     #[serde(other)]
     #[cfg_attr(feature = "clap", value(skip))]
@@ -6073,6 +6079,77 @@ pub struct PrivateRenterView {
     pub kept_instances: u32,
     #[serde(default)]
     pub kept_local_backups: u32,
+}
+
+/// Where a provider's request for its own display name stands (item 82).
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProviderDisplayNameStatus {
+    /// Waiting for the operator; its charge is held.
+    Open,
+    /// The name is the provider's; its charge went to the platform.
+    Approved,
+    /// The operator refused it, saying why; its charge was released.
+    Rejected,
+    /// The provider withdrew it, or its account was closed; its charge was
+    /// released.
+    Withdrawn,
+    /// A status of a newer release, which this one does not know.
+    #[serde(other)]
+    Unknown,
+}
+
+/// The provider's display name, as its renters and the public see it,
+/// with its account's alias, what a request for another name holds, and
+/// the request open or last refused (`GetProviderDisplayName`, item 82).
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct ProviderDisplayNameView {
+    /// The name shown: the alias until the operator approves one.
+    pub name: String,
+    /// The account's alias, shown beside a chosen name everywhere.
+    pub alias: String,
+    /// Whether the name is one the provider chose, not the alias.
+    #[serde(default)]
+    pub chosen: bool,
+    /// What a request holds now, and its approval charges.
+    #[serde(default)]
+    pub charge_microusd: u64,
+    /// The request waiting for the operator, if any.
+    #[serde(default)]
+    pub request: Option<ProviderDisplayNameRequestView>,
+    /// The latest request the operator refused, when no request was
+    /// decided after it.
+    #[serde(default)]
+    pub last_decision: Option<ProviderDisplayNameDecisionView>,
+}
+
+/// A provider's open request for a display name.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct ProviderDisplayNameRequestView {
+    pub id: Uuid,
+    pub name: String,
+    /// What it holds, and its approval charges.
+    pub amount_microusd: u64,
+    pub created_at: DateTime<Utc>,
+}
+
+/// A provider's request for a display name, decided.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct ProviderDisplayNameDecisionView {
+    pub name: String,
+    pub status: ProviderDisplayNameStatus,
+    /// The operator's reason of a rejection.
+    #[serde(default)]
+    pub reason: Option<String>,
+    pub decided_at: DateTime<Utc>,
+}
+
+/// Ask for a display name (`RequestProviderDisplayName`): 3 to 40 letters,
+/// digits, spaces, `.`, `-` and `&`.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct RequestProviderDisplayNameRequest {
+    pub name: String,
 }
 
 /// Allow an account on the provider's private hosts, by its alias
