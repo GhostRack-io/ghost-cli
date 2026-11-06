@@ -105,7 +105,7 @@ pub(crate) enum GhostdCommand {
     /// Installing the release that is there already replaces nothing and
     /// leaves its daemon running.
     #[command(
-        after_help = "Examples:\n  ghost ghostd install web-1\n  ghost ghostd install ssh://me@example.com --from-source --ref v0.2.0"
+        after_help = "Examples:\n  ghost ghostd install web-1\n  ghost ghostd install ssh://me@example.com --from-source --ref v1.0.0"
     )]
     Install {
         #[command(flatten)]
