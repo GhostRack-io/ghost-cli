@@ -3513,6 +3513,10 @@ pub struct HttpProxyEntryView {
     /// older servers.
     #[serde(default)]
     pub send_proxy_protocol: bool,
+    /// The address the guest sees the PROXY header's connections come from
+    /// (passthrough with the header on); omitted when unknown.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub proxy_source_ipv4: Option<String>,
     #[serde(default)]
     pub custom_hostname: Option<String>,
     #[serde(default)]
