@@ -49,6 +49,7 @@ pub const CLIENT_DECODED_ENUMS: &[&str] = &[
     "MeshNoLinkReason",
     "MeshPath",
     "ProviderAgentState",
+    "ProviderDisplayNameStatus",
     "ProviderIncidentSeverity",
     "ProviderIncidentState",
     "ProviderPayoutState",
