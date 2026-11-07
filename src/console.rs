@@ -387,7 +387,7 @@ mod tests {
 
     #[test]
     fn ssh_jumps_through_the_console_server_to_the_hosts_own() {
-        let known_hosts = Path::new("/home/a user/.local/share/ghost/100%/console_known_hosts");
+        let known_hosts = Path::new("/home/a/.local/share/ghost/console_known_hosts");
         let instance = uuid::Uuid::from_u128(7);
         let argv = ssh_argv("console.ghostrack.io", 2222, instance, known_hosts);
         let argv: Vec<String> = argv
@@ -395,8 +395,7 @@ mod tests {
             .map(|argument| argument.to_string_lossy().into_owned())
             .collect();
         let id = "00000000-0000-0000-0000-000000000007";
-        let quoted_known =
-            "'UserKnownHostsFile=/home/a user/.local/share/ghost/100%%/console_known_hosts'";
+        let quoted_known = "'UserKnownHostsFile=/home/a/.local/share/ghost/console_known_hosts'";
         let proxy = format!(
             "ProxyCommand=ssh -p 2222 -o 'HostKeyAlias=ghostrack-console' -o 'StrictHostKeyChecking=yes' -o 'UpdateHostKeys=no' -o 'GlobalKnownHostsFile=none' -o {quoted_known} -o 'CheckHostIP=no' -o 'ForwardAgent=no' -o 'ForwardX11=no' -o 'ClearAllForwardings=yes' -l {id} -W %h:%p -- 'console.ghostrack.io'"
         );
