@@ -15,7 +15,10 @@
 //! `StrictHostKeyChecking=yes` and no key updates: a server with another key is refused, never
 //! learned.
 
-use std::{ffi::OsString, fs, io::Write as _, os::unix::fs::OpenOptionsExt as _, path::Path};
+use std::{
+    ffi::OsString, fmt::Write as _, fs, io::Write as _, os::unix::fs::OpenOptionsExt as _,
+    path::Path,
+};
 
 use anyhow::{Context as _, Result, bail};
 use ghostrack_client_api::{
@@ -201,10 +204,7 @@ pub(crate) fn ssh_argv(
         proxy.push_str(" -o ");
         proxy.push_str(&shell_word(&option));
     }
-    proxy.push_str(&format!(
-        " -l {instance_id} -W %h:%p -- {}",
-        shell_word(host)
-    ));
+    let _ = write!(proxy, " -l {instance_id} -W %h:%p -- {}", shell_word(host));
     let mut argv: Vec<OsString> = ["ssh", "-t", "-o"]
         .into_iter()
         .map(OsString::from)
