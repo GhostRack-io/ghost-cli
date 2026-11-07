@@ -1470,12 +1470,14 @@ enum InstanceCommand {
     },
     /// Open the serial console of a VM instance, live, over SSH.
     ///
-    /// Runs the system's `ssh` to the console server
-    /// (`<instance ID>@console.<the API's domain>`, port 2222) with the
-    /// account's SSH key that the agent or `~/.ssh` offers: one of the
-    /// keys the account saved (`ghost account ssh-keys`). The server's
-    /// host key is checked against the one this ghost was built with, never
-    /// learned on first use. The session shows the console log's last
+    /// Runs the system's `ssh` through the console server
+    /// (`<instance ID>@console.<the API's domain>`, port 2222) to the
+    /// console's own SSH server on the instance's host, with the account's
+    /// SSH key that the agent or `~/.ssh` offers: one of the keys the
+    /// account saved with its account key (`ghost account ssh-keys add`).
+    /// The console server's host key is checked against the one this ghost
+    /// was built with, never learned on first use; the host's is kept the
+    /// first time and checked from then on. The session shows the console log's last
     /// screen, then the console as it runs; `Ctrl-]` then `?` shows its
     /// menu (disconnect, a break, a reset, a power cycle). The guest's own
     /// login prompt asks for a password set in the guest: the platform sets
@@ -7314,13 +7316,32 @@ async fn execute_account(cli: &Cli, api: &ApiClient, command: &AccountCommand) -
                 to_value(saved)
             }
             SshKeyCommand::Remove { ssh_key_id } => {
+                // The signed removal names the key's digest, which binds it
+                // to that key (item 195): read from the saved key itself.
+                let keys: Vec<ghostrack_client_api::website::AccountSshKeyView> = api
+                    .read(&ghostrack_client_api::api::ListAccountSshKeys, "")
+                    .await?;
+                let Some(key) = keys.iter().find(|key| key.ssh_key_id == *ssh_key_id) else {
+                    refuse!(
+                        "not_found",
+                        "the account has no saved SSH key {ssh_key_id}; `ghost account ssh-keys list` shows its keys"
+                    );
+                };
+                let Some(key_sha256) =
+                    ghostrack_client_api::website::ssh_key_sha256_text(&key.public_key)
+                else {
+                    refuse!(
+                        "invalid_request",
+                        "the saved key {ssh_key_id} is not an OpenSSH public key line"
+                    );
+                };
                 let removed: ghostrack_client_api::website::AccountSshKeyView = api
                     .write(
                         &ghostrack_client_api::api::RemoveAccountSshKey {
                             ssh_key_id: *ssh_key_id,
                         },
-                        &(),
-                        None,
+                        &ghostrack_client_api::website::RemoveAccountSshKeyRequest { key_sha256 },
+                        Some(&*Uuid::now_v7().to_string()),
                     )
                     .await?;
                 to_value(removed)
@@ -15345,6 +15366,7 @@ mod tests {
             egress_restriction: None,
             access_reset: None,
             rescue: None,
+            console_host_key: None,
         };
         let pricing = BackupPricingView {
             pricing_revision: 7,

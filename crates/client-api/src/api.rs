@@ -22,17 +22,17 @@ use crate::website::{
     ProviderIncidentView, ProviderOutageDetailView, ProviderOutagePage, ProviderPayoutAddressView,
     ProviderPayoutView, ProviderReliabilityView, ProviderRentalView, ProviderUptimeView,
     RedeemLoginGrantRequest, RedeemLoginGrantResponse, RedeployInstanceRequest,
-    ReinstallInstanceRequest, ReleaseChannelsView, RenameInstanceRequest,
-    RequestProviderDisplayNameRequest, RestoreBackupRequest, RotateGatewayKeysRequest,
-    ScheduleHostRetirementRequest, ScheduleInstanceRetirementRequest, SessionRevocationView,
-    SetAgentUpdatePolicyRequest, SetBackupScheduleRequest, SetHostPrivateRequest,
-    SetHostRentalPauseRequest, SetNotificationReadRequest, SetPortForwardsRequest,
-    SetPowerStateRequest, SetProtectedBalanceRequest, SetProviderIncidentStateRequest,
-    SetProviderPayoutAddressRequest, SetSupportTicketStateRequest, SetTagRedundantRequest,
-    SetWebsitePasswordRequest, StartAgentUpdateSequenceRequest, SupportTicketSummaryView,
-    SupportTicketView, TagInstanceRequest, TrialClaimStatusView, TrialClaimView,
-    UpdateHostPricingRequest, UpdateInstanceRequest, UpgradeInstanceRequest, UserNotificationView,
-    WebsitePasswordRemoved, WebsitePasswordView, WriteProviderReviewRequest,
+    ReinstallInstanceRequest, ReleaseChannelsView, RemoveAccountSshKeyRequest,
+    RenameInstanceRequest, RequestProviderDisplayNameRequest, RestoreBackupRequest,
+    RotateGatewayKeysRequest, ScheduleHostRetirementRequest, ScheduleInstanceRetirementRequest,
+    SessionRevocationView, SetAgentUpdatePolicyRequest, SetBackupScheduleRequest,
+    SetHostPrivateRequest, SetHostRentalPauseRequest, SetNotificationReadRequest,
+    SetPortForwardsRequest, SetPowerStateRequest, SetProtectedBalanceRequest,
+    SetProviderIncidentStateRequest, SetProviderPayoutAddressRequest, SetSupportTicketStateRequest,
+    SetTagRedundantRequest, SetWebsitePasswordRequest, StartAgentUpdateSequenceRequest,
+    SupportTicketSummaryView, SupportTicketView, TagInstanceRequest, TrialClaimStatusView,
+    TrialClaimView, UpdateHostPricingRequest, UpdateInstanceRequest, UpgradeInstanceRequest,
+    UserNotificationView, WebsitePasswordRemoved, WebsitePasswordView, WriteProviderReviewRequest,
 };
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::Value;
@@ -299,12 +299,15 @@ endpoints! {
     /// first; the website offers them when an instance is rented or
     /// reinstalled, and the CLI installs them unless keys are named.
     ListAccountSshKeys = user GET "/v1/account/ssh-keys" => Vec<AccountSshKeyView>;
-    /// Save an SSH public key under a label; at most 20 per account.
+    /// Save an SSH public key under a label; at most 20 per account. Signed with the account key:
+    /// a website session cannot save one.
     AddAccountSshKey =
-        user POST "/api/mut/v1/account/ssh-keys" (AddAccountSshKeyRequest) => AccountSshKeyView;
-    /// Forget a saved key; the instances it was copied into keep it.
+        wallet POST "/api/mut/v1/account/ssh-keys" (AddAccountSshKeyRequest) => AccountSshKeyView;
+    /// Forget a saved key; the instances it was copied into keep it. Signed with the account key,
+    /// as adding one is; the body names the key's digest.
     RemoveAccountSshKey { ssh_key_id: Uuid } =
-        user POST "/api/mut/v1/account/ssh-keys/{ssh_key_id}/remove" => AccountSshKeyView;
+        wallet POST "/api/mut/v1/account/ssh-keys/{ssh_key_id}/remove"
+        (RemoveAccountSshKeyRequest) => AccountSshKeyView;
     GetAccountBalance = user GET "/v1/account/balance" => AccountBalanceView;
     /// Sets the account's protected balance, which new rentals, upgrades, backups and restores
     /// leave for the instances already running; none follows the platform's default again. It takes

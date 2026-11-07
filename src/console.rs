@@ -1,12 +1,19 @@
-//! `ghost instance console`: the serial console of a VM instance through the system's `ssh`, to the
-//! console server of the API's deployment, its host key checked strictly against the one this ghost
-//! was built with.  The key comes from `config/console-host-key.pub`, which a release fills
-//! (`scripts/check-console-host-key.sh` refuses a release with the repository's placeholder);
-//! `--console-host-key` or `GHOST_CONSOLE_HOST_KEY` names another deployment's. Before each run
-//! ghost writes it into a known hosts file of its own (`console_known_hosts` in its data directory,
-//! apart from the `ghost x` file) under the alias [`HOST_KEY_ALIAS`], and runs `ssh` with that file
-//! alone, `StrictHostKeyChecking=yes` and no key updates: a server with another key is refused,
-//! never learned.
+//! `ghost instance console`: the serial console of a VM instance through the system's `ssh`, in two
+//! hops (item 195). The first goes to the console server of the API's deployment, its host key checked
+//! strictly against the one this ghost was built with: the key comes from
+//! `config/console-host-key.pub`, which a release fills (`scripts/check-console-host-key.sh` refuses a
+//! release with the repository's placeholder); `--console-host-key` or `GHOST_CONSOLE_HOST_KEY` names
+//! another deployment's. That server only relays (`ssh -W`, as `ProxyCommand`) to the second hop: the
+//! console's own SSH server, which the agent of the instance's host runs, and which checks the login
+//! itself against the keys the account key signed. Its host key is the host's own, which the instance
+//! names (`console_host_key`); ghost keeps it the first time (under [`instance_alias`]) and refuses a
+//! host that later shows another, with both fingerprints.
+//!
+//! Both keys go into a known hosts file of ghost's own (`console_known_hosts` in its data directory,
+//! apart from the `ghost x` file): the console server's under the alias [`HOST_KEY_ALIAS`], written
+//! each run, and the hosts' kept as they were learnt. `ssh` runs with that file alone,
+//! `StrictHostKeyChecking=yes` and no key updates: a server with another key is refused, never
+//! learned.
 
 use std::{ffi::OsString, fs, io::Write as _, os::unix::fs::OpenOptionsExt as _, path::Path};
 
@@ -78,12 +85,70 @@ pub(crate) fn console_server(api_url: &str, chosen: Option<&str>) -> Result<(Str
     Ok((format!("console.{domain}"), CONSOLE_PORT))
 }
 
-/// Write the console's host key `(kind, blob)` as the only line of the
-/// known hosts file at `path`, under [`HOST_KEY_ALIAS`]. The file is the
-/// console's own, written whole each run, so it never loses a line
-/// `ghost x` learns into its file at the same time.
-pub(crate) fn write_known_host(path: &Path, (kind, blob): &(String, String)) -> Result<()> {
-    let line = format!("{HOST_KEY_ALIAS} {kind} {blob}\n");
+/// The alias the console host key of instance `instance_id`'s host is kept under.
+pub(crate) fn instance_alias(instance_id: uuid::Uuid) -> String {
+    format!("ghostrack-instance-{instance_id}")
+}
+
+/// The SHA-256 fingerprint of the key `(kind, blob)`, as `ssh-keygen -l` shows it.
+fn fingerprint((kind, blob): &(String, String)) -> String {
+    ghostrack_client_api::website::ssh_public_key_fingerprint(&format!("{kind} {blob}"))
+        .map_or_else(|| blob.clone(), |(_, fingerprint)| fingerprint)
+}
+
+/// Write the known hosts file at `path`: the console server's key `server` under
+/// [`HOST_KEY_ALIAS`], and the console host key `host` of instance `instance_id`'s host under its
+/// [`instance_alias`], kept as it was the first time: every host key learnt before stays. A host
+/// whose key differs from the one kept is refused, with both fingerprints. The file is the
+/// console's own, written whole each run, so it never loses a line `ghost x` learns into its file at
+/// the same time.
+pub(crate) fn write_known_hosts(
+    path: &Path,
+    server: &(String, String),
+    instance_id: uuid::Uuid,
+    host: &(String, String),
+) -> Result<()> {
+    let alias = instance_alias(instance_id);
+    let existing = match fs::read_to_string(path) {
+        Ok(text) => text,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => String::new(),
+        Err(error) => {
+            return Err(error).with_context(|| format!("read {}", path.display()));
+        }
+    };
+    let mut kept: Vec<String> = Vec::new();
+    let mut known = false;
+    for line in existing.lines() {
+        let mut fields = line.split_ascii_whitespace();
+        let (Some(name), Some(kind), Some(blob)) = (fields.next(), fields.next(), fields.next())
+        else {
+            continue;
+        };
+        if !name.starts_with("ghostrack-instance-") {
+            continue;
+        }
+        if name == alias {
+            let kept_key = (kind.to_owned(), blob.to_owned());
+            if kept_key != *host {
+                bail!(
+                    "the console of instance {instance_id} shows another host key than the one kept for it: kept {}, shown {}. If its host was reinstalled, remove the line `{alias}` from {} and run this again; otherwise do not connect",
+                    fingerprint(&kept_key),
+                    fingerprint(host),
+                    path.display()
+                );
+            }
+            known = true;
+        }
+        kept.push(format!("{name} {kind} {blob}"));
+    }
+    if !known {
+        kept.push(format!("{alias} {} {}", host.0, host.1));
+    }
+    let mut body = format!("{HOST_KEY_ALIAS} {} {}\n", server.0, server.1);
+    for line in kept {
+        body.push_str(&line);
+        body.push('\n');
+    }
     let temporary = path.with_extension("console-tmp");
     let mut file = fs::OpenOptions::new()
         .write(true)
@@ -92,51 +157,73 @@ pub(crate) fn write_known_host(path: &Path, (kind, blob): &(String, String)) -> 
         .mode(0o600)
         .open(&temporary)
         .with_context(|| format!("create {}", temporary.display()))?;
-    file.write_all(line.as_bytes())
+    file.write_all(body.as_bytes())
         .and_then(|()| file.sync_all())
         .with_context(|| format!("write {}", temporary.display()))?;
     fs::rename(&temporary, path).with_context(|| format!("replace {}", path.display()))?;
     Ok(())
 }
 
-/// The `ssh` that opens the console of instance `instance_id` at `host`,
-/// `port`, checking its key against the known hosts file `known_hosts`
-/// alone.
+/// `text` as one word of `/bin/sh`, which runs `ProxyCommand`: single-quoted, and with `%` doubled,
+/// as ssh expands its tokens in it first.
+fn shell_word(text: &str) -> String {
+    format!("'{}'", text.replace('\'', "'\\''").replace('%', "%%"))
+}
+
+/// The `ssh` options that check a server's key against `known_hosts` alone, under `alias`, and
+/// forward nothing.
+fn strict_options(alias: &str, known_hosts: &Path) -> Vec<String> {
+    vec![
+        format!("HostKeyAlias={alias}"),
+        "StrictHostKeyChecking=yes".to_owned(),
+        "UpdateHostKeys=no".to_owned(),
+        "GlobalKnownHostsFile=none".to_owned(),
+        format!("UserKnownHostsFile={}", known_hosts.display()),
+        "CheckHostIP=no".to_owned(),
+        // Only the guest's console is served: nothing to forward.
+        "ForwardAgent=no".to_owned(),
+        "ForwardX11=no".to_owned(),
+        "ClearAllForwardings=yes".to_owned(),
+    ]
+}
+
+/// The `ssh` that opens the console of instance `instance_id`: through the console server at
+/// `host`, `port` (`ssh -W`, as `ProxyCommand`), to the console SSH server of the instance's host,
+/// each checked against the known hosts file `known_hosts` alone.
 pub(crate) fn ssh_argv(
     host: &str,
     port: u16,
     instance_id: uuid::Uuid,
     known_hosts: &Path,
 ) -> Vec<OsString> {
-    let mut argv: Vec<OsString> = ["ssh", "-t", "-p"]
+    let mut proxy = format!("ssh -p {port}");
+    for option in strict_options(HOST_KEY_ALIAS, known_hosts) {
+        proxy.push_str(" -o ");
+        proxy.push_str(&shell_word(&option));
+    }
+    proxy.push_str(&format!(
+        " -l {instance_id} -W %h:%p -- {}",
+        shell_word(host)
+    ));
+    let mut argv: Vec<OsString> = ["ssh", "-t", "-o"]
         .into_iter()
         .map(OsString::from)
         .collect();
-    argv.push(port.to_string().into());
-    for option in [
-        format!("HostKeyAlias={HOST_KEY_ALIAS}"),
-        "StrictHostKeyChecking=yes".to_owned(),
-        "UpdateHostKeys=no".to_owned(),
-        "GlobalKnownHostsFile=none".to_owned(),
-        "CheckHostIP=no".to_owned(),
-        // Only the guest's console is served: nothing to forward.
-        "ForwardAgent=no".to_owned(),
-        "ForwardX11=no".to_owned(),
-        "ClearAllForwardings=yes".to_owned(),
-    ] {
+    argv.push(format!("ProxyCommand={proxy}").into());
+    for option in strict_options(&instance_alias(instance_id), known_hosts) {
         argv.push("-o".into());
         argv.push(option.into());
     }
-    argv.push("-o".into());
-    let mut known = OsString::from("UserKnownHostsFile=");
-    known.push(known_hosts.as_os_str());
-    argv.push(known);
     argv.push("-l".into());
     argv.push(instance_id.to_string().into());
     argv.push("--".into());
-    argv.push(host.into());
+    argv.push(instance_id.to_string().into());
     argv
 }
+
+/// What `ghost instance console` says of a host whose agent has no console SSH server yet.
+pub(crate) const AGENT_NEEDS_UPDATE: &str =
+    "This host's agent needs an update before its console opens.";
 
 /// Run `ghost instance console`: `None` for any other command; the exit
 /// code otherwise, `ssh`'s own once it ran.
@@ -187,8 +274,13 @@ async fn console(
             instance.display_name()
         );
     }
+    let Some(host_key_line) = instance.console_host_key.as_deref() else {
+        bail!("{AGENT_NEEDS_UPDATE}");
+    };
+    let instance_key = host_key(host_key_line)
+        .context("the instance's console host key is not an OpenSSH public key line")?;
     let known_hosts = crate::ghostd::data_file("console_known_hosts")?;
-    write_known_host(&known_hosts, &key)?;
+    write_known_hosts(&known_hosts, &key, instance_id, &instance_key)?;
     let argv = ssh_argv(&host, port, instance_id, &known_hosts);
     let status = tokio::process::Command::new(&argv[0])
         .args(&argv[1..])
@@ -254,37 +346,77 @@ mod tests {
         );
     }
 
+    const HOST: &str =
+        "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIBB7b7LsNyXIwthNFYpb5kE4yvG1xtXbqPaDqeVSoYSf";
+    const OTHER_HOST: &str =
+        "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIOTMfZnvvTUgUVWuRBFRyrdOfg4mqyHyPnB12e4eTSL4";
+
     #[test]
-    fn ssh_checks_the_built_in_key_strictly() {
+    fn the_known_hosts_keep_each_hosts_key_from_its_first_sight() {
         let directory = tempfile::tempdir().unwrap();
         let known_hosts = directory.path().join("console_known_hosts");
         fs::write(&known_hosts, "ghostrack-console ssh-ed25519 OLDKEY\n").unwrap();
-        write_known_host(&known_hosts, &host_key(KEY).unwrap()).unwrap();
+        let (one, two) = (uuid::Uuid::from_u128(7), uuid::Uuid::from_u128(8));
+        let server = host_key(KEY).unwrap();
+        write_known_hosts(&known_hosts, &server, one, &host_key(HOST).unwrap()).unwrap();
+        write_known_hosts(&known_hosts, &server, two, &host_key(OTHER_HOST).unwrap()).unwrap();
+        // The same key again changes nothing.
+        write_known_hosts(&known_hosts, &server, one, &host_key(HOST).unwrap()).unwrap();
         let written = fs::read_to_string(&known_hosts).unwrap();
         assert_eq!(
             written,
-            "ghostrack-console ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIHeHGO1Mp+d9SZrDhuNTitg9vmYCj0pZiw+EuZbKDbM0\n"
+            format!(
+                "ghostrack-console {}\nghostrack-instance-{one} {HOST}\nghostrack-instance-{two} {OTHER_HOST}\n",
+                KEY.trim_end_matches(" ghostrack-console")
+            )
         );
+        // Another key for a host kept is refused, with both fingerprints,
+        // and the file stays as it was.
+        let error = write_known_hosts(&known_hosts, &server, one, &host_key(OTHER_HOST).unwrap())
+            .unwrap_err()
+            .to_string();
+        let shown = |line: &str| {
+            ghostrack_client_api::website::ssh_public_key_fingerprint(line)
+                .unwrap()
+                .1
+        };
+        assert!(error.contains(&shown(HOST)), "{error}");
+        assert!(error.contains(&shown(OTHER_HOST)), "{error}");
+        assert_eq!(fs::read_to_string(&known_hosts).unwrap(), written);
+    }
+
+    #[test]
+    fn ssh_jumps_through_the_console_server_to_the_hosts_own() {
+        let known_hosts = Path::new("/home/a user/.local/share/ghost/100%/console_known_hosts");
         let instance = uuid::Uuid::from_u128(7);
-        let argv = ssh_argv("console.ghostrack.io", 2222, instance, &known_hosts);
+        let argv = ssh_argv("console.ghostrack.io", 2222, instance, known_hosts);
         let argv: Vec<String> = argv
             .iter()
             .map(|argument| argument.to_string_lossy().into_owned())
             .collect();
-        let expected_known = format!("UserKnownHostsFile={}", known_hosts.display());
+        let id = "00000000-0000-0000-0000-000000000007";
+        let quoted_known =
+            "'UserKnownHostsFile=/home/a user/.local/share/ghost/100%%/console_known_hosts'";
+        let proxy = format!(
+            "ProxyCommand=ssh -p 2222 -o 'HostKeyAlias=ghostrack-console' -o 'StrictHostKeyChecking=yes' -o 'UpdateHostKeys=no' -o 'GlobalKnownHostsFile=none' -o {quoted_known} -o 'CheckHostIP=no' -o 'ForwardAgent=no' -o 'ForwardX11=no' -o 'ClearAllForwardings=yes' -l {id} -W %h:%p -- 'console.ghostrack.io'"
+        );
+        let known = format!("UserKnownHostsFile={}", known_hosts.display());
+        let alias = format!("HostKeyAlias=ghostrack-instance-{id}");
         let expected: Vec<&str> = vec![
             "ssh",
             "-t",
-            "-p",
-            "2222",
             "-o",
-            "HostKeyAlias=ghostrack-console",
+            &proxy,
+            "-o",
+            &alias,
             "-o",
             "StrictHostKeyChecking=yes",
             "-o",
             "UpdateHostKeys=no",
             "-o",
             "GlobalKnownHostsFile=none",
+            "-o",
+            &known,
             "-o",
             "CheckHostIP=no",
             "-o",
@@ -293,14 +425,13 @@ mod tests {
             "ForwardX11=no",
             "-o",
             "ClearAllForwardings=yes",
-            "-o",
-            &expected_known,
             "-l",
-            "00000000-0000-0000-0000-000000000007",
+            id,
             "--",
-            "console.ghostrack.io",
+            id,
         ];
         assert_eq!(argv, expected);
+        assert_eq!(shell_word("it's"), "'it'\\''s'");
     }
 
     /// A release refuses the repository's placeholder, and takes a real

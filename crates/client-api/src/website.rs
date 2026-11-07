@@ -649,6 +649,45 @@ pub struct AddAccountSshKeyRequest {
     pub public_key: String,
 }
 
+/// Forget a saved SSH key (item 195). The request is signed with the
+/// account key, and its body names the key it removes, so that the
+/// signature binds the removal to that key and no other: the host's agent
+/// takes the signed removal as the end of the key's access to the console.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct RemoveAccountSshKeyRequest {
+    /// The SHA-256 digest of the key's blob, in unpadded base64url
+    /// ([`ssh_key_sha256`]).
+    pub key_sha256: String,
+}
+
+/// The SHA-256 digest of the blob of the OpenSSH public key line
+/// `public_key` (its type, the standard-base64 blob and an optional
+/// comment, as [`valid_ssh_public_key`] takes it), or `None` for a line
+/// that is not one.
+#[must_use]
+pub fn ssh_key_sha256(public_key: &str) -> Option<[u8; 32]> {
+    use base64::{Engine as _, engine::general_purpose::STANDARD};
+    use sha2::{Digest as _, Sha256};
+
+    let public_key = public_key.trim();
+    if !valid_ssh_public_key(public_key) {
+        return None;
+    }
+    let blob = STANDARD
+        .decode(public_key.split_ascii_whitespace().nth(1)?)
+        .ok()?;
+    Some(Sha256::digest(blob).into())
+}
+
+/// [`ssh_key_sha256`] of `public_key` in unpadded base64url, as
+/// [`RemoveAccountSshKeyRequest::key_sha256`] names it.
+#[must_use]
+pub fn ssh_key_sha256_text(public_key: &str) -> Option<String> {
+    use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
+    ssh_key_sha256(public_key).map(|digest| URL_SAFE_NO_PAD.encode(digest))
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct CreateHostEnrollmentTokenRequest {
@@ -3814,6 +3853,12 @@ pub struct InstanceView {
     /// backends.
     #[serde(default)]
     pub rescue: Option<RescueView>,
+    /// The public key of the SSH server of the instance's console on its host (item 195), an
+    /// `ssh-ed25519` line: `ghost instance console` keeps it and takes the console for that host's
+    /// only. Absent while the host's agent has not sent one (an agent before item 195, whose
+    /// consoles do not open), for a container instance, and from older backends.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub console_host_key: Option<String>,
 }
 
 /// An instance's rescue (`RescueInstance`), once its rescue system has started.

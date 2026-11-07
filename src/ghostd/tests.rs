@@ -353,6 +353,7 @@ fn instance_fixture() -> InstanceView {
         egress_restriction: None,
         access_reset: None,
         rescue: None,
+        console_host_key: None,
     }
 }
 
