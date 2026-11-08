@@ -619,7 +619,7 @@ fn shown(key: &str) -> bool {
 /// The endings of field names that say the unit of their number, which
 /// [`number_text`] shows the value in instead. A suffix that ends another
 /// comes after it.
-const UNIT_SUFFIXES: [&str; 14] = [
+const UNIT_SUFFIXES: [&str; 15] = [
     "_byte_seconds",
     "_bytes_per_second",
     "_bits_per_second",
@@ -634,6 +634,7 @@ const UNIT_SUFFIXES: [&str; 14] = [
     "_millistars",
     "_millis",
     "_microusd",
+    "_mmx_atomic",
 ];
 
 /// What a reader calls field `key`: its name without the unit its value is
