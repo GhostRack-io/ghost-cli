@@ -500,6 +500,35 @@ pub struct AccountActivationTerms {
     pub trial_credit_microusd: Option<u64>,
 }
 
+/// What became of a deposit, by its transaction (`GetDepositLookup`,
+/// public, backlog item 214): each output it paid to the deposit address,
+/// with only what the chain shows anyway, never a memo or an account.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct DepositLookupView {
+    pub transaction_id: String,
+    pub outputs: Vec<DepositLookupOutput>,
+}
+
+/// One output of a deposit: its amount, its state (`credited`, `pending`,
+/// `returning`, `returned` or `kept`; another state may come from a later
+/// server) and, as they apply, its return.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct DepositLookupOutput {
+    pub amount_mmx_atomic: u64,
+    pub state: String,
+    /// The transaction that sent it back, once it is `returned`.
+    #[serde(default)]
+    pub return_transaction_id: Option<String>,
+    /// What its return pays, while it is `returning` and once `returned`:
+    /// its amount less the return's fee.
+    #[serde(default)]
+    pub return_amount_mmx_atomic: Option<u64>,
+    /// When a `pending` deposit to a memo no account holds is sent back if
+    /// no account takes it by then.
+    #[serde(default)]
+    pub returns_after: Option<DateTime<Utc>>,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct MmxExchangeRateView {
     /// Exact decimal USD per whole MMX (also micro-USD per atomic MMX).

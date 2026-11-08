@@ -50,7 +50,7 @@ use ghostrack_client_api::{
         CreateHostEnrollmentToken, CreateInstance, CreateIpPool, CreateLoginGrant, CreatePayout,
         CreateTicket, DeclareHostEmergency, DeleteBackup, DeleteInstance, DeleteIpPool,
         EndInstanceRescue, GetAccount, GetAccountBalance, GetActivationTerms, GetBackup,
-        GetBackupPricing, GetBackupSchedule, GetGithubClaim, GetHostAgentUpdate,
+        GetBackupPricing, GetBackupSchedule, GetDepositLookup, GetGithubClaim, GetHostAgentUpdate,
         GetHostNetworkTests, GetHostPricing, GetHostPrivacy, GetIncident, GetInstance,
         GetInstanceConsoleLog, GetInstanceGatewayTraffic, GetInstanceLogs, GetInstanceMesh,
         GetInstanceMeshUsage, GetInstanceUsage, GetJob, GetOffering, GetOperationIntent,
@@ -87,20 +87,20 @@ use ghostrack_client_api::{
         CloudIpPoolView, ContainerEnvVar, ContainerImageView, ContainerLogView,
         CreateBackupRequest, CreateCloudIpPoolRequest, CreateContainerRequest,
         CreateHostEnrollmentTokenRequest, CreateInstanceRequest, CreateProviderPayoutRequest,
-        CreateSupportTicketRequest, DeclareHostEmergencyRequest, GatewayTier, GatewayTrafficView,
-        GithubUnlinked, HandOverCloudIpPoolRequest, HostAgentUpdateView, HostEnrollmentToken,
-        HostModeFilter, HostPrivacyView, ImageView, InstanceConsoleLogView, InstanceEgressLevel,
-        InstanceKind, InstanceListQuery, InstanceMeshView, InstanceProjectionView, InstanceSort,
-        InstanceSource, InstanceState, InstanceStateFilter, InstanceTagView, InstanceUpgradeView,
-        InstanceView, IpChoice, JobAccepted, JobEventView, JobKind, JobPage, JobState,
-        JobStateFilter, JobStepState, JobView, KindChoice, LedgerKind, LocationView, LoginGrant,
-        MAX_SSH_PUBLIC_KEYS, MigrateAccountSeedRequest, MoveGatewayLocationRequest, OfferingView,
-        PortForwardChange, PrivateRenterView, ProviderAgentsView, ProviderBalanceView,
-        ProviderConversionView, ProviderDisplayNameView, ProviderHostDetailView, ProviderHostView,
-        ProviderIncidentSeverity, ProviderIncidentState, ProviderIncidentView,
-        ProviderOutageDetailView, ProviderOutagePage, ProviderPayoutAddressView,
-        ProviderPayoutView, ProviderReliabilityView, ProviderUptimeView, RedeployInstanceRequest,
-        RedeploySetting, ReinstallInstanceRequest, RenameInstanceRequest,
+        CreateSupportTicketRequest, DeclareHostEmergencyRequest, DepositLookupView, GatewayTier,
+        GatewayTrafficView, GithubUnlinked, HandOverCloudIpPoolRequest, HostAgentUpdateView,
+        HostEnrollmentToken, HostModeFilter, HostPrivacyView, ImageView, InstanceConsoleLogView,
+        InstanceEgressLevel, InstanceKind, InstanceListQuery, InstanceMeshView,
+        InstanceProjectionView, InstanceSort, InstanceSource, InstanceState, InstanceStateFilter,
+        InstanceTagView, InstanceUpgradeView, InstanceView, IpChoice, JobAccepted, JobEventView,
+        JobKind, JobPage, JobState, JobStateFilter, JobStepState, JobView, KindChoice, LedgerKind,
+        LocationView, LoginGrant, MAX_SSH_PUBLIC_KEYS, MigrateAccountSeedRequest,
+        MoveGatewayLocationRequest, OfferingView, PortForwardChange, PrivateRenterView,
+        ProviderAgentsView, ProviderBalanceView, ProviderConversionView, ProviderDisplayNameView,
+        ProviderHostDetailView, ProviderHostView, ProviderIncidentSeverity, ProviderIncidentState,
+        ProviderIncidentView, ProviderOutageDetailView, ProviderOutagePage,
+        ProviderPayoutAddressView, ProviderPayoutView, ProviderReliabilityView, ProviderUptimeView,
+        RedeployInstanceRequest, RedeploySetting, ReinstallInstanceRequest, RenameInstanceRequest,
         RequestProviderDisplayNameRequest, RescueInstanceRequest, ResetInstanceAccessRequest,
         RestoreBackupRequest, RotateGatewayKeysRequest, SSH_PUBLIC_KEY_TYPES,
         ScheduleHostRetirementRequest, ScheduleInstanceRetirementRequest, SessionRevocationView,
@@ -233,6 +233,11 @@ enum Command {
         #[command(subcommand)]
         command: SupportCommand,
     },
+    /// Look up what became of a deposit; no account needed.
+    Deposit {
+        #[command(subcommand)]
+        command: DepositCommand,
+    },
     /// Run a program on a target through ghostd: its output and exit code
     /// passed through, no quoting.
     ///
@@ -262,6 +267,19 @@ enum Command {
     /// directory.
     #[cfg(unix)]
     Mcp(ghostd::McpArgs),
+}
+
+#[derive(Subcommand)]
+enum DepositCommand {
+    /// What became of a deposit, by its transaction ID: each output it
+    /// paid, credited, pending, being returned, returned or kept, with its
+    /// return. A deposit without its memo is sent back to the address that
+    /// sent it, less 0.1 MMX; one below 1 MMX is kept.
+    Lookup {
+        /// The deposit's transaction ID, as the wallet or the exchange
+        /// shows it.
+        transaction_id: String,
+    },
 }
 
 #[derive(Subcommand)]
@@ -3140,6 +3158,20 @@ pub async fn execute(cli: &Cli) -> Result<Value> {
             let api = api_client(cli)?;
             execute_support(&api, command).await
         }
+        Command::Deposit {
+            command: DepositCommand::Lookup { transaction_id },
+        } => {
+            let api = api_client(cli)?;
+            let lookup: DepositLookupView = api
+                .read(
+                    &GetDepositLookup {
+                        transaction_id: transaction_id.trim().to_owned(),
+                    },
+                    "",
+                )
+                .await?;
+            to_value(lookup)
+        }
         #[cfg(unix)]
         Command::Ghostd { command } => ghostd::execute_ghostd(cli, command).await,
         #[cfg(unix)]
@@ -3148,6 +3180,10 @@ pub async fn execute(cli: &Cli) -> Result<Value> {
         }
     }
 }
+
+/// What becomes of a deposit without its memo, after `account
+/// activation-terms`.
+const DEPOSIT_RETURN_NOTE: &str = "A deposit without its memo is sent back less 0.1 MMX; one below 1 MMX is kept. Look one up: ghost deposit lookup <txid>";
 
 /// Lines to print on standard error once `output`, the result of `cli`'s
 /// command, is printed, so they are the last thing shown. After `instance
@@ -3159,6 +3195,16 @@ pub async fn execute(cli: &Cli) -> Result<Value> {
 pub async fn closing_notes(cli: &Cli, output: &Value) -> Vec<String> {
     if cli.output_format() == OutputFormat::Readable && hint_keys(&cli.command, output).is_some() {
         return result_hint_notes(&cli.command);
+    }
+    if let Command::Account {
+        command: AccountCommand::ActivationTerms,
+    } = &cli.command
+    {
+        return if cli.globals.compact {
+            Vec::new()
+        } else {
+            vec![DEPOSIT_RETURN_NOTE.to_owned()]
+        };
     }
     let Command::Instance { command } = &cli.command else {
         return Vec::new();
@@ -3803,6 +3849,9 @@ impl Summary {
             Command::Provider {
                 command: ProviderCommand::Payouts,
             } => parsed(output).map(Self::payouts),
+            Command::Deposit {
+                command: DepositCommand::Lookup { .. },
+            } => parsed(output).map(Self::deposit_outputs),
             Command::Provider {
                 command: ProviderCommand::Conversions(_),
             } => parsed(output).map(Self::conversions),
@@ -4287,6 +4336,57 @@ impl Summary {
                             .then_some(payout.amount_microusd),
                         "requested_at": payout.requested_at,
                         "chain_transaction_id": payout.chain_transaction_id,
+                    })
+                })
+                .collect(),
+            next_cursor: None,
+            note: None,
+        }
+    }
+
+    /// A deposit's outputs, one line each: the amount, the state and, as
+    /// they apply, the return.
+    fn deposit_outputs(lookup: DepositLookupView) -> Self {
+        let mut columns = vec!["amount_mmx_atomic", "state"];
+        for (column, any) in [
+            (
+                "return_transaction_id",
+                lookup
+                    .outputs
+                    .iter()
+                    .any(|output| output.return_transaction_id.is_some()),
+            ),
+            (
+                "return_amount_mmx_atomic",
+                lookup
+                    .outputs
+                    .iter()
+                    .any(|output| output.return_amount_mmx_atomic.is_some()),
+            ),
+            (
+                "returns_after",
+                lookup
+                    .outputs
+                    .iter()
+                    .any(|output| output.returns_after.is_some()),
+            ),
+        ] {
+            if any {
+                columns.push(column);
+            }
+        }
+        Self {
+            columns,
+            rows: lookup
+                .outputs
+                .into_iter()
+                .map(|output| {
+                    json!({
+                        "amount_mmx_atomic": output.amount_mmx_atomic,
+                        "state": output.state,
+                        "return_transaction_id": output.return_transaction_id,
+                        "return_amount_mmx_atomic": output.return_amount_mmx_atomic,
+                        "returns_after": output.returns_after,
                     })
                 })
                 .collect(),
@@ -12724,6 +12824,61 @@ mod tests {
             serde_json::from_str::<Value>(&render_result(&json, &output, Terminal::plain()))
                 .unwrap(),
             output
+        );
+    }
+
+    /// `deposit lookup` needs no account, prints one line per output with
+    /// its return where it has one, and `--json` the view; `account
+    /// activation-terms` closes with what becomes of a deposit without its
+    /// memo.
+    #[tokio::test]
+    async fn a_deposit_lookup_prints_a_line_per_output() {
+        let cli = Cli::try_parse_from(["ghost", "deposit", "lookup", " 1d641e9d "]).unwrap();
+        let Command::Deposit {
+            command: DepositCommand::Lookup { transaction_id },
+        } = &cli.command
+        else {
+            panic!("not a deposit lookup");
+        };
+        assert_eq!(transaction_id, " 1d641e9d ");
+        assert_eq!(
+            ghostrack_client_api::api::Endpoint::path(&GetDepositLookup {
+                transaction_id: transaction_id.trim().to_owned()
+            }),
+            "/v1/deposits/1d641e9d"
+        );
+        let output = json!({
+            "transaction_id": "1D641E9D",
+            "outputs": [
+                {"amount_mmx_atomic": 25_000_000, "state": "returned",
+                 "return_transaction_id": "9F8E7D6C", "return_amount_mmx_atomic": 24_900_000},
+                {"amount_mmx_atomic": 250_000, "state": "kept"},
+            ],
+        });
+        let text = render_result(&cli, &output, Terminal::plain());
+        let rows = words(&text);
+        assert_eq!(rows.len(), 3, "{text}");
+        assert!(rows[1].contains(&"returned"), "{text}");
+        assert!(rows[1].contains(&"9F8E7D6C"), "{text}");
+        assert!(text.contains("24.9"), "{text}");
+        assert!(rows[2].contains(&"kept"), "{text}");
+        assert!(!text.contains("returns_after"), "{text}");
+        let json =
+            Cli::try_parse_from(["ghost", "--json", "deposit", "lookup", "1D641E9D"]).unwrap();
+        assert_eq!(
+            serde_json::from_str::<Value>(&render_result(&json, &output, Terminal::plain()))
+                .unwrap(),
+            output
+        );
+        let terms = json!({"deposit_address": "mmx1x", "minimum_deposit_mmx_atomic": 2_500_000,
+            "minimum_confirmations": 6});
+        let cli = Cli::try_parse_from(["ghost", "account", "activation-terms"]).unwrap();
+        assert_eq!(
+            closing_notes(&cli, &terms).await,
+            [
+                "A deposit without its memo is sent back less 0.1 MMX; one below 1 MMX is kept. \
+                 Look one up: ghost deposit lookup <txid>"
+            ]
         );
     }
 

@@ -248,6 +248,11 @@ endpoints! {
     /// the website session the request came with, if any.
     GetAccountSession = user GET "/v1/account/session" => AccountSessionView;
     GetActivationTerms = public GET "/v1/account/activation-terms" => AccountActivationTerms;
+    /// What became of the deposit `transaction_id` (hex in either case):
+    /// each output it paid, credited, pending, being returned, returned or
+    /// kept, without its memo or account (backlog item 214).
+    GetDepositLookup { transaction_id: String } =
+        public GET "/v1/deposits/{transaction_id}" => crate::website::DepositLookupView;
     /// Signed with the key it registers; no existing account is required.
     ActivateAccount =
         wallet POST "/api/mut/v1/account/activate" (ActivateAccountRequest) => AccountView;
