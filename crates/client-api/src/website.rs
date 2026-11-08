@@ -6446,6 +6446,11 @@ pub struct HostCachedImageView {
     /// Why the image is left out, what its download waits for, or what
     /// failed last.
     pub reason: Option<String>,
+    /// The label (`YYYYMMDD-N`) of the image's build this entry is, where
+    /// the host's agent names it; a host keeps the previous build of an
+    /// image until the current one is cached.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub build: Option<String>,
 }
 
 /// One accepted revision of a host's capacity profile: the CPU limit per NUMA
