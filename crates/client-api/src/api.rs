@@ -551,6 +551,10 @@ endpoints! {
     // Provider
     GetProviderBalance = user GET "/v1/provider/balance" => Option<ProviderBalanceView>;
     ListPayouts = user GET "/v1/provider/payouts" => Vec<ProviderPayoutView>;
+    /// The caller's providers' conversions of released earnings to MMX,
+    /// newest first: items of [`crate::website::ProviderConversionView`],
+    /// paged with `cursor` and `limit`.
+    ListProviderConversions = user GET "/v1/provider/conversions" => HistoryPage;
     CreatePayout = user POST "/api/mut/v1/provider/payouts" (CreateProviderPayoutRequest)
         => ProviderPayoutView;
     /// It decides where earnings leave the platform; a session can only

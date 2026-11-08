@@ -356,6 +356,8 @@ pub enum LedgerKind {
     DisplayNameRelease,
     /// That charge, paid to the platform: the name was approved.
     DisplayNameCharge,
+    /// A provider's released earnings, converted to MMX (item 212).
+    EarningsConversion,
     /// A variant of a newer release, which this one does not know.
     #[serde(other)]
     #[cfg_attr(feature = "clap", value(skip))]
@@ -4992,9 +4994,14 @@ pub struct AccountBalanceView {
     /// Can be negative after an SLA settlement; excludes all deposited funds.
     #[serde(default)]
     pub provider_earnings_microusd: i64,
-    /// Earnings eligible for payout after holds, SLA restrictions and payouts in flight.
+    /// Released earnings waiting for their conversion to MMX: normally 0,
+    /// since earnings convert to MMX once their hold ends.
     #[serde(default)]
     pub available_payout_microusd: i64,
+    /// The MMX a payout can take now, in atomic units (1 MMX is 1,000,000).
+    /// Absent from older backends.
+    #[serde(default)]
+    pub available_payout_mmx_atomic: u64,
     pub funding_status: Option<AccountFundingView>,
     /// SLA credit, per provider whose outage earned it. It pays only that
     /// provider's charges, is never withdrawn, and is not part of the total.
@@ -5148,24 +5155,39 @@ pub struct AccountFundingView {
 }
 
 /// A provider's earnings. Every amount is the provider's own: what its
-/// rentals earned it, and what a payout pays it.
+/// rentals earned it, and what a payout pays it. Earnings are in USD until
+/// their hold ends, and then convert to MMX once a day at that day's
+/// exchange rate; payouts pay MMX.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct ProviderBalanceView {
-    /// Earnings not paid out and not on their way: the balance less the
-    /// payouts in flight, and never below zero.
+    /// Earnings not converted to MMX yet, held or waiting: the USD balance
+    /// less the USD payouts in flight, and never below zero.
     pub pending_payout_microusd: i64,
-    /// What a payout request can take now: the pending earnings less those
-    /// still held, and zero while `sla_settlement_pending`.
+    /// Released earnings waiting for their conversion to MMX: normally 0,
+    /// as a client of before shows it.
     pub available_payout_microusd: i64,
     /// Earnings still held for their rentals' SLA window (1, 5 or 20 days
     /// after they were earned), so that an outage's credit can come from
     /// them.
     pub held_microusd: i64,
-    /// Payouts requested and not confirmed yet.
+    /// USD payouts requested before payouts were in MMX and not confirmed
+    /// yet.
     pub on_the_way_microusd: i64,
     /// An outage of one of the provider's hosts is open or its credits are
-    /// not settled yet: nothing can be paid out until they are.
+    /// not settled yet: no earnings convert to MMX until they are.
     pub sla_settlement_pending: bool,
+    /// The MMX a payout request can take now, in atomic units (1 MMX is
+    /// 1,000,000). Absent from older backends.
+    #[serde(default)]
+    pub available_payout_mmx_atomic: u64,
+    /// The MMX of payouts not confirmed yet whose MMX is known. Absent from
+    /// older backends.
+    #[serde(default)]
+    pub on_the_way_mmx_atomic: u64,
+    /// Released earnings wait to convert because no exchange rate is
+    /// current. Absent from older backends.
+    #[serde(default)]
+    pub waiting_for_exchange_rate: bool,
     /// The MMX address every payout goes to, or `None` until it is set with
     /// a signed CLI request.
     pub payout_address: Option<String>,
@@ -5176,9 +5198,14 @@ pub struct ProviderBalanceView {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct CreateProviderPayoutRequest {
-    /// What to pay out, at most what is available. Omit to pay out
-    /// everything available.
+    /// Refused: payouts are in MMX since ghost 1.0.4. Kept so that a
+    /// request of an older client reads, and is answered with why.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub amount_microusd: Option<u64>,
+    /// What to pay out in atomic units of MMX (1 MMX is 1,000,000), at
+    /// most what is available. Omit to pay out everything available.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub amount_mmx_atomic: Option<u64>,
 }
 
 /// Set the address a provider's payouts go to. Only a request signed with
@@ -5219,9 +5246,12 @@ pub enum ProviderPayoutState {
 pub struct ProviderPayoutView {
     pub payout_id: Uuid,
     pub destination_address: String,
-    /// What the payout takes from the provider's earnings and pays it, in
-    /// MMX at the exchange rate when it is prepared.
+    /// What a USD payout, one requested before payouts were in MMX, takes
+    /// from the provider's earnings, paid in MMX at the exchange rate when
+    /// it is prepared; 0 for an MMX payout.
     pub amount_microusd: u64,
+    /// What the payout pays in atomic units of MMX: an MMX payout's from
+    /// its request, a USD payout's once it is prepared.
     pub amount_mmx_atomic: Option<u64>,
     pub state: ProviderPayoutState,
     pub chain_transaction_id: Option<String>,
@@ -5230,6 +5260,24 @@ pub struct ProviderPayoutView {
     pub confirmed_at: Option<DateTime<Utc>>,
     pub last_error: Option<String>,
     pub waiting_reason: Option<String>,
+}
+
+/// One day's conversion of a provider's released earnings to MMX, an item
+/// of `ListProviderConversions`' pages.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct ProviderConversionView {
+    pub conversion_id: Uuid,
+    /// The UTC day it converted.
+    pub converted_on: chrono::NaiveDate,
+    /// The released earnings it converted.
+    pub amount_microusd: u64,
+    /// The exchange rate it converted at, in USD per MMX, as a decimal
+    /// string.
+    pub usd_per_mmx: String,
+    pub exchange_rate_id: Uuid,
+    /// What it converted to, in atomic units of MMX (1 MMX is 1,000,000).
+    pub amount_mmx_atomic: u64,
+    pub created_at: DateTime<Utc>,
 }
 
 /// The best current network test readings of one host, or of the hosts

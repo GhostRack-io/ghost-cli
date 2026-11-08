@@ -60,12 +60,12 @@ use ghostrack_client_api::{
         ListBackups, ListContainerImages, ListImages, ListIncidents, ListInstanceBackups,
         ListInstanceTags, ListInstanceUpgrades, ListInstances, ListIpPools, ListJobs,
         ListLocations, ListNotifications, ListOfferings, ListPayouts, ListPrivateRenters,
-        ListProviderHosts, ListProviderOutages, ListProviderReviews, ListSessions, ListTickets,
-        MigrateAccountSeed, MoveGatewayLocation, RedeployInstance, ReinstallInstance,
-        RemoveIpAddress, RemovePrivateRenter, RemoveWebsitePassword, RenameInstance,
-        RequestProviderDisplayName, RescueInstance, ResetInstanceAccess, RestoreBackup, RetireHost,
-        RetryHostAgentUpdate, RevokeSession, RevokeSessions, RotateGatewayKeys,
-        ScheduleHostRetirement, ScheduleInstanceRetirement, SetBackupSchedule,
+        ListProviderConversions, ListProviderHosts, ListProviderOutages, ListProviderReviews,
+        ListSessions, ListTickets, MigrateAccountSeed, MoveGatewayLocation, RedeployInstance,
+        ReinstallInstance, RemoveIpAddress, RemovePrivateRenter, RemoveWebsitePassword,
+        RenameInstance, RequestProviderDisplayName, RescueInstance, ResetInstanceAccess,
+        RestoreBackup, RetireHost, RetryHostAgentUpdate, RevokeSession, RevokeSessions,
+        RotateGatewayKeys, ScheduleHostRetirement, ScheduleInstanceRetirement, SetBackupSchedule,
         SetHostAgentUpdatePolicy, SetHostPrivate, SetHostRentalAdmission, SetIncidentState,
         SetInstancePower, SetPayoutAddress, SetPortForwards, SetTagRedundant, SetTicketState,
         SetWebsitePassword, StartAgentUpdateSequence, StopAgentUpdateSequence, TagInstance,
@@ -96,7 +96,7 @@ use ghostrack_client_api::{
         JobStateFilter, JobStepState, JobView, KindChoice, LedgerKind, LocationView, LoginGrant,
         MAX_SSH_PUBLIC_KEYS, MigrateAccountSeedRequest, MoveGatewayLocationRequest, OfferingView,
         PortForwardChange, PrivateRenterView, ProviderAgentsView, ProviderBalanceView,
-        ProviderDisplayNameView, ProviderHostDetailView, ProviderHostView,
+        ProviderConversionView, ProviderDisplayNameView, ProviderHostDetailView, ProviderHostView,
         ProviderIncidentSeverity, ProviderIncidentState, ProviderIncidentView,
         ProviderOutageDetailView, ProviderOutagePage, ProviderPayoutAddressView,
         ProviderPayoutView, ProviderReliabilityView, ProviderUptimeView, RedeployInstanceRequest,
@@ -681,9 +681,10 @@ enum ProviderCommand {
         #[command(flatten)]
         mutation: IdempotencyArgs,
     },
-    /// Show your earnings: not paid out yet, available to pay out now,
-    /// still held for the SLA window, and on the way; and the payout
-    /// address.
+    /// Show your earnings: pending in USD (held for the SLA window, or
+    /// released and converting), available to pay out in MMX, and on the
+    /// way; whether the conversion waits for an exchange rate; and the
+    /// payout address. Released earnings convert to MMX once a day.
     Balance,
     /// Set the MMX address every payout goes to. Payouts not yet signed go
     /// there too. Only this signed command can set it, not the website.
@@ -691,13 +692,17 @@ enum ProviderCommand {
         /// MMX address that receives payouts.
         address: String,
     },
-    /// List recent provider payout requests and their chain status.
+    /// List recent provider payout requests, their MMX and chain status.
     Payouts,
-    /// Request an MMX payout of earnings available now to the payout address.
+    /// List the daily conversions of your released earnings to MMX, newest
+    /// first: the day, the earnings, the rate and the MMX.
+    Conversions(HistoryArgs),
+    /// Request a payout of the MMX available now to the payout address.
     Payout {
-        /// What to pay out, in micro-USD; omit to pay out everything available.
-        #[arg(long)]
-        amount_microusd: Option<u64>,
+        /// What to pay out, in MMX with at most six decimals (such as 40.5);
+        /// omit to pay out everything available.
+        #[arg(long, value_parser = parse_mmx_amount)]
+        amount: Option<u64>,
         #[command(flatten)]
         mutation: IdempotencyArgs,
     },
@@ -3795,6 +3800,12 @@ impl Summary {
             Command::Provider {
                 command: ProviderCommand::Hosts { retired },
             } => parsed(output).map(|hosts| Self::provider_hosts(hosts, *retired, Utc::now())),
+            Command::Provider {
+                command: ProviderCommand::Payouts,
+            } => parsed(output).map(Self::payouts),
+            Command::Provider {
+                command: ProviderCommand::Conversions(_),
+            } => parsed(output).map(Self::conversions),
             Command::Instance {
                 command: InstanceCommand::Upgrades { .. },
             } => parsed(output).map(Self::upgrades),
@@ -4255,6 +4266,63 @@ impl Summary {
     /// offerings: the size by its vCPUs alone (a CPU tier is no part of a
     /// size), RAM and disk, the monthly price and the price at full CPU,
     /// what the balance must hold more, and whether the host has room now.
+    /// Payouts with what each pays in MMX; the dollars of a payout
+    /// requested in USD, before payouts were in MMX, only when one is.
+    fn payouts(payouts: Vec<ProviderPayoutView>) -> Self {
+        let mut columns = vec!["payout_id", "state", "amount_mmx_atomic"];
+        if payouts.iter().any(|payout| payout.amount_microusd != 0) {
+            columns.push("amount_microusd");
+        }
+        columns.extend(["requested_at", "chain_transaction_id"]);
+        Self {
+            columns,
+            rows: payouts
+                .into_iter()
+                .map(|payout| {
+                    json!({
+                        "payout_id": payout.payout_id,
+                        "state": payout.state,
+                        "amount_mmx_atomic": payout.amount_mmx_atomic,
+                        "amount_microusd": (payout.amount_microusd != 0)
+                            .then_some(payout.amount_microusd),
+                        "requested_at": payout.requested_at,
+                        "chain_transaction_id": payout.chain_transaction_id,
+                    })
+                })
+                .collect(),
+            next_cursor: None,
+            note: None,
+        }
+    }
+
+    /// Each day's conversion: the earnings, the rate and the MMX.
+    fn conversions(page: ghostrack_client_api::website::HistoryPage) -> Self {
+        Self {
+            columns: vec![
+                "converted_on",
+                "amount_microusd",
+                "usd_per_mmx",
+                "amount_mmx_atomic",
+            ],
+            rows: page
+                .items
+                .iter()
+                .filter_map(|item| {
+                    let conversion: ProviderConversionView =
+                        serde_json::from_value(item.clone()).ok()?;
+                    Some(json!({
+                        "converted_on": conversion.converted_on,
+                        "amount_microusd": conversion.amount_microusd,
+                        "usd_per_mmx": pretty::decimal_dollars(&escape_control(&conversion.usd_per_mmx)),
+                        "amount_mmx_atomic": conversion.amount_mmx_atomic,
+                    }))
+                })
+                .collect(),
+            next_cursor: page.next_cursor,
+            note: None,
+        }
+    }
+
     fn upgrades(upgrades: Vec<InstanceUpgradeView>) -> Self {
         Self {
             columns: vec![
@@ -6452,15 +6520,18 @@ async fn execute_provider(api: &ApiClient, command: &ProviderCommand) -> Result<
             let payouts: Vec<ProviderPayoutView> = api.read(&ListPayouts, "").await?;
             to_value(payouts)
         }
-        ProviderCommand::Payout {
-            amount_microusd,
-            mutation,
-        } => {
+        ProviderCommand::Conversions(page) => {
+            let page: ghostrack_client_api::website::HistoryPage =
+                api.read(&ListProviderConversions, &page.query()).await?;
+            to_value(page)
+        }
+        ProviderCommand::Payout { amount, mutation } => {
             let payout: ProviderPayoutView = api
                 .write_retryable(
                     &CreatePayout,
                     &CreateProviderPayoutRequest {
-                        amount_microusd: *amount_microusd,
+                        amount_microusd: None,
+                        amount_mmx_atomic: *amount,
                     },
                     &mutation.key(),
                 )
@@ -11818,6 +11889,38 @@ fn parse_usd(value: &str) -> Result<u64, String> {
     Ok(whole * 1_000_000 + fraction)
 }
 
+/// An amount of MMX, such as `40`, `40.5` or `0.000001`, to atomic units
+/// (1 MMX is 1,000,000): at most nine digits of whole MMX and six
+/// decimals, read from the text alone without floating point. Zero is
+/// refused; the backend checks the bounds.
+fn parse_mmx_amount(value: &str) -> Result<u64, String> {
+    let invalid = || {
+        format!(
+            "{value} is not an amount of MMX; write one with at most six decimals, such as 40.5"
+        )
+    };
+    let text = value.trim();
+    let text = text.strip_suffix("MMX").map_or(text, str::trim_end);
+    let (whole, fraction) = text.split_once('.').unwrap_or((text, ""));
+    if whole.is_empty()
+        || whole.len() > 9
+        || fraction.len() > 6
+        || !whole.bytes().all(|byte| byte.is_ascii_digit())
+        || !fraction.bytes().all(|byte| byte.is_ascii_digit())
+        || (text.contains('.') && fraction.is_empty())
+    {
+        return Err(invalid());
+    }
+    let whole: u64 = whole.parse().map_err(|_| invalid())?;
+    let fraction: u64 = format!("{fraction:0<6}").parse().map_err(|_| invalid())?;
+    match whole * 1_000_000 + fraction {
+        0 => Err(format!(
+            "{value} is zero; omit --amount to pay out everything available"
+        )),
+        atomic => Ok(atomic),
+    }
+}
+
 fn parse_hostname(value: &str) -> Result<String, String> {
     if valid_hostname(value) {
         Ok(value.to_owned())
@@ -14501,9 +14604,92 @@ mod tests {
         let parse =
             |arguments: &[&str]| Cli::try_parse_from(["ghost", "provider"].iter().chain(arguments));
         assert!(parse(&["set-payout-address", "mmx1address"]).is_ok());
-        assert!(parse(&["payout", "--amount-microusd", "1000000"]).is_ok());
+        assert!(parse(&["payout", "--amount", "40.5"]).is_ok());
+        assert!(parse(&["payout"]).is_ok());
+        // Payouts are in MMX since 1.0.4.
+        assert!(parse(&["payout", "--amount-microusd", "1000000"]).is_err());
         assert!(parse(&["payout", "--net-microusd", "1000000"]).is_err());
         assert!(parse(&["payout", "--destination", "mmx1address"]).is_err());
+    }
+
+    #[test]
+    fn a_payout_is_asked_for_in_mmx_and_sent_in_atomic_units() {
+        assert_eq!(parse_mmx_amount("40"), Ok(40_000_000));
+        assert_eq!(parse_mmx_amount("40.5"), Ok(40_500_000));
+        assert_eq!(parse_mmx_amount("0.000001"), Ok(1));
+        assert_eq!(parse_mmx_amount("12.345678"), Ok(12_345_678));
+        assert_eq!(parse_mmx_amount("5 MMX"), Ok(5_000_000));
+        assert_eq!(
+            parse_mmx_amount("999999999.999999"),
+            Ok(999_999_999_999_999)
+        );
+        for invalid in [
+            "",
+            "0",
+            "0.000000",
+            "forty",
+            "-1",
+            "1.",
+            ".5",
+            "1.0000001",
+            "1,5",
+            "1e3",
+            "$5",
+            "1234567890",
+        ] {
+            assert!(parse_mmx_amount(invalid).is_err(), "{invalid}");
+        }
+        let Ok(Cli {
+            command:
+                Command::Provider {
+                    command: ProviderCommand::Payout { amount, .. },
+                },
+            ..
+        }) = Cli::try_parse_from(["ghost", "provider", "payout", "--amount", "40.5"])
+        else {
+            panic!("the payout command parses");
+        };
+        assert_eq!(amount, Some(40_500_000));
+        let body = serde_json::to_value(CreateProviderPayoutRequest {
+            amount_microusd: None,
+            amount_mmx_atomic: amount,
+        })
+        .unwrap();
+        assert_eq!(body, json!({"amount_mmx_atomic": 40_500_000}));
+        let everything = serde_json::to_value(CreateProviderPayoutRequest {
+            amount_microusd: None,
+            amount_mmx_atomic: None,
+        })
+        .unwrap();
+        assert_eq!(everything, json!({}));
+    }
+
+    #[test]
+    fn payouts_and_conversions_read_in_mmx() {
+        let payouts = json!([{
+            "payout_id": "01900000-0000-7000-8000-000000006503",
+            "destination_address": "mmx1address", "amount_microusd": 0,
+            "amount_mmx_atomic": 40_500_000, "state": "queued", "chain_transaction_id": null,
+            "requested_at": "2026-11-08T09:00:00Z", "submitted_at": null, "confirmed_at": null,
+            "last_error": null, "waiting_reason": null
+        }]);
+        let cli = Cli::try_parse_from(["ghost", "provider", "payouts"]).unwrap();
+        let text = render_result(&cli, &payouts, Terminal::plain());
+        assert!(text.contains("40.5 MMX"), "{text}");
+        assert!(!text.contains("amount_microusd"), "{text}");
+        let conversions = json!({"items": [{
+            "conversion_id": "01900000-0000-7000-8000-000000007001",
+            "converted_on": "2026-11-08", "amount_microusd": 20_000_000,
+            "usd_per_mmx": "5.000000000000000000",
+            "exchange_rate_id": "01900000-0000-7000-8000-000000000016",
+            "amount_mmx_atomic": 4_000_000, "created_at": "2026-11-08T00:05:00Z"
+        }], "next_cursor": "next"});
+        let cli =
+            Cli::try_parse_from(["ghost", "provider", "conversions", "--limit", "10"]).unwrap();
+        let text = render_result(&cli, &conversions, Terminal::plain());
+        for shown in ["2026-11-08", "$20.00", "$5.00", "4 MMX", "next"] {
+            assert!(text.contains(shown), "{shown}: {text}");
+        }
     }
 
     #[test]
