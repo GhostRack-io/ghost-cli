@@ -6424,6 +6424,12 @@ pub struct ProviderHostDetailView {
     /// brings them back.
     #[serde(default)]
     pub sizes_below_minimum_disk: Vec<HostSizeView>,
+    /// The least the host's whole compute earnings may be in a publication
+    /// of its pricing (item 203), in micro-USD a 30-day month: the
+    /// platform's least per vCPU and per GiB of RAM over what the host
+    /// sells. 0 when there is none, and from a backend of before.
+    #[serde(default)]
+    pub minimum_compute_earnings_microusd_per_month: u64,
     /// The revisions of the host's capacity profile, the newest (the
     /// profile now) first, at most 100: revision 1 is the enrollment's,
     /// and each accepted increase adds one.
