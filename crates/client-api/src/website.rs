@@ -5404,8 +5404,8 @@ pub struct HostOpeningCheckView {
 pub enum HostOpeningCheck {
     /// Its agent reports in and has sent its inventory.
     AgentOnline,
-    /// It has a network-test reading (left out on a platform without a
-    /// test server).
+    /// A network test of it settled, with a reading or without one (left
+    /// out on a platform without a test server).
     NetworkTested,
     /// Its router's kernel takes the firewall rules.
     RouterRules,
