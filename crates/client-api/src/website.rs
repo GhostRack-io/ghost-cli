@@ -5381,6 +5381,53 @@ pub struct ProviderHostView {
     /// before.
     #[serde(default)]
     pub agent_update_pending: bool,
+    /// The checks its first opening for rentals waits for, in order, while
+    /// it has never been opened and is not retired; absent once it has
+    /// been, and from a backend of before.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub opening_checks: Option<Vec<HostOpeningCheckView>>,
+}
+
+/// One check a host's first opening for rentals waits for.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct HostOpeningCheckView {
+    pub check: HostOpeningCheck,
+    pub state: HostOpeningCheckState,
+    /// What failed, on a failed check.
+    #[serde(default)]
+    pub detail: Option<String>,
+}
+
+/// What a host's opening check tests.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HostOpeningCheck {
+    /// Its agent reports in and has sent its inventory.
+    AgentOnline,
+    /// It has a network-test reading (left out on a platform without a
+    /// test server).
+    NetworkTested,
+    /// Its router's kernel takes the firewall rules.
+    RouterRules,
+    /// Its prices are published.
+    PricesPublished,
+    /// An address of its pools answered through it (a cloud host's only).
+    PublicPathVerified,
+    /// A check of a newer release, which this one does not know.
+    #[serde(other)]
+    Unknown,
+}
+
+/// Where a host's opening check stands.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum HostOpeningCheckState {
+    Passed,
+    Pending,
+    Failed,
+    /// A state of a newer release, which this one does not know.
+    #[serde(other)]
+    Unknown,
 }
 
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]

@@ -33,6 +33,8 @@ pub const CLIENT_DECODED_ENUMS: &[&str] = &[
     "ContainerExitCause",
     "ContainerState",
     "GatewayTier",
+    "HostOpeningCheck",
+    "HostOpeningCheckState",
     "HostRetirementState",
     "HttpProxyStatus",
     "HttpProxyProtocol",
@@ -117,6 +119,8 @@ fallback!(
     crate::website::ContainerExitCause,
     crate::website::ContainerState,
     crate::website::GatewayTier,
+    crate::website::HostOpeningCheck,
+    crate::website::HostOpeningCheckState,
     crate::website::HostRetirementState,
     crate::website::HttpProxyStatus,
     crate::website::HttpProxyProtocol,
@@ -317,6 +321,25 @@ mod tests {
         assert_eq!(state, SupportTicketState::Unknown);
         let tier: Option<GatewayTier> = serde_json::from_str(r#""satellite""#).unwrap();
         assert_eq!(tier, Some(GatewayTier::Unknown));
+    }
+
+    /// A host's opening checks are additive (item 193d): a view without
+    /// them reads as None, and a check or state of a newer release as
+    /// Unknown.
+    #[test]
+    fn a_host_s_opening_checks_read_from_older_and_newer_backends() {
+        use crate::website::{HostOpeningCheck, HostOpeningCheckState, HostOpeningCheckView};
+        let lines: Vec<HostOpeningCheckView> = serde_json::from_str(
+            r#"[{"check": "prices_published", "state": "pending"},
+                {"check": "gpu_tested", "state": "skipped", "detail": "x", "more": 1}]"#,
+        )
+        .unwrap();
+        assert_eq!(lines[0].check, HostOpeningCheck::PricesPublished);
+        assert_eq!(lines[0].state, HostOpeningCheckState::Pending);
+        assert_eq!(lines[0].detail, None);
+        assert_eq!(lines[1].check, HostOpeningCheck::Unknown);
+        assert_eq!(lines[1].state, HostOpeningCheckState::Unknown);
+        assert_eq!(lines[1].detail.as_deref(), Some("x"));
     }
 
     #[test]
