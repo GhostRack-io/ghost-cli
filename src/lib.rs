@@ -494,7 +494,8 @@ enum AccountCommand {
     Show,
     /// Show the currently configured MMX activation terms.
     ActivationTerms,
-    /// Activate a new account after its confirmed MMX deposits reach the minimum.
+    /// Activate a new account after its confirmed MMX deposits reach the minimum. Sending the
+    /// deposit and activating agree to the Terms of Service (ghostrack.io/terms).
     Activate,
     /// Sign up with GitHub: sends a signed sign-up claim for this seed's keys, opens its
     /// link (valid 10 minutes) and waits for the account, which comes with the trial credit
@@ -3203,7 +3204,7 @@ pub async fn closing_notes(cli: &Cli, output: &Value) -> Vec<String> {
         return if cli.globals.compact {
             Vec::new()
         } else {
-            vec![DEPOSIT_RETURN_NOTE.to_owned()]
+            vec![deposit_terms_line(), DEPOSIT_RETURN_NOTE.to_owned()]
         };
     }
     let Command::Instance { command } = &cli.command else {
@@ -5528,12 +5529,20 @@ const GITHUB_POLL_INTERVAL: Duration = Duration::from_secs(2);
 /// agree to.
 const TERMS_URL: &str = "https://ghostrack.io/terms";
 
-/// The line a sign-up or an activation prints before it sends anything:
-/// activating agrees to the Terms and asks that the service starts at once,
-/// as the website's activation step says.
+/// The line a sign-up prints before it sends anything: signing up agrees to
+/// the Terms and asks that the service starts at once, as the website's
+/// sign-up step says.
 fn signup_terms_line(action: &str) -> String {
     format!(
         "By {action} you agree to the Terms of Service and the Acceptable Use Policy, and ask that the service starts at once: {TERMS_URL}"
+    )
+}
+
+/// The line `account activation-terms` closes with, the step before a
+/// deposit and before `account activate`, which prints nothing of the kind.
+fn deposit_terms_line() -> String {
+    format!(
+        "Sending a deposit and activating the account agree to the Terms of Service and the Acceptable Use Policy, and ask that the service starts at once: {TERMS_URL}"
     )
 }
 
@@ -7354,7 +7363,6 @@ async fn execute_account(cli: &Cli, api: &ApiClient, command: &AccountCommand) -
         AccountCommand::Activate => {
             let seed = load_account_seed(cli)?;
             let summary = keys::key_summary(&seed)?;
-            notice(&signup_terms_line("activating the account"));
             let request = ActivateAccountRequest {
                 authentication_public_key: summary.authentication_public_key,
                 billing_public_key: summary.billing_verifying_key,
@@ -12876,6 +12884,7 @@ mod tests {
         assert_eq!(
             closing_notes(&cli, &terms).await,
             [
+                deposit_terms_line().as_str(),
                 "A deposit without its memo is sent back less 0.1 MMX; one below 1 MMX is kept. \
                  Look one up: ghost deposit lookup <txid>"
             ]
@@ -21400,8 +21409,9 @@ mod tests {
         );
     }
 
-    /// A sign-up, an activation and a host enrollment token each name
-    /// the Terms of Service, as the website's activation step does.
+    /// A sign-up, `activation-terms` (before the deposit and the activation)
+    /// and a host enrollment token each name the Terms of Service, as the
+    /// website's activation step does; `activate` itself prints nothing.
     #[test]
     fn signing_up_and_enrolling_name_the_terms() {
         assert_eq!(
@@ -21409,8 +21419,7 @@ mod tests {
             "By signing up you agree to the Terms of Service and the Acceptable Use Policy, and ask that the service starts at once: https://ghostrack.io/terms"
         );
         assert!(
-            signup_terms_line("activating the account")
-                .starts_with("By activating the account you agree")
+            deposit_terms_line().starts_with("Sending a deposit and activating the account agree")
         );
         assert!(provider_terms_line().ends_with("https://ghostrack.io/terms#providers"));
     }
