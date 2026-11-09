@@ -3749,6 +3749,22 @@ pub struct HttpProxyView {
     pub ready: bool,
     pub error: Option<String>,
     pub entries: Vec<HttpProxyEntryView>,
+    /// The HTTP proxy's connection limits for the instance's apps (item
+    /// 229). Absent from older backends.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limits: Option<HttpProxyLimitsView>,
+}
+
+/// The connections the HTTP proxy holds at once for one app, and for one
+/// visitor address (item 229).
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct HttpProxyLimitsView {
+    /// Per app (HTTP and HTTPS ended at the proxy).
+    pub per_app: u32,
+    /// Per HTTPS passthrough app.
+    pub per_passthrough_app: u32,
+    /// Per visitor address.
+    pub per_visitor: u32,
 }
 
 /// Change where ports of a shared IP instance's slice are forwarded to:
@@ -3991,6 +4007,22 @@ pub struct InstanceView {
     /// consoles do not open), for a container instance, and from older backends.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub console_host_key: Option<String>,
+    /// The connections the instance may hold at once, and one visitor
+    /// address at once to it (item 229). Absent while the instance has no
+    /// host or rental that caps it, and from older backends.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub connection_limits: Option<ConnectionLimitsView>,
+}
+
+/// The connection limits of an instance (item 229).
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct ConnectionLimitsView {
+    /// The connections the instance may hold at once, in and out together:
+    /// the smallest cap of the machines its internet traffic crosses.
+    pub total: u32,
+    /// The connections one visitor address may hold at once to the
+    /// instance's forwarded ports and address.
+    pub per_visitor: u32,
 }
 
 /// An instance's rescue (`RescueInstance`), once its rescue system has started.
