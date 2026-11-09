@@ -354,6 +354,7 @@ fn instance_fixture() -> InstanceView {
         access_reset: None,
         rescue: None,
         console_host_key: None,
+        connection_limits: None,
     }
 }
 

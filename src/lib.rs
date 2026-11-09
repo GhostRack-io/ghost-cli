@@ -15717,6 +15717,7 @@ mod tests {
             access_reset: None,
             rescue: None,
             console_host_key: None,
+            connection_limits: None,
         };
         let pricing = BackupPricingView {
             pricing_revision: 7,
