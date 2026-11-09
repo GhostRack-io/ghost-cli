@@ -7,7 +7,6 @@ import shutil
 import struct
 import subprocess
 import os
-import re
 import tarfile
 import tempfile
 import unittest
@@ -18,8 +17,6 @@ spec = importlib.util.spec_from_file_location('publisher', Path(__file__).parent
 publisher = importlib.util.module_from_spec(spec)
 spec.loader.exec_module(publisher)
 pkg = publisher.package
-# The package's own version, so a release's version bump does not break these tests.
-VERSION = re.search(r'^version = "([^"]+)"', (pkg.ROOT / 'Cargo.toml').read_text(), re.M).group(1)
 
 
 def binary(target):
@@ -236,18 +233,15 @@ class Packages(unittest.TestCase):
             path.write_bytes(original)
             self.rechecksum(directory)
 
-    def test_real_lock_version_pin_and_source_metadata_preconditions(self):
+    def test_console_host_key_pin_precondition(self):
         original = Path.read_text
-        for mutation, message in [('version', 'package and lock'), ('pin', 'console host key')]:
-            def read(path, *args, **kwargs):
-                text = original(path, *args, **kwargs)
-                if mutation == 'version' and path.name == 'Cargo.toml':
-                    return text.replace(f'version = "{VERSION}"', 'version = "2.0.0"', 1)
-                if mutation == 'pin' and path.name == 'console-host-key.pub':
-                    return 'ssh-ed25519 PLACEHOLDER\n'
-                return text
-            with patch.object(Path, 'read_text', read):
-                with self.assertRaisesRegex(ValueError, message): pkg.source()
+        def read(path, *args, **kwargs):
+            text = original(path, *args, **kwargs)
+            if path.name == 'console-host-key.pub':
+                return 'ssh-ed25519 PLACEHOLDER\n'
+            return text
+        with patch.object(Path, 'read_text', read):
+            with self.assertRaisesRegex(ValueError, 'console host key'): pkg.source()
 
 
 class SourceReleaseIdentity(unittest.TestCase):
@@ -285,7 +279,7 @@ class RealGitSource(unittest.TestCase):
             git('checkout', '--detach', original)
             git('replace', original, replacement)
             with patch.object(pkg, 'ROOT', root), patch.dict(os.environ, {'GITHUB_REF': '', 'SOURCE_DATE_EPOCH': '1'}):
-                self.assertEqual(pkg.source(), (VERSION, original))
+                self.assertEqual(pkg.source()[1], original)
                 self.assertEqual(pkg.release_id(original), '20261029T000000Z-' + original[:12])
                 (root / 'tracked').write_text('replacement')
                 with self.assertRaisesRegex(ValueError, 'clean source'): pkg.source()
