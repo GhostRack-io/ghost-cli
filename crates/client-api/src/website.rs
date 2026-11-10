@@ -3916,9 +3916,15 @@ pub struct InstanceView {
 /// The connection limits of an instance (item 229).
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub struct ConnectionLimitsView {
-    /// The connections the instance may hold at once, in and out together:
-    /// the smallest cap of the machines its internet traffic crosses.
+    /// The connections the instance may hold at once, in and out together,
+    /// on its host: its cloud host's router, or its home host, the LAN and
+    /// internet mesh included.
     pub total: u32,
+    /// The connections a home instance may hold at once through its shared
+    /// gateway, in and out together. Absent on a dedicated gateway, for a
+    /// cloud instance, and from older backends.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub through_gateway: Option<u32>,
     /// The connections one visitor address may hold at once to the
     /// instance's forwarded ports and address.
     pub per_visitor: u32,
