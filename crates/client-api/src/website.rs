@@ -813,6 +813,46 @@ pub struct OfferingFilters {
     /// ([`OfferingFilters::after`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub after: Option<String>,
+    /// At least one: only offerings whose CPU score
+    /// ([`OfferingView::cpu_benchmark`]) has at least this single-thread
+    /// score; an offering without a score is left out.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub minimum_single_thread_mark: Option<u32>,
+    /// At least one: only offerings whose CPU score has at least this
+    /// total figure for the size
+    /// ([`CpuBenchmarkView::estimated_instance_mark`]); an offering
+    /// without a score is left out.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub minimum_instance_mark: Option<u64>,
+}
+
+/// The query of `GET /v1/catalog/providers` (`ListProviders`): a page of
+/// the providers with a public offering, by their total CPU score.
+/// Unknown parameters are ignored; serialization omits absent fields.
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ProviderListQuery {
+    /// How many to list, 1 to [`ProviderListQuery::MAXIMUM_LIMIT`] (that
+    /// many without it).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub limit: Option<usize>,
+    /// Where the page starts: after the provider of this total CPU score
+    /// and ID, the last one the page before listed, as `SCORE.ID`
+    /// ([`ProviderListQuery::after`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub after: Option<String>,
+}
+
+impl ProviderListQuery {
+    /// The most providers one page lists, and how many it lists without a
+    /// `limit`.
+    pub const MAXIMUM_LIMIT: usize = 100;
+
+    /// The `after` of the page that follows the provider of `total` (its
+    /// [`ProviderSummaryView::total_cpu_score`]) and `id`.
+    #[must_use]
+    pub fn after(total: u64, id: Uuid) -> String {
+        format!("{total}.{id}")
+    }
 }
 
 /// The query of `GET /v1/catalog/offerings/{offering_id}` (`GetOffering`).
@@ -2512,6 +2552,59 @@ pub struct OfferingBackupLimitsView {
     pub local_running: bool,
     pub local_stopped: bool,
     pub hosted_running: bool,
+}
+
+/// One provider of `GET /v1/catalog/providers`: what its public offerings
+/// in the catalog's snapshot hold now, and the total CPU score of its
+/// listed hosts. A private host (item 81) never counts. Read by the
+/// website alone; fields added later are optional.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ProviderSummaryView {
+    pub provider_id: Uuid,
+    pub provider_name: String,
+    /// Its owner's account alias, such as `gh-abcdefgh`.
+    #[serde(default)]
+    pub provider_alias: String,
+    /// The distinct hosts of its public offerings.
+    pub host_count: u32,
+    pub offering_count: u32,
+    /// The locations of its offerings, by code.
+    #[serde(default)]
+    pub locations: Vec<ProviderLocationView>,
+    /// The host types of its offerings, each once, cloud first.
+    #[serde(default)]
+    pub host_modes: Vec<HostMode>,
+    /// The CPU models of its offerings, each once, as the offerings name
+    /// them.
+    #[serde(default)]
+    pub cpu_models: Vec<String>,
+    /// The logical threads of its listed hosts together.
+    pub logical_threads: u64,
+    /// The sum over its listed hosts of each whole host's total figure,
+    /// scaled from the host's best single-thread score by its threads and
+    /// cores as a size's total is ([`CpuBenchmarkView::estimated_instance_mark`]),
+    /// on the newest suite's scale; a host without a score on it adds 0.
+    pub total_cpu_score: u64,
+    /// The best single-thread score among its listed hosts on the newest
+    /// suite; none while no host has one.
+    #[serde(default)]
+    pub best_single_thread_mark: Option<u32>,
+    /// Its cheapest offering's monthly price with the platform's shared
+    /// IP price ([`IpChoice::SharedReference`]).
+    pub cheapest_price_microusd_per_month: u64,
+    /// The provider's spend-weighted rating, as its offerings carry it.
+    #[serde(default)]
+    pub rating_millistars: Option<u32>,
+    #[serde(default)]
+    pub review_count: u32,
+}
+
+/// A location of a provider's offerings ([`ProviderSummaryView`]).
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct ProviderLocationView {
+    pub location: String,
+    pub location_name: String,
+    pub country_code: String,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

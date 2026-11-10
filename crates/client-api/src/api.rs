@@ -229,6 +229,11 @@ endpoints! {
     /// at most 100), in one read for a page that lists many providers.
     ListProviderReliability =
         public GET "/v1/catalog/providers/reliability" => Vec<ProviderReliabilityView>;
+    /// The active providers with a public offering, the largest total CPU
+    /// score first, then by ID; `after=SCORE.ID` starts after that score
+    /// and provider.
+    ListProviders =
+        public GET "/v1/catalog/providers" => Vec<crate::website::ProviderSummaryView>;
     ListProviderReviews { provider_id: Uuid } =
         public GET "/v1/catalog/providers/{provider_id}/reviews" => Value;
     /// A LAN mesh: how many hosts are in it now, their providers and
