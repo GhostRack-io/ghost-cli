@@ -2580,6 +2580,14 @@ pub struct ProviderSummaryView {
     pub cpu_models: Vec<String>,
     /// The logical threads of its listed hosts together.
     pub logical_threads: u64,
+    /// The guest memory its listed hosts offer for rent together, their
+    /// rentals not taken off.
+    #[serde(default)]
+    pub offered_memory_bytes: u64,
+    /// The root disk its listed hosts offer for rent together, their
+    /// rentals not taken off.
+    #[serde(default)]
+    pub offered_disk_bytes: u64,
     /// The sum over its listed hosts of each whole host's total figure,
     /// scaled from the host's best single-thread score by its threads and
     /// cores as a size's total is ([`CpuBenchmarkView::estimated_instance_mark`]),
