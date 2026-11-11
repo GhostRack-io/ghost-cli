@@ -5,6 +5,7 @@
 //! shown for reading unless `--json` or `--compact` asks for JSON.
 
 mod api;
+mod backup_file;
 mod dispatch;
 pub use dispatch::dispatch;
 #[cfg(unix)]
@@ -49,13 +50,13 @@ use ghostrack_client_api::{
         CompleteOperationIntent, CreateBackup, CreateGithubLink, CreateGithubSignup,
         CreateHostEnrollmentToken, CreateInstance, CreateIpPool, CreateLoginGrant, CreatePayout,
         CreateTicket, DeclareHostEmergency, DeleteBackup, DeleteInstance, DeleteIpPool,
-        EndInstanceRescue, GetAccount, GetAccountBalance, GetActivationTerms, GetBackup,
-        GetBackupPricing, GetBackupSchedule, GetDepositLookup, GetGithubClaim, GetHostAgentUpdate,
-        GetHostNetworkTests, GetHostPricing, GetHostPrivacy, GetIncident, GetInstance,
-        GetInstanceConsoleLog, GetInstanceGatewayTraffic, GetInstanceLogs, GetInstanceMesh,
-        GetInstanceMeshUsage, GetInstanceUsage, GetJob, GetOffering, GetOperationIntent,
-        GetProviderAgents, GetProviderBalance, GetProviderDisplayName, GetProviderHost,
-        GetProviderHostInstanceUsage, GetProviderHostMetrics, GetProviderOutage,
+        DownloadBackup, EndInstanceRescue, GetAccount, GetAccountBalance, GetActivationTerms,
+        GetBackup, GetBackupPricing, GetBackupSchedule, GetDepositLookup, GetGithubClaim,
+        GetHostAgentUpdate, GetHostNetworkTests, GetHostPricing, GetHostPrivacy, GetIncident,
+        GetInstance, GetInstanceConsoleLog, GetInstanceGatewayTraffic, GetInstanceLogs,
+        GetInstanceMesh, GetInstanceMeshUsage, GetInstanceUsage, GetJob, GetOffering,
+        GetOperationIntent, GetProviderAgents, GetProviderBalance, GetProviderDisplayName,
+        GetProviderHost, GetProviderHostInstanceUsage, GetProviderHostMetrics, GetProviderOutage,
         GetProviderReliability, GetProviderUptime, GetTicket, HandOverIpPool, ListAuthKeys,
         ListBackups, ListContainerImages, ListImages, ListIncidents, ListInstanceBackups,
         ListInstanceTags, ListInstanceUpgrades, ListInstances, ListIpPools, ListJobs,
@@ -87,20 +88,21 @@ use ghostrack_client_api::{
         CloudIpPoolView, ContainerEnvVar, ContainerImageView, ContainerLogView,
         CreateBackupRequest, CreateCloudIpPoolRequest, CreateContainerRequest,
         CreateHostEnrollmentTokenRequest, CreateInstanceRequest, CreateProviderPayoutRequest,
-        CreateSupportTicketRequest, DeclareHostEmergencyRequest, DepositLookupView, GatewayTier,
-        GatewayTrafficView, GithubUnlinked, HandOverCloudIpPoolRequest, HostAgentUpdateView,
-        HostEnrollmentToken, HostModeFilter, HostPrivacyView, ImageView, InstanceConsoleLogView,
-        InstanceEgressLevel, InstanceKind, InstanceListQuery, InstanceMeshView,
-        InstanceProjectionView, InstanceSort, InstanceSource, InstanceState, InstanceStateFilter,
-        InstanceTagView, InstanceUpgradeView, InstanceView, IpChoice, JobAccepted, JobEventView,
-        JobKind, JobPage, JobState, JobStateFilter, JobStepState, JobView, KindChoice, LedgerKind,
-        LocationView, LoginGrant, MAX_SSH_PUBLIC_KEYS, MigrateAccountSeedRequest,
-        MoveGatewayLocationRequest, OfferingView, PortForwardChange, PrivateRenterView,
-        ProviderAgentsView, ProviderBalanceView, ProviderConversionView, ProviderDisplayNameView,
-        ProviderHostDetailView, ProviderHostView, ProviderIncidentSeverity, ProviderIncidentState,
-        ProviderIncidentView, ProviderOutageDetailView, ProviderOutagePage,
-        ProviderPayoutAddressView, ProviderPayoutView, ProviderReliabilityView, ProviderUptimeView,
-        RedeployInstanceRequest, RedeploySetting, ReinstallInstanceRequest, RenameInstanceRequest,
+        CreateSupportTicketRequest, DeclareHostEmergencyRequest, DepositLookupView,
+        DownloadBackupRequest, GatewayTier, GatewayTrafficView, GithubUnlinked,
+        HandOverCloudIpPoolRequest, HostAgentUpdateView, HostEnrollmentToken, HostModeFilter,
+        HostPrivacyView, ImageView, InstanceConsoleLogView, InstanceEgressLevel, InstanceKind,
+        InstanceListQuery, InstanceMeshView, InstanceProjectionView, InstanceSort, InstanceSource,
+        InstanceState, InstanceStateFilter, InstanceTagView, InstanceUpgradeView, InstanceView,
+        IpChoice, JobAccepted, JobEventView, JobKind, JobPage, JobState, JobStateFilter,
+        JobStepState, JobView, KindChoice, LedgerKind, LocationView, LoginGrant,
+        MAX_SSH_PUBLIC_KEYS, MigrateAccountSeedRequest, MoveGatewayLocationRequest, OfferingView,
+        PortForwardChange, PrivateRenterView, ProviderAgentsView, ProviderBalanceView,
+        ProviderConversionView, ProviderDisplayNameView, ProviderHostDetailView, ProviderHostView,
+        ProviderIncidentSeverity, ProviderIncidentState, ProviderIncidentView,
+        ProviderOutageDetailView, ProviderOutagePage, ProviderPayoutAddressView,
+        ProviderPayoutView, ProviderReliabilityView, ProviderUptimeView, RedeployInstanceRequest,
+        RedeploySetting, ReinstallInstanceRequest, RenameInstanceRequest,
         RequestProviderDisplayNameRequest, RescueInstanceRequest, ResetInstanceAccessRequest,
         RestoreBackupRequest, RotateGatewayKeysRequest, SSH_PUBLIC_KEY_TYPES,
         ScheduleHostRetirementRequest, ScheduleInstanceRetirementRequest, SessionRevocationView,
@@ -2358,6 +2360,17 @@ enum BackupCommand {
     Restore(RestoreBackupArgs),
     /// Permanently delete a local or hosted backup.
     Delete(DeleteBackupArgs),
+    /// Download a hosted backup as it is stored, encrypted, with its key
+    /// file beside it (FILE.key.json), which `ghost backup decrypt` reads.
+    /// It costs what restoring the backup costs, shown before it starts; a
+    /// backup can be downloaded 5 times a day. Run it again to resume: the
+    /// link it was charged for works for 24 hours.
+    Download(DownloadBackupArgs),
+    /// Decrypt a downloaded backup into a raw disk image, offline, with the
+    /// account key the backup was made with. Every part is checked before
+    /// the image is kept; zeros stay holes, so the image takes no more room
+    /// than the backup's data.
+    Decrypt(DecryptBackupArgs),
     /// Show, set or clear an instance's backup schedule: up to 4 rules,
     /// each making a local or hosted backup daily, weekly or monthly at a
     /// time in UTC and keeping its newest few.
@@ -2814,6 +2827,37 @@ struct DeleteBackupArgs {
     mutation: MutationArgs,
 }
 
+#[derive(Args)]
+struct DownloadBackupArgs {
+    /// Backup ID, from `ghost backup list`; a hosted backup.
+    #[arg(value_name = "BACKUP_ID")]
+    backup_id: Uuid,
+    /// Where to save it: `backup-<BACKUP_ID>.ghb` here by default.
+    #[arg(short, long, value_name = "FILE")]
+    output: Option<PathBuf>,
+    /// Accept the charge without being asked.
+    #[arg(long)]
+    yes: bool,
+    #[command(flatten)]
+    idempotency: IdempotencyArgs,
+}
+
+#[derive(Args)]
+struct DecryptBackupArgs {
+    /// The downloaded backup.
+    #[arg(value_name = "FILE")]
+    file: PathBuf,
+    /// The disk image to write.
+    #[arg(short, long, value_name = "IMAGE")]
+    output: PathBuf,
+    /// The backup's key file: FILE.key.json by default.
+    #[arg(long, value_name = "KEY_FILE")]
+    key_file: Option<PathBuf>,
+    /// Write a qcow2 image, converted with qemu-img, instead of a raw one.
+    #[arg(long)]
+    qcow2: bool,
+}
+
 #[derive(Subcommand)]
 enum JobCommand {
     /// List the account's jobs, newest first, with their state and progress.
@@ -3148,6 +3192,10 @@ pub async fn execute(cli: &Cli) -> Result<Value> {
             let api = api_client(cli)?;
             execute_instance(cli, &api, command, !cli.globals.compact).await
         }
+        // Offline: no backend is asked anything.
+        Command::Backup {
+            command: BackupCommand::Decrypt(args),
+        } => decrypt_backup(cli, args),
         Command::Backup { command } => {
             let api = api_client(cli)?;
             execute_backup(cli, &api, command).await
@@ -8851,6 +8899,8 @@ async fn execute_backup(cli: &Cli, api: &ApiClient, command: &BackupCommand) -> 
             to_value(accepted)
         }
         BackupCommand::Restore(args) => restore_backup(cli, api, args).await,
+        BackupCommand::Download(args) => download_backup(cli, api, args).await,
+        BackupCommand::Decrypt(args) => decrypt_backup(cli, args),
         BackupCommand::Schedule { command } => match command {
             ScheduleCommand::Show { instance_id } => {
                 let id = resolve_instance(api, instance_id, InstanceUse::Read).await?;
@@ -8933,6 +8983,153 @@ async fn named_backup(
         );
     }
     Ok(backup)
+}
+
+/// `ghost backup download`: a hosted backup's encrypted file and its key
+/// file, fetched with a link the backend charges for once; a rerun resumes
+/// with the link it kept while that works ([`backup_file`]).
+async fn download_backup(cli: &Cli, api: &ApiClient, args: &DownloadBackupArgs) -> Result<Value> {
+    use std::io::IsTerminal as _;
+
+    let backup_id = args.backup_id;
+    let output = args
+        .output
+        .clone()
+        .unwrap_or_else(|| PathBuf::from(format!("backup-{backup_id}.ghb")));
+    if output.exists() {
+        refuse!(
+            "invalid_request",
+            "{} exists already; choose another file with --output",
+            output.display()
+        );
+    }
+    let part = backup_file::beside(&output, ".part");
+    let link = if let Some(link) = backup_file::saved_link(&output, backup_id, Utc::now()) {
+        if !cli.globals.compact {
+            notice(&format!(
+                "Resuming with the link of the earlier download, which works until {}; nothing new is charged.",
+                link.expires_at.format("%Y-%m-%d %H:%M UTC")
+            ));
+        }
+        link
+    } else {
+        let backup: BackupView = api.read(&GetBackup { backup_id }, "").await?;
+        if backup.destination != BackupDestinationKind::GigahostS3 {
+            refuse!(
+                "invalid_request",
+                "Only hosted backups can be downloaded: backup {backup_id} is kept on its instance's host."
+            );
+        }
+        if backup.status != ghostrack_client_api::website::BackupState::Restoring {
+            ensure_backup_available(&backup, "downloaded")?;
+        }
+        let size = backup
+            .size_bytes
+            .context("backup is missing its immutable artifact size")?;
+        let (_, charge) = backup_byte_charge(size, backup.restore_charge_microusd_per_gib)
+            .context("backup download charge overflow")?;
+        let question = format!(
+            "Downloading backup {backup_id} ({}) costs {}, as restoring it does.",
+            pretty::binary_size(size),
+            pretty::dollars(charge)
+        );
+        if !backup_file::consent(
+            &question,
+            args.yes,
+            std::io::stdin().is_terminal(),
+            &mut std::io::stdin().lock(),
+            &mut std::io::stderr(),
+        )? {
+            bail!("Nothing was downloaded or charged.");
+        }
+        let key = args.idempotency.key();
+        let seed = load_account_seed(cli)?;
+        let billing_authorization = backup_billing_authorization(
+            &seed,
+            &BackupBillingAuthorizationInput {
+                operation: "download_backup",
+                instance_id: backup.instance_id,
+                backup_id: Some(backup_id),
+                destination: "gigahost_s3",
+                pricing_revision: backup.restore_pricing_revision,
+                maximum_charge_microusd: charge,
+                idempotency_key: &key.key,
+            },
+        )?;
+        let view = api
+            .write_retryable(
+                &DownloadBackup { backup_id },
+                &DownloadBackupRequest {
+                    billing_authorization: Some(billing_authorization),
+                    accepted_charge: None,
+                },
+                &key,
+            )
+            .await?;
+        let link = backup_file::SavedLink {
+            url: view.url,
+            expires_at: view.expires_at,
+            etag: view.etag,
+            key: view.key,
+        };
+        backup_file::save_link(&output, &link)?;
+        link
+    };
+    let show = !cli.globals.compact;
+    let mut shown = std::time::Instant::now();
+    backup_file::fetch(&link, &part, |held, total| {
+        if show && (held == total || shown.elapsed() >= Duration::from_secs(2)) {
+            shown = std::time::Instant::now();
+            notice(&format!(
+                "Downloaded {} of {}.",
+                pretty::binary_size(held),
+                pretty::binary_size(total)
+            ));
+        }
+    })
+    .await
+    .with_context(|| {
+        format!(
+            "download backup {backup_id} to {}; run the same command again to resume",
+            output.display()
+        )
+    })?;
+    backup_file::verify(&part, &link.key).with_context(|| {
+        format!(
+            "the download is not the backup; remove {} and {} and download it again",
+            part.display(),
+            backup_file::beside(&output, ".link.json").display()
+        )
+    })?;
+    let key_file = backup_file::finish(&output, &part, &link.key)?;
+    Ok(json!({
+        "backup_id": backup_id,
+        "file": output,
+        "key_file": key_file,
+        "size_bytes": link.key.size_bytes,
+        "sha256": link.key.sha256,
+    }))
+}
+
+/// `ghost backup decrypt`, offline: the account key (or one kept beside
+/// it, or `--recovery-seed-file`) that opens the backup's data key, then
+/// the image ([`backup_file::decrypt`]).
+fn decrypt_backup(cli: &Cli, args: &DecryptBackupArgs) -> Result<Value> {
+    let key_file = args
+        .key_file
+        .clone()
+        .unwrap_or_else(|| backup_file::beside(&args.file, ".key.json"));
+    let key = backup_file::read_key_file(&key_file)?;
+    let seed_file = cli
+        .globals
+        .seed_file
+        .clone()
+        .map_or_else(default_seed_path, Ok)?;
+    let candidates =
+        backup_file::seed_candidates(&seed_file, cli.globals.recovery_seed_file.as_deref());
+    let recovery = backup_file::recovery_key_for(&key, &candidates)?;
+    let decrypted = backup_file::decrypt(&args.file, &key, &recovery, &args.output, args.qcow2)?;
+    to_value(decrypted)
 }
 
 async fn restore_backup(cli: &Cli, api: &ApiClient, args: &RestoreBackupArgs) -> Result<Value> {
@@ -20157,6 +20354,283 @@ mod tests {
             "restore_charge_microusd_per_gib": 10_000, "storage_charge_microusd_per_gib_month": 20_000,
             "recipient_key_fingerprint": null, "wrapped_data_key": null,
             "created_at": Utc::now(), "completed_at": Utc::now()})
+    }
+
+    /// The account key of the backup format fixtures: the `sevens` seed.
+    fn fixture_seed(path: &Path) {
+        keys::import_seed(path, &[7_u8; 32], false).unwrap();
+    }
+
+    /// `ghost backup download` shows the charge, signs it with the billing
+    /// key, fetches the file with the link it was charged for, resuming
+    /// after a cut, checks it, and saves the key file beside it; the link
+    /// it kept while it ran goes.
+    #[tokio::test]
+    async fn a_hosted_backup_downloads_with_its_key_file_beside_it() {
+        let directory = tempfile::tempdir().unwrap();
+        let seed = directory.path().join("account.seed");
+        fixture_seed(&seed);
+        let (_, container, _) = backup_file::tests::fixture();
+        let key = backup_file::tests::fixture_key(&container);
+        let (object, heads) = backup_file::object_server(container.clone(), "etag-1", true).await;
+        let mut backup = backup_json(key.backup_id, key.instance_id, "gigahost_s3", "available");
+        backup["size_bytes"] = json!(container.len());
+        let link = json!({
+            "download_id": Uuid::now_v7(), "url": object,
+            "expires_at": Utc::now() + chrono::TimeDelta::hours(24), "etag": "etag-1",
+            "charged_microusd": 10, "key": key,
+        });
+        let (url, received) =
+            canned_server(vec![(200, backup.to_string()), (200, link.to_string())]).await;
+        let file = directory.path().join("web.ghb");
+        let backup_id = key.backup_id.to_string();
+        let output = execute(&account_command(
+            &url,
+            &seed,
+            &[
+                "backup",
+                "download",
+                &backup_id,
+                "-o",
+                file.to_str().unwrap(),
+                "--yes",
+            ],
+        ))
+        .await
+        .unwrap();
+        assert_eq!(
+            request_lines(&received),
+            [
+                format!("GET /v1/backups/{backup_id}"),
+                format!("POST /api/mut/v1/backups/{backup_id}/download"),
+            ]
+        );
+        let body: Value = serde_json::from_slice(&received.lock().unwrap()[1].1).unwrap();
+        let authorization = &body["billing_authorization"];
+        assert_eq!(authorization["pricing_revision"], 1);
+        let (_, charge) = backup_byte_charge(container.len() as u64, 10_000).unwrap();
+        assert_eq!(authorization["maximum_charge_microusd"], json!(charge));
+        assert_eq!(body["accepted_charge"], Value::Null);
+        assert_eq!(fs::read(&file).unwrap(), container);
+        let key_file = directory.path().join("web.ghb.key.json");
+        let saved: ghostrack_client_api::website::BackupKeyFile =
+            serde_json::from_slice(&fs::read(&key_file).unwrap()).unwrap();
+        assert_eq!(saved, key);
+        assert!(!directory.path().join("web.ghb.part").exists());
+        assert!(!directory.path().join("web.ghb.link.json").exists());
+        assert_eq!(output["file"], json!(file));
+        assert_eq!(output["key_file"], json!(key_file));
+        assert_eq!(heads.lock().unwrap().len(), 2, "cut once, then resumed");
+
+        // The file is there: a second download to it is refused at once.
+        let error = execute(&account_command(
+            &url,
+            &seed,
+            &[
+                "backup",
+                "download",
+                &backup_id,
+                "-o",
+                file.to_str().unwrap(),
+                "--yes",
+            ],
+        ))
+        .await
+        .unwrap_err();
+        assert!(error.to_string().contains("exists already"), "{error:#}");
+    }
+
+    /// A rerun after a run that stopped resumes with the link that run was
+    /// charged for, asking the backend for nothing.
+    #[tokio::test]
+    async fn a_rerun_resumes_with_the_link_it_was_charged_for() {
+        let directory = tempfile::tempdir().unwrap();
+        let seed = directory.path().join("account.seed");
+        fixture_seed(&seed);
+        let (_, container, _) = backup_file::tests::fixture();
+        let key = backup_file::tests::fixture_key(&container);
+        let (object, heads) = backup_file::object_server(container.clone(), "etag-1", false).await;
+        let file = directory.path().join("web.ghb");
+        backup_file::save_link(
+            &file,
+            &backup_file::SavedLink {
+                url: object,
+                expires_at: Utc::now() + chrono::TimeDelta::hours(20),
+                etag: "etag-1".to_owned(),
+                key: key.clone(),
+            },
+        )
+        .unwrap();
+        fs::write(directory.path().join("web.ghb.part"), &container[..1000]).unwrap();
+        let (url, received) = canned_server(vec![]).await;
+        execute(&account_command(
+            &url,
+            &seed,
+            &[
+                "backup",
+                "download",
+                &key.backup_id.to_string(),
+                "-o",
+                file.to_str().unwrap(),
+            ],
+        ))
+        .await
+        .unwrap();
+        assert!(request_lines(&received).is_empty());
+        assert_eq!(fs::read(&file).unwrap(), container);
+        let heads = heads.lock().unwrap().clone();
+        assert_eq!(heads.len(), 1);
+        assert!(heads[0].contains("range: bytes=1000-"), "{}", heads[0]);
+    }
+
+    /// Without --yes and off a terminal, the download asks nothing of the
+    /// backend: it says what it costs and how to go ahead.
+    #[tokio::test]
+    async fn a_download_off_a_terminal_needs_yes() {
+        let directory = tempfile::tempdir().unwrap();
+        let seed = directory.path().join("account.seed");
+        fixture_seed(&seed);
+        let backup_id = Uuid::now_v7();
+        let backup = backup_json(backup_id, Uuid::now_v7(), "gigahost_s3", "available");
+        let (url, received) = canned_server(vec![(200, backup.to_string())]).await;
+        let file = directory.path().join("web.ghb");
+        let error = execute(&account_command(
+            &url,
+            &seed,
+            &[
+                "backup",
+                "download",
+                &backup_id.to_string(),
+                "-o",
+                file.to_str().unwrap(),
+            ],
+        ))
+        .await
+        .unwrap_err();
+        let text = error.to_string();
+        assert!(text.contains("costs $"), "{text}");
+        assert!(text.ends_with("Repeat with --yes to go ahead."), "{text}");
+        assert_eq!(
+            request_lines(&received),
+            [format!("GET /v1/backups/{backup_id}")]
+        );
+        // A local backup is refused before any charge.
+        let local = backup_json(backup_id, Uuid::now_v7(), "local", "available");
+        let (url, received) = canned_server(vec![(200, local.to_string())]).await;
+        let error = execute(&account_command(
+            &url,
+            &seed,
+            &[
+                "backup",
+                "download",
+                &backup_id.to_string(),
+                "-o",
+                file.to_str().unwrap(),
+                "--yes",
+            ],
+        ))
+        .await
+        .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .starts_with("Only hosted backups can be downloaded")
+        );
+        assert_eq!(request_lines(&received).len(), 1);
+    }
+
+    /// `ghost backup decrypt`, offline: versions 2 and 1 decrypt with the
+    /// account key to the disk, its zero chunk a hole; a key kept beside
+    /// the account key when it was replaced opens an older backup; without
+    /// the right key it names the key set it needs; a corrupted file leaves
+    /// no image behind.
+    #[test]
+    fn a_downloaded_backup_decrypts_offline_to_a_sparse_image() {
+        let directory = tempfile::tempdir().unwrap();
+        let seed = directory.path().join("account.seed");
+        fixture_seed(&seed);
+        let (description, v2, v1) = backup_file::tests::fixture();
+        let disk_sha256 = description["disk_sha256_hex"].as_str().unwrap();
+        let decrypt = |seed: &Path, file: &Path, image: &Path| {
+            let line = [
+                "ghost",
+                "--seed-file",
+                seed.to_str().unwrap(),
+                "backup",
+                "decrypt",
+                file.to_str().unwrap(),
+                "-o",
+                image.to_str().unwrap(),
+            ];
+            let cli = Cli::try_parse_from(line).unwrap();
+            let Command::Backup {
+                command: BackupCommand::Decrypt(args),
+            } = &cli.command
+            else {
+                unreachable!()
+            };
+            decrypt_backup(&cli, args)
+        };
+        let save = |name: &str, container: &[u8]| {
+            let file = directory.path().join(name);
+            fs::write(&file, container).unwrap();
+            fs::write(
+                backup_file::beside(&file, ".key.json"),
+                serde_json::to_vec(&backup_file::tests::fixture_key(container)).unwrap(),
+            )
+            .unwrap();
+            file
+        };
+        for (version, container) in [(2, &v2), (1, &v1)] {
+            let file = save(&format!("v{version}.ghb"), container);
+            let image = directory.path().join(format!("v{version}.raw"));
+            let output = decrypt(&seed, &file, &image).unwrap();
+            assert_eq!(output["container_version"], version);
+            assert_eq!(output["format"], "raw");
+            let disk = fs::read(&image).unwrap();
+            assert_eq!(format!("{:x}", Sha256::digest(&disk)), disk_sha256);
+            #[cfg(unix)]
+            {
+                use std::os::unix::fs::MetadataExt as _;
+                let allocated = fs::metadata(&image).unwrap().blocks() * 512;
+                assert!(allocated < disk.len() as u64 - 4 * 1024 * 1024 + 65_536);
+            }
+            // An image is never written over.
+            assert!(decrypt(&seed, &file, &image).is_err());
+        }
+        let file = directory.path().join("v2.ghb");
+
+        // Another account key: the backup names the key set it needs.
+        let other = directory.path().join("other").join("account.seed");
+        keys::generate_seed(&other).unwrap();
+        let image = directory.path().join("other.raw");
+        let error = decrypt(&other, &file, &image).unwrap_err().to_string();
+        assert!(error.contains("recovery key of key set 1"), "{error}");
+        assert!(error.contains("--recovery-seed-file"), "{error}");
+        assert!(!image.exists());
+        // The fixture's key, kept beside it when it was replaced, opens it.
+        fs::copy(
+            &seed,
+            other.with_file_name("account.seed.replaced-20261101T000000Z"),
+        )
+        .unwrap();
+        decrypt(&other, &file, &image).unwrap();
+
+        // One flipped byte: refused, and no image is left.
+        let mut corrupted = v2.clone();
+        corrupted[300] ^= 1;
+        let file = directory.path().join("corrupted.ghb");
+        fs::write(&file, &corrupted).unwrap();
+        fs::write(
+            backup_file::beside(&file, ".key.json"),
+            serde_json::to_vec(&backup_file::tests::fixture_key(&v2)).unwrap(),
+        )
+        .unwrap();
+        let image = directory.path().join("corrupted.raw");
+        let error = decrypt(&seed, &file, &image).unwrap_err();
+        assert!(format!("{error:#}").contains("authenticate"), "{error:#}");
+        assert!(!image.exists());
+        assert!(!backup_file::beside(&image, ".partial").exists());
     }
 
     /// The method and path of each request the canned server received.

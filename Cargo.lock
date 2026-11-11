@@ -863,6 +863,7 @@ dependencies = [
  "flate2",
  "ghostd-client",
  "ghostd-protocol",
+ "ghostrack-backup-format",
  "ghostrack-client-api",
  "hkdf 0.12.4",
  "hpke",

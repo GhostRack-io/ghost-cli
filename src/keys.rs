@@ -623,6 +623,23 @@ pub fn rewrap_backup_data_key(
     )
 }
 
+/// Open a hosted backup's data key, which the backup stores wrapped to the
+/// account's recovery key `keys`, for a decryption on this machine.
+pub fn open_backup_data_key(
+    keys: &RecoveryKeyPair,
+    instance_id: Uuid,
+    backup_id: Uuid,
+    wrapped_data_key: &[u8],
+) -> Result<Zeroizing<[u8; 32]>> {
+    ghostrack_backup_format::open_data_key(
+        &keys.private_key,
+        &keys.fingerprint,
+        instance_id,
+        backup_id,
+        wrapped_data_key,
+    )
+}
+
 /// The HPKE info of a backup's data key wrapped to the recovery key, and
 /// of the same key rewrapped to a restore's destination.
 const BACKUP_DATA_KEY_INFO: &[u8] = b"GIGAHOST-BACKUP-DATA-KEY-V1";
