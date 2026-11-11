@@ -190,8 +190,6 @@ fn a_wrong_data_key_is_refused() {
 
 #[test]
 fn zero_chunks_are_holes_in_the_sparse_output() {
-    use std::os::unix::fs::MetadataExt as _;
-
     let fixture = fixture();
     let directory = tempfile::tempdir().unwrap();
     for version in [2, 1] {
@@ -213,11 +211,16 @@ fn zero_chunks_are_holes_in_the_sparse_output() {
         let disk = std::fs::read(&path).unwrap();
         assert_eq!(Sha256::digest(&disk).as_slice(), fixture.disk_sha256);
         // The 4 MiB zero chunk takes no blocks: what is allocated is the
-        // two data chunks, rounded up to the file system's blocks.
-        let allocated = std::fs::metadata(&path).unwrap().blocks() * 512;
-        assert!(
-            allocated <= fixture.disk_bytes - 4 * 1024 * 1024 + 64 * 1024,
-            "version {version}: {allocated} bytes allocated"
-        );
+        // two data chunks, rounded up to the file system's blocks. Only
+        // Unix reports a file's blocks; the CLI's CI also tests on Windows.
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::MetadataExt as _;
+            let allocated = std::fs::metadata(&path).unwrap().blocks() * 512;
+            assert!(
+                allocated <= fixture.disk_bytes - 4 * 1024 * 1024 + 64 * 1024,
+                "version {version}: {allocated} bytes allocated"
+            );
+        }
     }
 }
