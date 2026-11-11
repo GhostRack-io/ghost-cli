@@ -4009,6 +4009,10 @@ pub struct ImageView {
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
+#[expect(
+    clippy::struct_excessive_bools,
+    reason = "independent facts of the API's instance view"
+)]
 pub struct InstanceView {
     pub instance_id: Uuid,
     pub offering_id: String,
@@ -4117,12 +4121,18 @@ pub struct InstanceView {
     #[serde(default)]
     pub bandwidth: Option<BandwidthView>,
     /// Whether the instance may send mail straight to other mail servers
-    /// (TCP port 25) and over SMTPS (465). It may not unless the operator
-    /// lifted the block for the account on its owner's request through
-    /// support; submission at a mail service (587) and the services' HTTPS
-    /// APIs are open to every instance.
+    /// (TCP port 25) and submit it at a mail service (465 and 587). It may
+    /// not unless the operator lifted the block for the account on its
+    /// owner's request through support; the mail services' HTTPS APIs are
+    /// open to every instance.
     #[serde(default)]
     pub outgoing_mail_allowed: bool,
+    /// Whether the instance may reach plain SIP (TCP and UDP port 5060). It
+    /// may not unless the operator lifted the block for the account on its
+    /// owner's request through support; SIP over TLS (5061) is open to
+    /// every instance. Absent from older backends.
+    #[serde(default)]
+    pub outgoing_sip_allowed: bool,
     pub created_at: DateTime<Utc>,
     pub billing_started_at: Option<DateTime<Utc>>,
     /// When billing ends or ended: at the deletion, or earlier or ahead,

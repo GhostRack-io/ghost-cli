@@ -16282,6 +16282,7 @@ mod tests {
             outgoing_ports: None,
             network_microusd_per_tib: 0,
             outgoing_mail_allowed: false,
+            outgoing_sip_allowed: false,
             created_at: Utc::now(),
             billing_started_at: None,
             billing_ended_at: None,
