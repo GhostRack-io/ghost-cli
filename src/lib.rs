@@ -9015,9 +9015,14 @@ async fn download_backup(cli: &Cli, api: &ApiClient, args: &DownloadBackupArgs) 
     } else {
         let backup: BackupView = api.read(&GetBackup { backup_id }, "").await?;
         if backup.destination != BackupDestinationKind::GigahostS3 {
+            let kept = if backup.destination == BackupDestinationKind::Local {
+                "kept on its instance's host"
+            } else {
+                "not a hosted backup"
+            };
             refuse!(
                 "invalid_request",
-                "Only hosted backups can be downloaded: backup {backup_id} is kept on its instance's host."
+                "Only hosted backups can be downloaded: backup {backup_id} is {kept}."
             );
         }
         if backup.status != ghostrack_client_api::website::BackupState::Restoring {

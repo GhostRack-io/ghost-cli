@@ -491,7 +491,11 @@ pub fn decrypt(
         let _ = fs::remove_file(&raw);
         match converted {
             Ok(status) if status.success() => {}
-            Ok(status) => bail!("qemu-img convert failed ({status})"),
+            Ok(status) => {
+                // A partial image must not make the rerun refuse.
+                let _ = fs::remove_file(output);
+                bail!("qemu-img convert failed ({status})")
+            }
             Err(error) => return Err(error).context("run qemu-img convert"),
         }
     } else {
