@@ -746,13 +746,15 @@ pub struct PendingAccountActionView {
     pub requested_at: DateTime<Utc>,
     /// When it takes effect.
     pub effective_at: DateTime<Utc>,
-    /// Who asked: `key` (a request signed with the account key) or
-    /// `session:<id>` (a website session).
+    /// Who asked: `key` (a request signed with the account key),
+    /// `session:<id>` (a website session), or `operator` (a close request
+    /// the operator recorded for the holder, confirmed in a ticket).
     pub requested_by: String,
     #[serde(default)]
     pub finished_at: Option<DateTime<Utc>>,
-    /// Who cancelled it: `key`, `session:<id>`, or `replaced` by a newer
-    /// request of the kind.
+    /// Who cancelled it: `key`, `session:<id>`, `replaced` by a newer
+    /// request of the kind, or `key_moved` when the account moved to a new
+    /// account key.
     #[serde(default)]
     pub cancelled_by: Option<String>,
     #[serde(default)]
