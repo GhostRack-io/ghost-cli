@@ -1,0 +1,26 @@
+{
+  "backup_id": "019b7cb4-6800-7000-8000-0000000000a2",
+  "data_key_hex": "5cf5466a22bfbef6a465ccc59c9476ef1052dac2bd17ff8ae86599062bb935df",
+  "description": "Fixed backup containers (services/hypervisor/src/backup_format.rs): one disk of a 4 MiB chunk of repeated text, a 4 MiB zero chunk and 1000 bytes of noise, encoded as version 2 (backup-v2.ghb) and version 1 (backup-v1.ghb) with nonce prefix 0x42 repeated, under the data key of the rewrap vector of client-api's backup-key-vectors.json, wrapped to the recovery key of its account seed (sevens). Regenerate with `cargo test -p ghostrack-hypervisor -- --ignored write_backup_format_fixtures`.",
+  "disk_bytes": 8389608,
+  "disk_sha256_hex": "7843301d27ef3de3c592a6ba54dace4233beb52dd6af03852224245014b5e946",
+  "instance_id": "019b7cb4-6800-7000-8000-0000000000a1",
+  "recovery_key_fingerprint_b64url": "Yk6-41llhxrpIJ00JC7UUZayac65_V1XufLcXbQOhuQ",
+  "v1": {
+    "file": "backup-v1.ghb",
+    "sha256_hex": "008fd8d26b3e316e98d8c321902d615e2470c1c9bb1dc3e36b46690ba8cdaf2d",
+    "size_bytes": 2855
+  },
+  "v2": {
+    "file": "backup-v2.ghb",
+    "sha256_hex": "eb6d201ddf45788e47dd545f48b14a2979988ebcb09df7e3dcae025b682d82d2",
+    "size_bytes": 2713
+  },
+  "wrapped_data_key_b64url": "T14o2iKw-WEDHzX1qOWqKMCmHQgju7HHPvTM6e5wCzz6rCm0jPfBMbtsGnKl7rh4-DNzpQZNz0gYfr3j3ZGXYXG_WPmV7I1s8Qi0GdebmAs",
+  "zero_ranges": [
+    [
+      4194304,
+      4194304
+    ]
+  ]
+}
