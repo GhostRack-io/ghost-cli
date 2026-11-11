@@ -1576,13 +1576,13 @@ enum InstanceCommand {
     /// attached, for a guest that does not boot or cannot be reached; or
     /// end the rescue with --exit.
     ///
-    /// The guest is shut down (forced off if it does not respond; a stopped
-    /// one starts) and boots a Debian system that runs from memory, at the
-    /// instance's own addresses. Its disk is
-    /// /dev/vda, not mounted: `mount-guest` mounts it at /mnt with its
-    /// fstab's filesystems, for `chroot /mnt`. Root logs in over SSH with
-    /// the keys, by key only; every saved key unless --ssh-key or
-    /// --ssh-key-file names others. The rescue system's host key is new
+    /// The guest is shut down, or forced off if it does not respond (a
+    /// stopped one just starts), and boots a Debian system that runs from
+    /// memory, at the instance's own addresses. Its disk is /dev/vda, not
+    /// mounted: `mount-guest` mounts it at /mnt with its fstab's
+    /// filesystems, for `chroot /mnt`. Root logs in over SSH with the keys,
+    /// by key only; every saved key unless --ssh-key or --ssh-key-file
+    /// names others. The rescue system's host key is new
     /// each rescue: with --wait, ghost files it and prints the SSH command
     /// that checks it, as `ghost instance get` does once it started. While
     /// the rescue lasts the instance is billed as running, a backup,
