@@ -4,35 +4,36 @@ use crate::website::{
     AccountSshKeyView, AccountView, ActivateAccountRequest, ActiveSessionView,
     AddAccountSshKeyRequest, AddCloudIpAddressesRequest, AddPrivateRenterRequest,
     AddSupportTicketMessageRequest, AgentUpdateAttemptRequest, AgentUpdateSequenceView,
-    ApproveAgentUpdateRequest, AuthorizeBackupRestoreRequest, BackupInstanceView,
-    BackupPricingView, BackupScheduleView, BackupView, BrowserOperationInput, BrowserOperationView,
-    CloudIpPoolView, CompleteOperationIntentRequest, CompleteTrialClaimRequest,
-    CompletedTrialClaimView, ContainerLogView, CreateBackupRequest, CreateCloudIpPoolRequest,
-    CreateHostEnrollmentTokenRequest, CreateInstanceRequest, CreateProviderPayoutRequest,
-    CreateSupportTicketRequest, DeclareHostEmergencyRequest, GatewayTrafficView,
-    GithubLoginRequest, GithubLoginStart, GithubUnlinked, HandOverCloudIpPoolRequest, HistoryPage,
-    HostAgentUpdateView, HostEnrollmentToken, HostNetworkTestsView, HostPricingView,
-    HostPrivacyView, ImageView, InstanceConsoleLogView, InstanceConsoleSessionsView,
-    InstanceHardwareView, InstanceLocationView, InstanceProviderTerminationView,
-    InstanceProviderView, InstanceSystemView, InstanceTagView, InstanceUpgradeView, InstanceView,
-    JobAccepted, JobPage, JobView, LocationView, LoginGrant, MigrateAccountSeedRequest,
-    NotificationsReadView, OfferingView, PasswordChallenge, PasswordChallengeRequest,
-    PasswordLoginRequest, PrivateRenterView, ProtectedBalanceView, ProviderAgentsView,
-    ProviderBalanceView, ProviderDisplayNameView, ProviderHostDetailView, ProviderHostView,
-    ProviderIncidentView, ProviderOutageDetailView, ProviderOutagePage, ProviderPayoutAddressView,
-    ProviderPayoutView, ProviderReliabilityView, ProviderRentalView, ProviderUptimeView,
-    RedeemLoginGrantRequest, RedeemLoginGrantResponse, RedeployInstanceRequest,
-    ReinstallInstanceRequest, ReleaseChannelsView, RemoveAccountSshKeyRequest,
-    RenameInstanceRequest, RequestProviderDisplayNameRequest, RestoreBackupRequest,
-    RotateGatewayKeysRequest, ScheduleHostRetirementRequest, ScheduleInstanceRetirementRequest,
-    SessionRevocationView, SetAgentUpdatePolicyRequest, SetBackupScheduleRequest,
-    SetHostPrivateRequest, SetHostRentalPauseRequest, SetNotificationReadRequest,
-    SetPortForwardsRequest, SetPowerStateRequest, SetProtectedBalanceRequest,
-    SetProviderIncidentStateRequest, SetProviderPayoutAddressRequest, SetSupportTicketStateRequest,
-    SetTagRedundantRequest, SetWebsitePasswordRequest, StartAgentUpdateSequenceRequest,
-    SupportTicketSummaryView, SupportTicketView, TagInstanceRequest, TrialClaimStatusView,
-    TrialClaimView, UpdateHostPricingRequest, UpdateInstanceRequest, UpgradeInstanceRequest,
-    UserNotificationView, WebsitePasswordRemoved, WebsitePasswordView, WriteProviderReviewRequest,
+    ApproveAgentUpdateRequest, AuthorizeBackupRestoreRequest, BackupDownloadView,
+    BackupInstanceView, BackupPricingView, BackupScheduleView, BackupView, BrowserOperationInput,
+    BrowserOperationView, CloudIpPoolView, CompleteOperationIntentRequest,
+    CompleteTrialClaimRequest, CompletedTrialClaimView, ContainerLogView, CreateBackupRequest,
+    CreateCloudIpPoolRequest, CreateHostEnrollmentTokenRequest, CreateInstanceRequest,
+    CreateProviderPayoutRequest, CreateSupportTicketRequest, DeclareHostEmergencyRequest,
+    DownloadBackupRequest, GatewayTrafficView, GithubLoginRequest, GithubLoginStart,
+    GithubUnlinked, HandOverCloudIpPoolRequest, HistoryPage, HostAgentUpdateView,
+    HostEnrollmentToken, HostNetworkTestsView, HostPricingView, HostPrivacyView, ImageView,
+    InstanceConsoleLogView, InstanceConsoleSessionsView, InstanceHardwareView,
+    InstanceLocationView, InstanceProviderTerminationView, InstanceProviderView,
+    InstanceSystemView, InstanceTagView, InstanceUpgradeView, InstanceView, JobAccepted, JobPage,
+    JobView, LocationView, LoginGrant, MigrateAccountSeedRequest, NotificationsReadView,
+    OfferingView, PasswordChallenge, PasswordChallengeRequest, PasswordLoginRequest,
+    PrivateRenterView, ProtectedBalanceView, ProviderAgentsView, ProviderBalanceView,
+    ProviderDisplayNameView, ProviderHostDetailView, ProviderHostView, ProviderIncidentView,
+    ProviderOutageDetailView, ProviderOutagePage, ProviderPayoutAddressView, ProviderPayoutView,
+    ProviderReliabilityView, ProviderRentalView, ProviderUptimeView, RedeemLoginGrantRequest,
+    RedeemLoginGrantResponse, RedeployInstanceRequest, ReinstallInstanceRequest,
+    ReleaseChannelsView, RemoveAccountSshKeyRequest, RenameInstanceRequest,
+    RequestProviderDisplayNameRequest, RestoreBackupRequest, RotateGatewayKeysRequest,
+    ScheduleHostRetirementRequest, ScheduleInstanceRetirementRequest, SessionRevocationView,
+    SetAgentUpdatePolicyRequest, SetBackupScheduleRequest, SetHostPrivateRequest,
+    SetHostRentalPauseRequest, SetNotificationReadRequest, SetPortForwardsRequest,
+    SetPowerStateRequest, SetProtectedBalanceRequest, SetProviderIncidentStateRequest,
+    SetProviderPayoutAddressRequest, SetSupportTicketStateRequest, SetTagRedundantRequest,
+    SetWebsitePasswordRequest, StartAgentUpdateSequenceRequest, SupportTicketSummaryView,
+    SupportTicketView, TagInstanceRequest, TrialClaimStatusView, TrialClaimView,
+    UpdateHostPricingRequest, UpdateInstanceRequest, UpgradeInstanceRequest, UserNotificationView,
+    WebsitePasswordRemoved, WebsitePasswordView, WriteProviderReviewRequest,
 };
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::Value;
@@ -534,6 +535,13 @@ endpoints! {
         => JobAccepted;
     DeleteBackup { instance_id: Uuid, backup_id: Uuid } =
         user DELETE "/api/mut/v1/instances/{instance_id}/backups/{backup_id}" => JobAccepted;
+    /// A link to the account's hosted backup as it is stored, encrypted,
+    /// good for 24 hours, with the key file that decrypting it needs (`ghost
+    /// backup decrypt`). It costs what the backup's restore costs, which the
+    /// request consents to as a restore's does; a backup gets at most 5
+    /// links a day.
+    DownloadBackup { backup_id: Uuid } = user POST
+        "/api/mut/v1/backups/{backup_id}/download" (DownloadBackupRequest) => BackupDownloadView;
     /// The instance's backup schedule: its live rules with their next run
     /// and last result, and the latest removed rules whose backups stay.
     GetBackupSchedule { instance_id: Uuid } =

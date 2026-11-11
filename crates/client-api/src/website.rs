@@ -332,6 +332,9 @@ pub enum LedgerKind {
     InstanceCreation,
     BackupCreation,
     BackupRestore,
+    /// A link to download a hosted backup, charged as its restore (item
+    /// 215).
+    BackupDownload,
     SlaCredit,
     Payout,
     Adjustment,
@@ -6952,6 +6955,69 @@ pub struct RestoreBackupRequest {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub accepted_charge: Option<AcceptedCharge>,
 }
+
+/// A download of a hosted backup, which costs what its restore costs and
+/// is consented to as a restore is ([`RestoreBackupRequest`]): a request
+/// signed with the account key signs `download_backup` with the billing
+/// key, a website session sends the charge its page showed.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct DownloadBackupRequest {
+    pub billing_authorization: Option<BillingAuthorization>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub accepted_charge: Option<AcceptedCharge>,
+}
+
+/// A hosted backup's download link (`DownloadBackup`): a presigned URL of
+/// the object as it is stored, encrypted, which takes ranges and any number
+/// of requests until it expires, and the key file that decrypting it needs.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct BackupDownloadView {
+    /// The link's record, which its charge names.
+    pub download_id: Uuid,
+    pub url: String,
+    pub expires_at: DateTime<Utc>,
+    /// The object's entity tag, which a resumed download may send as
+    /// `If-Match`.
+    pub etag: String,
+    /// What the link cost.
+    pub charged_microusd: u64,
+    /// What `ghost backup decrypt` reads beside the file, offline.
+    pub key: BackupKeyFile,
+}
+
+/// The key file of a downloaded backup (`<file>.key.json`): which backup
+/// the file is and what it must be, and its data key as the backup stores
+/// it, wrapped to the account's recovery key, which only the account's seed
+/// opens. It holds nothing that decrypts the backup without the seed.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct BackupKeyFile {
+    /// [`BACKUP_KEY_FILE_FORMAT`].
+    pub format: String,
+    pub backup_id: Uuid,
+    /// The instance the backup was taken of, which the wrapped key is
+    /// bound to.
+    pub instance_id: Uuid,
+    /// The size of the backed-up disk, which the decrypted image has.
+    pub disk_bytes: u64,
+    /// The size of the encrypted file.
+    pub size_bytes: u64,
+    /// The encrypted file's SHA-256, lowercase hex.
+    pub sha256: String,
+    /// Unpadded base64url SHA-256 of the recovery public key the data key
+    /// is wrapped to.
+    pub recipient_key_fingerprint: String,
+    /// Unpadded base64url HPKE-wrapped data key, as the file's header
+    /// holds it.
+    pub wrapped_data_key: String,
+    /// The epoch of the account's key set whose recovery key that is: 1 for
+    /// the first account key, one more for each move to a new one. None
+    /// when the account no longer lists it.
+    pub recovery_key_epoch: Option<u64>,
+}
+
+/// The format of a [`BackupKeyFile`].
+pub const BACKUP_KEY_FILE_FORMAT: &str = "ghostrack-backup-key-v1";
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
