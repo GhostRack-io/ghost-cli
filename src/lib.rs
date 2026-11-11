@@ -5959,23 +5959,20 @@ fn github_line(github: &AccountGithubView) -> String {
 /// migrate-seed`, and the refusal and deposit memo a sign-up notice said.
 fn hint_keys(command: &Command, output: &Value) -> Option<&'static [&'static str]> {
     match command {
-        Command::Key {
-            command: KeyCommand::Generate { .. },
-        } => Some(&["warning"]),
         // A pending move or change says when in its note; a move by a
         // backend of before warns.
         Command::Account {
-            command: AccountCommand::MigrateSeed { .. },
-        } if output.get("note").is_some() => Some(&["note"]),
-        Command::Account {
-            command: AccountCommand::MigrateSeed { .. },
-        } => Some(&["warning"]),
-        Command::Account {
-            command: AccountCommand::Close { .. },
+            command: AccountCommand::MigrateSeed { .. } | AccountCommand::Close { .. },
         }
         | Command::Provider {
             command: ProviderCommand::SetPayoutAddress { .. },
         } if output.get("note").is_some() => Some(&["note"]),
+        Command::Key {
+            command: KeyCommand::Generate { .. },
+        }
+        | Command::Account {
+            command: AccountCommand::MigrateSeed { .. },
+        } => Some(&["warning"]),
         Command::Account {
             command: AccountCommand::SetPassword { .. },
         } => Some(&["note"]),
