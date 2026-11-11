@@ -323,6 +323,63 @@ mod tests {
         assert_eq!(tier, Some(GatewayTier::Unknown));
     }
 
+    /// The x86-64 levels of item 186 are additive: an image, an offering
+    /// and an instance from an older backend decode without them, as none
+    /// (level 1), and with them as given.
+    #[test]
+    fn the_cpu_levels_read_from_older_backends() {
+        use crate::website::{ImageView, InstanceView, OfferingView};
+
+        let mut image = serde_json::json!({
+            "image_id": "01a00000-0000-7000-8000-000000000024", "slug": "ubuntu-24.04",
+            "display_name": "Ubuntu 24.04 LTS", "architecture": "x86_64",
+            "minimum_disk_bytes": 4_294_967_296_u64,
+        });
+        let older: ImageView = serde_json::from_value(image.clone()).unwrap();
+        assert_eq!(older.x86_64_level, None);
+        assert!(
+            serde_json::to_value(&older)
+                .unwrap()
+                .get("x86_64_level")
+                .is_none()
+        );
+        image["x86_64_level"] = 3.into();
+        let newer: ImageView = serde_json::from_value(image).unwrap();
+        assert_eq!(newer.x86_64_level, Some(3));
+
+        let mut offering = serde_json::json!({
+            "offering_id": "of2_J7hnuv_uO8PmXACeyas4QY",
+            "provider_id": "00000000-0000-0000-0000-000000000000",
+            "provider_name": "Example Hosting", "host_mode": "cloud_routed",
+            "location": "pl-warsaw", "location_name": "Warsaw", "country_code": "PL",
+            "continent_code": "EU", "measured_latency_ms": null, "cpu_model": "Test CPU",
+            "cpu_tier": "shared_1x", "vcpu_count": 1, "memory_bytes": 5_905_580_032_u64,
+            "root_disk_bytes": 51_539_607_552_u64, "root_storage_backend": "lvm_thin",
+            "software_raid_levels": [], "storage_devices": [],
+            "base_price_microusd_per_month": 3_240_000,
+            "full_utilization_price_microusd_per_month": 4_860_000, "network_prices": [],
+            "sla_target_basis_points": 9_900, "sla_credit_multiplier": 1, "available_hosts": 1,
+        });
+        let older: OfferingView = serde_json::from_value(offering.clone()).unwrap();
+        assert_eq!(older.host_x86_64_level, None);
+        offering["host_x86_64_level"] = 2.into();
+        let newer: OfferingView = serde_json::from_value(offering).unwrap();
+        assert_eq!(newer.host_x86_64_level, Some(2));
+
+        let mut instance = serde_json::json!({
+            "instance_id": "00000000-0000-0000-0000-000000000000", "offering_id": "o",
+            "hostname": "vm", "name": "web", "root_disk_bytes": 12_u64 << 30,
+            "state": "running", "desired_power_state": "running", "holds_capacity": true,
+            "network_microusd_per_tib": 0, "created_at": "2026-11-11T00:00:00Z",
+            "balance_reservation_microusd": 0,
+        });
+        let older: InstanceView = serde_json::from_value(instance.clone()).unwrap();
+        assert_eq!(older.host_x86_64_level, None);
+        instance["host_x86_64_level"] = 3.into();
+        let newer: InstanceView = serde_json::from_value(instance).unwrap();
+        assert_eq!(newer.host_x86_64_level, Some(3));
+    }
+
     /// A host's opening checks are additive (item 193d): a view without
     /// them reads as None, and a check or state of a newer release as
     /// Unknown.

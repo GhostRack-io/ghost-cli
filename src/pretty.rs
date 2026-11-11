@@ -609,10 +609,12 @@ fn shown(key: &str) -> bool {
     // is for `ghost` to rewrap on a restore, not for reading. A job's steps
     // and events name each step by its key; no command takes a step's ID,
     // which readers took for the job's. An image's operating-system family
-    // is for the website's icons; the CLI shows images as before.
+    // is for the website's icons; the CLI shows images as before. The
+    // x86-64 level of an offering's or an instance's host is what the
+    // website filters images by: `catalog images` shows each image's.
     !matches!(
         key,
-        "cpu_tier" | "wrapped_data_key" | "step_id" | "os_family"
+        "cpu_tier" | "wrapped_data_key" | "step_id" | "os_family" | "host_x86_64_level"
     )
 }
 
@@ -1170,6 +1172,8 @@ mod tests {
         ]))
         .unwrap();
         assert_eq!(images[1].minimum_memory_bytes, 0);
+        // An older backend's answer has no x86-64 level: level 1.
+        assert_eq!(images[1].x86_64_level, None);
         // The family is the website's: not shown.
         assert_eq!(images[1].os_family.as_deref(), Some("ubuntu"));
         assert_eq!(

@@ -3913,6 +3913,10 @@ impl Summary {
                 command: Some(CatalogCommand::ContainerImages),
                 ..
             } => parsed(output).map(Self::container_images),
+            Command::Catalog {
+                command: Some(CatalogCommand::Images),
+                ..
+            } => parsed(output).map(Self::images),
             Command::Provider {
                 command: ProviderCommand::Hosts { retired },
             } => parsed(output).map(|hosts| Self::provider_hosts(hosts, *retired, Utc::now())),
@@ -4619,6 +4623,39 @@ impl Summary {
                         "display_name": location.display_name,
                         "country_code": location.country_code,
                         "continent_code": location.continent_code,
+                    })
+                })
+                .collect(),
+            next_cursor: None,
+            note: None,
+        }
+    }
+
+    /// The VM images: the ID `--image` takes, the least disk and memory an
+    /// offering needs for each, and the x86-64 level its host's CPU must
+    /// have (an older backend's answer has none: level 1).
+    fn images(images: Vec<ImageView>) -> Self {
+        Self {
+            columns: vec![
+                "image_id",
+                "display_name",
+                "slug",
+                "architecture",
+                "minimum_disk",
+                "minimum_memory",
+                "cpu_level",
+            ],
+            rows: images
+                .into_iter()
+                .map(|image| {
+                    json!({
+                        "image_id": image.image_id,
+                        "display_name": image.display_name,
+                        "slug": image.slug,
+                        "architecture": image.architecture,
+                        "minimum_disk": pretty::binary_size(image.minimum_disk_bytes),
+                        "minimum_memory": pretty::binary_size(image.minimum_memory_bytes),
+                        "cpu_level": format!("x86-64-v{}", image.x86_64_level.unwrap_or(1)),
                     })
                 })
                 .collect(),
@@ -16141,6 +16178,7 @@ mod tests {
             provider_name: String::new(),
             provider_alias: String::new(),
             host_mode: None,
+            host_x86_64_level: None,
             location: String::new(),
             location_name: String::new(),
             country_code: String::new(),
@@ -22583,6 +22621,61 @@ mod tests {
         assert_eq!(lines[1][0], "debian-13");
         assert_eq!(lines[1][lines[1].len() - 3..], ["256", "MiB", "x86-64-v1"]);
         assert_eq!(lines[2][lines[2].len() - 3..], ["512", "MiB", "x86-64-v3"]);
+    }
+
+    /// The VM images are listed with the x86-64 level a host's CPU must
+    /// have, `x86-64-v1` for an older backend's answer without it;
+    /// `--json` is the API's list.
+    #[tokio::test]
+    async fn the_images_are_listed_with_their_cpu_level() {
+        let images = json!([
+            {"image_id": "01a00000-0000-7000-8000-000000000031", "slug": "almalinux-10",
+             "display_name": "AlmaLinux 10", "architecture": "x86_64",
+             "minimum_disk_bytes": 10_u64 << 30, "minimum_memory_bytes": 0, "x86_64_level": 2},
+            {"image_id": "01a00000-0000-7000-8000-000000000032", "slug": "rocky-linux-10",
+             "display_name": "Rocky Linux 10", "architecture": "x86_64",
+             "minimum_disk_bytes": 10_u64 << 30, "minimum_memory_bytes": 0, "x86_64_level": 3},
+            {"image_id": "01a00000-0000-7000-8000-000000000024", "slug": "ubuntu-24.04",
+             "display_name": "Ubuntu 24.04 LTS", "architecture": "x86_64",
+             "minimum_disk_bytes": 4_u64 << 30, "minimum_memory_bytes": 0},
+        ]);
+        let (url, received) = canned_server(vec![(200, images.to_string())]).await;
+        let cli = Cli::try_parse_from(["ghost", "--api-url", &url, "catalog", "images"]).unwrap();
+        let output = execute(&cli).await.unwrap();
+        assert_eq!(output, images);
+        assert_eq!(request_lines(&received), ["GET /v1/catalog/images"]);
+        let text = render_result(&cli, &output, Terminal::plain());
+        let lines = words(&text);
+        assert_eq!(
+            lines[0],
+            [
+                "IMAGE_ID",
+                "DISPLAY_NAME",
+                "SLUG",
+                "ARCHITECTURE",
+                "MINIMUM_DISK",
+                "MINIMUM_MEMORY",
+                "CPU_LEVEL"
+            ],
+            "{text}"
+        );
+        assert_eq!(lines[1].last(), Some(&"x86-64-v2"), "{text}");
+        assert_eq!(lines[2].last(), Some(&"x86-64-v3"), "{text}");
+        assert_eq!(lines[3].last(), Some(&"x86-64-v1"), "{text}");
+        assert!(text.contains("4 GiB"), "{text}");
+    }
+
+    /// The x86-64 level of an offering's or an instance's host is
+    /// `--json`'s alone.
+    #[test]
+    fn a_host_s_cpu_level_is_not_shown() {
+        let shown = pretty::render(
+            &json!({"cpu_model": "Xeon E5-2690 v2", "host_x86_64_level": 2}),
+            Terminal::plain(),
+        );
+        assert!(shown.contains("Xeon E5-2690 v2"), "{shown}");
+        assert!(!shown.contains("x86_64"), "{shown}");
+        assert!(!shown.contains("X86_64"), "{shown}");
     }
 
     /// `instance logs` prints the container's lines, the end from before

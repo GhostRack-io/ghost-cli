@@ -2169,6 +2169,12 @@ pub struct OfferingView {
     #[serde(default)]
     pub provider_review_count: u32,
     pub cpu_model: String,
+    /// The highest x86-64 level (1 to 4) among the hosts the offering
+    /// lists, a host that never reported one counting as 1: an image of a
+    /// higher level ([`ImageView::x86_64_level`]) does not run on it.
+    /// Absent from older backends.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host_x86_64_level: Option<u8>,
     pub cpu_tier: CpuTier,
     pub vcpu_count: u32,
     pub memory_bytes: u64,
@@ -3924,6 +3930,12 @@ pub struct ImageView {
     /// an image of none, and from older backends.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub os_family: Option<String>,
+    /// The least x86-64 level (1 to 4) a host's CPUs must meet to run the
+    /// image: the lowest level it has a build of. A host of a higher level
+    /// gets the build of the highest level it meets. None in an instance's
+    /// view, and from older backends, which is level 1.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub x86_64_level: Option<u8>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -3969,6 +3981,12 @@ pub struct InstanceView {
     pub provider_alias: String,
     #[serde(default)]
     pub host_mode: Option<HostMode>,
+    /// The x86-64 level (1 to 4) the instance's host's CPUs meet, as its
+    /// agent last reported it: a reinstall offers the images of this level
+    /// or below. None where the host never reported one (level 1), and
+    /// from older backends.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host_x86_64_level: Option<u8>,
     /// The location code of the instance's host.
     #[serde(default)]
     pub location: String,
