@@ -8285,6 +8285,7 @@ pub struct CreateVpnConnectionRequest {
     /// end of its ID when absent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
+    #[serde(deserialize_with = "known")]
     pub tier: GatewayTier,
     /// A location code, as [`VpnCatalogView::locations`] lists them.
     pub location: String,
