@@ -10826,20 +10826,36 @@ fn gateway_change_quote(
         return high_bandwidth_quote(instance, offering, current_tier, location, colors);
     }
     // Off a gateway of its own without a location, the VM stays at its
-    // location where a shared gateway there is listed, else goes to the
-    // preselected one, as the backend places it.
+    // location where a shared gateway there has room for the target tier,
+    // else goes where a new rental of that tier would: the preselected
+    // location for shared bandwidth, the closest with a free slice that
+    // crosses no bottleneck for a shared IP, as the backend places it.
+    let shared_ip = target_tier == GatewayTier::SharedIp;
+    let room = |candidate: &ghostrack_client_api::website::GatewayLocationView| {
+        if shared_ip {
+            !candidate.shared_ip_full
+        } else {
+            candidate.shared_bandwidth_room()
+        }
+    };
     let location = location.or_else(|| {
         let own = instance.gateway_location.as_deref();
         if current_tier == GatewayTier::HighBandwidth
             && !offering
                 .gateway_locations
                 .iter()
-                .any(|candidate| Some(candidate.location.as_str()) == own)
+                .any(|candidate| room(candidate) && Some(candidate.location.as_str()) == own)
         {
             offering
                 .gateway_locations
                 .iter()
-                .find(|candidate| candidate.preselected)
+                .find(|candidate| {
+                    if shared_ip {
+                        room(candidate) && !candidate.bottleneck
+                    } else {
+                        candidate.preselected
+                    }
+                })
                 .map(|candidate| candidate.location.as_str())
                 .or(own)
         } else {
@@ -23883,8 +23899,9 @@ mod tests {
     /// takes a few minutes, the tier's prices the offering lists, the
     /// charge; full while the offering lists the tier full. A high
     /// bandwidth instance's change to a shared tier without a location goes
-    /// where the backend places it: its location where one is listed, else
-    /// the preselected one.
+    /// where the backend places it: its location where one there has room
+    /// for the tier, else the preselected one for shared bandwidth and the
+    /// closest with a free slice that crosses no bottleneck for a shared IP.
     #[test]
     fn the_gateway_change_quote_of_high_bandwidth() {
         let mut offering = quoted_offering();
@@ -23947,16 +23964,83 @@ mod tests {
         .unwrap()
         .join("\n");
         assert!(none.contains("none of its own can be set up now"), "{none}");
-        // Off high bandwidth to shared IP, the instance's location is not
-        // listed: the preselected one.
+        // Off high bandwidth, the instance's location is not listed: the
+        // preselected one for shared bandwidth, the closest with a free
+        // slice that crosses no bottleneck for a shared IP.
+        let shared = |instance: &InstanceView, offering: &OfferingView, tier| {
+            gateway_change_quote(instance, offering, Some(tier), None, false)
+                .map(|quote| quote.join("\n"))
+        };
         let mut listed = offering.clone();
         listed.gateway_locations[0].preselected = true;
-        let shared = gateway_change_quote(&high, &listed, Some(GatewayTier::SharedIp), None, false)
-            .unwrap()
-            .join("\n");
+        let bandwidth = shared(&high, &listed, GatewayTier::SharedBandwidth).unwrap();
         assert!(
-            shared.contains("to shared IP in Frankfurt, Germany (de-fra):"),
-            "{shared}"
+            bandwidth.contains("to shared bandwidth in Frankfurt, Germany (de-fra):"),
+            "{bandwidth}"
+        );
+        let slice = shared(&high, &listed, GatewayTier::SharedIp).unwrap();
+        assert!(slice.contains("to shared IP in old:"), "{slice}");
+        // Its location is listed but has no room for the target tier: not
+        // there either (item 241).
+        let mut mixed = offering.clone();
+        mixed.gateway_locations = serde_json::from_value(json!([
+            {"location": "us-new-jersey", "location_name": "New York", "country_code": "US",
+             "distance_km": 100, "bottleneck": false, "preselected": false,
+             "gateway_base_charge_microusd_per_month": 700_000,
+             "gateway_network_microusd_per_tib": 3_250_000,
+             "shared_ip_base_charge_microusd_per_month": 300_000,
+             "shared_ip_network_microusd_per_tib": 2_000_000,
+             "shared_bandwidth_offered": false},
+            {"location": "de-fra", "location_name": "Frankfurt, Germany", "country_code": "DE",
+             "distance_km": 840, "bottleneck": false, "preselected": true,
+             "gateway_base_charge_microusd_per_month": 700_000,
+             "gateway_network_microusd_per_tib": 3_250_000,
+             "shared_ip_full": true},
+        ]))
+        .unwrap();
+        let high_at = |location: &str| {
+            let mut instance = high.clone();
+            instance.gateway_location = Some(location.to_owned());
+            instance
+        };
+        // Shared bandwidth from a location that sells shared IP only, or
+        // that is full for it: the preselected one.
+        let bandwidth = shared(
+            &high_at("us-new-jersey"),
+            &mixed,
+            GatewayTier::SharedBandwidth,
+        )
+        .unwrap();
+        assert!(
+            bandwidth.contains("to shared bandwidth in Frankfurt, Germany (de-fra):"),
+            "{bandwidth}"
+        );
+        let mut full = mixed.clone();
+        full.gateway_locations[0].shared_bandwidth_offered = true;
+        full.gateway_locations[0].shared_bandwidth_full = true;
+        let bandwidth = shared(
+            &high_at("us-new-jersey"),
+            &full,
+            GatewayTier::SharedBandwidth,
+        )
+        .unwrap();
+        assert!(
+            bandwidth.contains("to shared bandwidth in Frankfurt, Germany (de-fra):")
+                && !bandwidth.contains("no room now"),
+            "{bandwidth}"
+        );
+        // A shared IP stays where a slice is free, and leaves a location
+        // without one for the closest with one.
+        let slice = shared(&high_at("us-new-jersey"), &mixed, GatewayTier::SharedIp).unwrap();
+        assert!(
+            slice.contains("to shared IP in New York (us-new-jersey):"),
+            "{slice}"
+        );
+        let slice = shared(&high_at("de-fra"), &mixed, GatewayTier::SharedIp).unwrap();
+        assert!(
+            slice.contains("to shared IP in New York (us-new-jersey):")
+                && !slice.contains("no free slice now"),
+            "{slice}"
         );
     }
 
