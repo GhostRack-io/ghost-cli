@@ -613,7 +613,7 @@ endpoints! {
     /// One of the account's VPN connections, deleted ones too.
     GetVpnConnection { connection_id: Uuid } = user GET
         "/v1/vpn/connections/{connection_id}" => crate::website::VpnConnectionView;
-    /// Create a VPN connection for one device, by its WireGuard public key
+    /// Create a VPN connection for one device, by its `WireGuard` public key
     /// (201).
     CreateVpnConnection = user POST "/api/mut/v1/vpn/connections"
         (crate::website::CreateVpnConnectionRequest) => crate::website::VpnConnectionView;
