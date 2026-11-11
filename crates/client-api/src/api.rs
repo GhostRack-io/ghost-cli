@@ -603,6 +603,28 @@ endpoints! {
     ListJobs = user GET "/v1/jobs" => JobPage;
     GetJob { job_id: Uuid } = user GET "/v1/jobs/{job_id}" => JobView;
 
+    // VPN connections
+    /// Where VPN connections can be created, in which tiers, at what
+    /// prices; empty while they are not offered.
+    GetVpnCatalog = user GET "/v1/vpn/catalog" => crate::website::VpnCatalogView;
+    /// The account's VPN connections that are not deleted, newest first.
+    ListVpnConnections =
+        user GET "/v1/vpn/connections" => Vec<crate::website::VpnConnectionView>;
+    /// One of the account's VPN connections, deleted ones too.
+    GetVpnConnection { connection_id: Uuid } = user GET
+        "/v1/vpn/connections/{connection_id}" => crate::website::VpnConnectionView;
+    /// Create a VPN connection for one device, by its WireGuard public key
+    /// (201).
+    CreateVpnConnection = user POST "/api/mut/v1/vpn/connections"
+        (crate::website::CreateVpnConnectionRequest) => crate::website::VpnConnectionView;
+    /// Delete a VPN connection; its address is given back.
+    DeleteVpnConnection { connection_id: Uuid } = user DELETE
+        "/api/mut/v1/vpn/connections/{connection_id}" => crate::website::VpnConnectionView;
+    /// Allow or block traffic from the internet to the connection's device.
+    SetVpnIncoming { connection_id: Uuid } = user POST
+        "/api/mut/v1/vpn/connections/{connection_id}/incoming"
+        (crate::website::SetVpnIncomingRequest) => crate::website::VpnConnectionView;
+
     // Provider
     GetProviderBalance = user GET "/v1/provider/balance" => Option<ProviderBalanceView>;
     ListPayouts = user GET "/v1/provider/payouts" => Vec<ProviderPayoutView>;

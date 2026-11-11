@@ -8247,3 +8247,161 @@ pub enum LanLinkState {
     #[serde(other)]
     Unknown,
 }
+
+/// The state of a VPN connection ([`VpnConnectionView::state`]).
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum VpnConnectionState {
+    /// Its gateway and address are being set up.
+    Provisioning,
+    /// Its gateway and address are set up.
+    Ready,
+    /// Stopped while the account's balance is out.
+    Suspended,
+    /// Deleted by the customer, or with the account.
+    Deleted,
+    /// It could not be set up; see [`VpnConnectionView::last_error`].
+    Failed,
+    /// A variant of a newer release, which this one does not know.
+    #[serde(other)]
+    Unknown,
+}
+
+/// The tracked connections a VPN connection's device may hold at once
+/// ([`CreateVpnConnectionRequest::tracked_connections`]): 4,096 included,
+/// the others for a monthly price.
+pub const VPN_TRACKED_CONNECTION_TIERS: [u32; 4] = [4_096, 16_384, 65_536, 262_144];
+
+/// The tracked connections a VPN connection has when the request names
+/// none.
+pub const DEFAULT_VPN_TRACKED_CONNECTIONS: u32 = 4_096;
+
+/// Create a VPN connection: one device, known by the `WireGuard` public key
+/// its owner generated, on a gateway at `location` in `tier`.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CreateVpnConnectionRequest {
+    /// Lowercase letters, digits and `-`, at most 63; `vpn-` and the
+    /// start of its ID when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+    pub tier: GatewayTier,
+    /// A location code, as [`VpnCatalogView::locations`] lists them.
+    pub location: String,
+    /// The device's `WireGuard` public key, standard base64 (44 characters).
+    /// Never a private key.
+    pub device_public_key: String,
+    /// One of [`VPN_TRACKED_CONNECTION_TIERS`];
+    /// [`DEFAULT_VPN_TRACKED_CONNECTIONS`] when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub tracked_connections: Option<u32>,
+}
+
+/// Allow or block traffic from the internet to a VPN connection's device.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct SetVpnIncomingRequest {
+    pub allowed: bool,
+}
+
+/// A port of a Shared IP VPN connection's slice and the device's port it
+/// reaches.
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct VpnPortForwardView {
+    pub public_port: u16,
+    pub device_port: u16,
+}
+
+/// One of the account's VPN connections. It never carries a private key or
+/// the device's own address.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct VpnConnectionView {
+    pub id: Uuid,
+    pub name: String,
+    pub tier: GatewayTier,
+    pub location: String,
+    pub location_name: String,
+    pub state: VpnConnectionState,
+    pub created_at: DateTime<Utc>,
+    #[serde(default)]
+    pub ready_at: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub ended_at: Option<DateTime<Utc>>,
+    /// The device's `WireGuard` public key, standard base64.
+    pub device_public_key: String,
+    pub tracked_connections: u32,
+    /// Whether traffic from the internet reaches the device.
+    pub incoming_allowed: bool,
+    /// The device's tunnel address, a /32 in its configuration.
+    #[serde(default)]
+    pub tunnel_address: Option<String>,
+    /// The connection's address in the account's mesh.
+    #[serde(default)]
+    pub mesh_address: Option<String>,
+    /// The public address traffic leaves from: the connection's own, or
+    /// its gateway's for a Shared IP slice.
+    #[serde(default)]
+    pub public_ipv4: Option<String>,
+    /// A Shared IP connection's forwarded ports.
+    #[serde(default)]
+    pub port_forwards: Vec<VpnPortForwardView>,
+    /// A Shared IP connection's source ports of `public_ipv4`.
+    #[serde(default)]
+    pub outgoing_ports: Option<PortRangeView>,
+    /// `address:port` of the gateway's tunnel, once ready.
+    #[serde(default)]
+    pub endpoint: Option<String>,
+    /// The gateway's `WireGuard` public key, standard base64, once ready.
+    #[serde(default)]
+    pub gateway_public_key: Option<String>,
+    #[serde(default)]
+    pub base_microusd_per_month: Option<u64>,
+    #[serde(default)]
+    pub traffic_microusd_per_tib: Option<u64>,
+    #[serde(default)]
+    pub tracked_connections_microusd_per_month: Option<u64>,
+    #[serde(default)]
+    pub last_error: Option<String>,
+}
+
+/// What a VPN connection of `tier` costs at a location, and whether one
+/// can be created there now.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct VpnTierOffer {
+    pub tier: GatewayTier,
+    pub room: bool,
+    #[serde(default)]
+    pub base_microusd_per_month: Option<u64>,
+    #[serde(default)]
+    pub traffic_microusd_per_tib: Option<u64>,
+    /// A Shared IP slice's forwarded ports.
+    #[serde(default)]
+    pub incoming_ports: Option<u32>,
+}
+
+/// A location where VPN connections are sold.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct VpnLocationView {
+    pub location: String,
+    pub display_name: String,
+    pub country_code: String,
+    #[serde(default)]
+    pub tiers: Vec<VpnTierOffer>,
+}
+
+/// The monthly price of a tracked-connections tier.
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct VpnTrackedConnectionPrice {
+    pub tracked_connections: u32,
+    pub microusd_per_month: u64,
+}
+
+/// What VPN connections can be created: none while they are not offered.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct VpnCatalogView {
+    pub enabled: bool,
+    #[serde(default)]
+    pub locations: Vec<VpnLocationView>,
+    #[serde(default)]
+    pub tracked_connection_prices: Vec<VpnTrackedConnectionPrice>,
+}
