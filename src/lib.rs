@@ -559,6 +559,12 @@ enum AccountCommand {
     /// Turn website password login off, ending the website sessions the
     /// password began.
     RemovePassword,
+    /// Two-factor codes for website logins by password or GitHub: six digits
+    /// from an authenticator app. The account key turns them on and off.
+    Totp {
+        #[command(subcommand)]
+        command: TotpCommand,
+    },
     /// End every website session and cancel unused login URLs, such as after
     /// a lost device or a leaked link. Authentication keys and the website
     /// password are not affected: if the password was saved on a lost device,
@@ -610,6 +616,20 @@ enum ProtectionCommand {
     },
     /// Follow the platform's default again.
     Default,
+}
+
+#[derive(Subcommand)]
+enum TotpCommand {
+    /// Turn codes on: prints a new secret for your authenticator app (an
+    /// otpauth:// URI and the secret as text), then asks for the code the app
+    /// shows. A new secret replaces the one in force.
+    Enable,
+    /// Turn codes off, as after a lost phone.
+    Disable {
+        /// Turn them off; without it the command only says what it would do.
+        #[arg(long)]
+        yes: bool,
+    },
 }
 
 #[derive(Subcommand)]
@@ -7230,6 +7250,38 @@ fn website_password_request(
     )
 }
 
+/// A new two-factor secret drawn from `rng`, in base32.
+fn totp_secret(rng: &mut impl rand_core::CryptoRngCore) -> String {
+    let mut secret = [0_u8; ghostrack_client_api::totp::SECRET_BYTES];
+    rng.fill_bytes(&mut secret);
+    ghostrack_client_api::totp::encode_secret(&secret)
+}
+
+/// What `account totp enable` shows before it asks for the code: the
+/// secret as an `otpauth://` URI, which an authenticator app reads from a
+/// QR code made of it, and as text, which it takes typed in.
+fn totp_enrollment(account_alias: &str, secret: &str) -> String {
+    format!(
+        "Add this account to your authenticator app, by its URI (as a QR code) or by the secret:\n  {}\n  {secret}\nThen enter the six-digit code it shows:",
+        ghostrack_client_api::totp::otpauth_uri(secret, account_alias)
+    )
+}
+
+/// The code read as one line of `input`, its spaces and dashes taken out.
+///
+/// # Errors
+///
+/// No line, or one that is not six digits.
+fn read_totp_code(input: &mut impl std::io::BufRead) -> Result<String> {
+    let mut line = String::new();
+    input.read_line(&mut line)?;
+    let code = ghostrack_client_api::totp::normalize_code(&line);
+    if !ghostrack_client_api::totp::is_code(&code) {
+        bail!("a code is the six digits the authenticator app shows");
+    }
+    Ok(code)
+}
+
 async fn execute_account(cli: &Cli, api: &ApiClient, command: &AccountCommand) -> Result<Value> {
     match command {
         AccountCommand::Review {
@@ -7470,6 +7522,35 @@ async fn execute_account(cli: &Cli, api: &ApiClient, command: &AccountCommand) -
             let removed: WebsitePasswordRemoved =
                 api.write(&RemoveWebsitePassword, &(), None).await?;
             to_value(removed)
+        }
+        AccountCommand::Totp {
+            command: TotpCommand::Enable,
+        } => {
+            let account: AccountView = api.read(&GetAccount, "").await?;
+            let secret = totp_secret(&mut rand_core::OsRng);
+            notice(&totp_enrollment(&account.account_alias, &secret));
+            let code = read_totp_code(&mut std::io::stdin().lock())?;
+            let enabled: ghostrack_client_api::website::TotpView = api
+                .write(
+                    &ghostrack_client_api::api::EnableTotp,
+                    &ghostrack_client_api::website::EnableTotpRequest { secret, code },
+                    Some(&*Uuid::now_v7().to_string()),
+                )
+                .await?;
+            to_value(enabled)
+        }
+        AccountCommand::Totp {
+            command: TotpCommand::Disable { yes },
+        } => {
+            if !yes {
+                bail!(
+                    "turning two-factor codes off lets a website login by password or GitHub in without a code; repeat with --yes"
+                );
+            }
+            let disabled: ghostrack_client_api::website::TotpDisabled = api
+                .write(&ghostrack_client_api::api::DisableTotp, &(), None)
+                .await?;
+            to_value(disabled)
         }
         AccountCommand::RevokeSessions => {
             let revocation: SessionRevocationView = api.write(&RevokeSessions, &(), None).await?;
@@ -14845,6 +14926,36 @@ mod tests {
             "{error:#}"
         );
         assert!(!api::is_transient(&error));
+    }
+
+    /// `account totp enable` shows the secret as an `otpauth://` URI and as
+    /// base32 text, a new one each time, and reads one line of six digits;
+    /// `disable` needs `--yes`.
+    #[test]
+    fn totp_enable_shows_the_secret_and_reads_the_code() {
+        let parse =
+            |arguments: &[&str]| Cli::try_parse_from(["ghost", "account"].iter().chain(arguments));
+        assert!(parse(&["totp", "enable"]).is_ok());
+        assert!(parse(&["totp", "disable"]).is_ok());
+        assert!(parse(&["totp", "disable", "--yes"]).is_ok());
+        assert!(parse(&["totp", "enable", "123456"]).is_err());
+
+        let secret = totp_secret(&mut rand_core::OsRng);
+        assert_eq!(secret.len(), 32);
+        let bytes = ghostrack_client_api::totp::decode_secret(&secret).expect("base32");
+        assert_eq!(bytes.len(), ghostrack_client_api::totp::SECRET_BYTES);
+        assert_ne!(totp_secret(&mut rand_core::OsRng), secret);
+        let shown = totp_enrollment("gh-abcdefgh", &secret);
+        assert!(shown.contains(&format!(
+            "otpauth://totp/GhostRack:gh-abcdefgh?secret={secret}&issuer=GhostRack"
+        )));
+        assert!(shown.contains(&format!("\n  {secret}\n")));
+
+        let mut typed = std::io::Cursor::new(b"123 456\n".to_vec());
+        assert_eq!(read_totp_code(&mut typed).unwrap(), "123456");
+        for bad in [&b""[..], b"12345\n", b"abcdef\n", b"1234567\n"] {
+            assert!(read_totp_code(&mut std::io::Cursor::new(bad.to_vec())).is_err());
+        }
     }
 
     /// `set-password` sends only the public key derived from the password

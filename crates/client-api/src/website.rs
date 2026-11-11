@@ -204,6 +204,11 @@ pub struct AccountView {
     /// (`GetAccount`); `None` otherwise, and from older backends.
     #[serde(default)]
     pub suspension: Option<AccountSuspensionView>,
+    /// The account's two-factor codes, while they are on (`GetAccount`);
+    /// `None` otherwise, in the answers of activation and of a move to
+    /// another account key, and from older backends.
+    #[serde(default)]
+    pub totp: Option<TotpView>,
 }
 
 /// Why the operator suspended an account: the facts and the rule they
@@ -241,6 +246,11 @@ pub struct AccountSessionView {
     /// otherwise, and from older backends.
     #[serde(default)]
     pub suspension: Option<AccountSuspensionView>,
+    /// Whether the account has two-factor codes on, so that a code can make
+    /// a website session's login fresh (`ConfirmSessionCode`). Absent from
+    /// older backends.
+    #[serde(default)]
+    pub totp_enabled: bool,
 }
 
 /// A website session of the account.
@@ -623,6 +633,59 @@ pub struct PasswordLoginRequest {
     pub challenge: String,
     /// The Ed25519 signature, 64 bytes in base64url without padding.
     pub signature: String,
+}
+
+/// The account's two-factor codes (`GetAccount`, `EnableTotp`): since
+/// when they are on. The secret never leaves the backend again.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct TotpView {
+    pub enabled_at: DateTime<Utc>,
+}
+
+/// Turns two-factor codes on, or moves them to a new secret (`EnableTotp`,
+/// signed with the account key): the secret the client made
+/// ([`crate::totp::SECRET_BYTES`] bytes in base32) and one current code of
+/// it, without which nothing changes.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct EnableTotpRequest {
+    pub secret: String,
+    /// Six digits.
+    pub code: String,
+}
+
+/// What turning two-factor codes off did (`DisableTotp`).
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct TotpDisabled {
+    /// Whether codes were on and are off now; false when they were off.
+    pub disabled: bool,
+}
+
+/// Completes a website login of an account with two-factor codes
+/// (`CodeLogin`, public): the challenge a password or GitHub login was
+/// answered with (401 `code_required`, [`ErrorResponse::code_challenge`]),
+/// and a current code.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CodeLoginRequest {
+    pub challenge: String,
+    /// Six digits.
+    pub code: String,
+}
+
+/// Makes the website session's login fresh with a current code
+/// (`ConfirmSessionCode`), for the changes that need a recent login.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct SessionCodeRequest {
+    /// Six digits.
+    pub code: String,
+}
+
+/// Until when the session's login is fresh (`ConfirmSessionCode`).
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct SessionCodeView {
+    pub fresh_until: DateTime<Utc>,
 }
 
 /// What a logout or a revocation of every website session ended.
@@ -7798,6 +7861,11 @@ pub struct ErrorResponse {
     /// `restore_offer_expired`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub job_id: Option<Uuid>,
+    /// The second step of a website login, for 401 `code_required`: the
+    /// password or GitHub login was right, and the account has two-factor
+    /// codes; `CodeLogin` completes it with a code, within 5 minutes.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub code_challenge: Option<String>,
 }
 
 /// A component's state on the public status page, from the platform's own

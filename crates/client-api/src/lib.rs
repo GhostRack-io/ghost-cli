@@ -7,5 +7,6 @@ pub mod http_proxy;
 pub mod hypervisor;
 pub mod release;
 pub mod support_window;
+pub mod totp;
 pub mod website;
 pub mod website_password;

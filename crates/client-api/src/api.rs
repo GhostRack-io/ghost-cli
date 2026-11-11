@@ -6,12 +6,12 @@ use crate::website::{
     AddSupportTicketMessageRequest, AgentUpdateAttemptRequest, AgentUpdateSequenceView,
     ApproveAgentUpdateRequest, AuthorizeBackupRestoreRequest, BackupDownloadView,
     BackupInstanceView, BackupPricingView, BackupScheduleView, BackupView, BrowserOperationInput,
-    BrowserOperationView, CloudIpPoolView, CompleteOperationIntentRequest,
+    BrowserOperationView, CloudIpPoolView, CodeLoginRequest, CompleteOperationIntentRequest,
     CompleteTrialClaimRequest, CompletedTrialClaimView, ContainerLogView, CreateBackupRequest,
     CreateCloudIpPoolRequest, CreateHostEnrollmentTokenRequest, CreateInstanceRequest,
     CreateProviderPayoutRequest, CreateSupportTicketRequest, DeclareHostEmergencyRequest,
-    DownloadBackupRequest, GatewayTrafficView, GithubLoginRequest, GithubLoginStart,
-    GithubUnlinked, HandOverCloudIpPoolRequest, HistoryPage, HostAgentUpdateView,
+    DownloadBackupRequest, EnableTotpRequest, GatewayTrafficView, GithubLoginRequest,
+    GithubLoginStart, GithubUnlinked, HandOverCloudIpPoolRequest, HistoryPage, HostAgentUpdateView,
     HostEnrollmentToken, HostNetworkTestsView, HostPricingView, HostPrivacyView, ImageView,
     InstanceConsoleLogView, InstanceConsoleSessionsView, InstanceHardwareView,
     InstanceLocationView, InstanceProviderTerminationView, InstanceProviderView,
@@ -25,15 +25,16 @@ use crate::website::{
     RedeemLoginGrantResponse, RedeployInstanceRequest, ReinstallInstanceRequest,
     ReleaseChannelsView, RemoveAccountSshKeyRequest, RenameInstanceRequest,
     RequestProviderDisplayNameRequest, RestoreBackupRequest, RotateGatewayKeysRequest,
-    ScheduleHostRetirementRequest, ScheduleInstanceRetirementRequest, SessionRevocationView,
-    SetAgentUpdatePolicyRequest, SetBackupScheduleRequest, SetHostPrivateRequest,
-    SetHostRentalPauseRequest, SetNotificationReadRequest, SetPortForwardsRequest,
-    SetPowerStateRequest, SetProtectedBalanceRequest, SetProviderIncidentStateRequest,
-    SetProviderPayoutAddressRequest, SetSupportTicketStateRequest, SetTagRedundantRequest,
-    SetWebsitePasswordRequest, StartAgentUpdateSequenceRequest, SupportTicketSummaryView,
-    SupportTicketView, TagInstanceRequest, TrialClaimStatusView, TrialClaimView,
-    UpdateHostPricingRequest, UpdateInstanceRequest, UpgradeInstanceRequest, UserNotificationView,
-    WebsitePasswordRemoved, WebsitePasswordView, WriteProviderReviewRequest,
+    ScheduleHostRetirementRequest, ScheduleInstanceRetirementRequest, SessionCodeRequest,
+    SessionCodeView, SessionRevocationView, SetAgentUpdatePolicyRequest, SetBackupScheduleRequest,
+    SetHostPrivateRequest, SetHostRentalPauseRequest, SetNotificationReadRequest,
+    SetPortForwardsRequest, SetPowerStateRequest, SetProtectedBalanceRequest,
+    SetProviderIncidentStateRequest, SetProviderPayoutAddressRequest, SetSupportTicketStateRequest,
+    SetTagRedundantRequest, SetWebsitePasswordRequest, StartAgentUpdateSequenceRequest,
+    SupportTicketSummaryView, SupportTicketView, TagInstanceRequest, TotpDisabled, TotpView,
+    TrialClaimStatusView, TrialClaimView, UpdateHostPricingRequest, UpdateInstanceRequest,
+    UpgradeInstanceRequest, UserNotificationView, WebsitePasswordRemoved, WebsitePasswordView,
+    WriteProviderReviewRequest,
 };
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::Value;
@@ -348,6 +349,22 @@ endpoints! {
     /// Turns password login off, ending the sessions the password began.
     RemoveWebsitePassword =
         wallet POST "/api/mut/v1/account/website-password/remove" => WebsitePasswordRemoved;
+    /// Completes a website login of an account with two-factor codes: the
+    /// challenge of a password or GitHub login's 401 `code_required` and a
+    /// current code. Every refusal of the code reads the same.
+    CodeLogin = public POST "/api/mut/v1/account/login/code"
+        (CodeLoginRequest) => RedeemLoginGrantResponse;
+    /// Turns two-factor codes on with a secret the client made and one
+    /// current code of it. Only the account key does, which is also the
+    /// recovery: a lost phone is a `DisableTotp`.
+    EnableTotp = wallet POST "/api/mut/v1/account/totp" (EnableTotpRequest) => TotpView;
+    /// Turns two-factor codes off; the sessions the codes made fresh are no
+    /// longer fresh.
+    DisableTotp = wallet POST "/api/mut/v1/account/totp/disable" => TotpDisabled;
+    /// Makes the website session's login fresh with a current code, for the
+    /// changes that need a recent login; never an operator's.
+    ConfirmSessionCode = user POST "/api/mut/v1/account/session/code"
+        (SessionCodeRequest) => SessionCodeView;
     Logout = user POST "/api/mut/v1/account/logout" => SessionRevocationView;
     RevokeSessions = user POST "/api/mut/v1/account/sessions/revoke" => SessionRevocationView;
     /// The account's website sessions that still work, newest first.
