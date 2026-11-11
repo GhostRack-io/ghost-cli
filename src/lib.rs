@@ -10537,6 +10537,17 @@ fn offering_quote(
         pretty::dollars(offering.instance_creation_charge_microusd),
         "creation fee".to_owned(),
     ));
+    // A Dedicated IP's or a gateway of its own's setup fee, once.
+    if let Some(setup) = network
+        .map(|network| network.setup_fee_microusd)
+        .filter(|setup| *setup > 0 && !cloud)
+    {
+        rows.push(QuoteRow::Money(
+            "",
+            pretty::dollars(setup),
+            "setup fee".to_owned(),
+        ));
+    }
     if let Some(restore) = restore {
         rows.push(QuoteRow::Money(
             "",
@@ -10761,23 +10772,52 @@ enum ChangeCharge {
     /// Nothing: the gateway is being retired and the owner was asked to
     /// move the instance (`gateway_change_free`).
     Free,
-    /// The offering's instance creation charge, in micro-dollars.
-    Amount(u64),
+    /// The offering's instance creation charge, and the setup fee of a
+    /// change onto shared bandwidth or high bandwidth (0 for none), in
+    /// micro-dollars.
+    Amount { creation: u64, setup: u64 },
     /// Not read: an older backend, or a read that failed.
     Unknown,
 }
 
 impl ChangeCharge {
-    /// The charge of a change of `instance`'s gateway under `offering`.
-    fn of(instance: &InstanceView, offering: &OfferingView) -> Self {
+    /// The charge of a change of `instance`'s gateway to `tier` (its own
+    /// when none) under `offering`.
+    fn of(instance: &InstanceView, offering: &OfferingView, tier: Option<GatewayTier>) -> Self {
         if instance.gateway_change_free {
             Self::Free
         } else if offering.instance_creation_charge_microusd > 0 {
-            Self::Amount(offering.instance_creation_charge_microusd)
+            Self::Amount {
+                creation: offering.instance_creation_charge_microusd,
+                setup: change_setup_fee(offering, tier.or(instance.gateway_tier)),
+            }
         } else {
             Self::Unknown
         }
     }
+}
+
+/// The setup fee a change onto `tier` pays once, as the offering lists it:
+/// one fee for shared bandwidth and high bandwidth, which a tier the
+/// offering lists full does not carry, so the other's says it; 0 for a
+/// shared IP, while it is off, and from an older backend.
+fn change_setup_fee(offering: &OfferingView, tier: Option<GatewayTier>) -> u64 {
+    let dedicated = |tier: GatewayTier| {
+        matches!(
+            tier,
+            GatewayTier::SharedBandwidth | GatewayTier::HighBandwidth
+        )
+    };
+    if !tier.is_some_and(dedicated) {
+        return 0;
+    }
+    offering
+        .network_prices
+        .iter()
+        .filter(|price| price.gateway_tier.is_some_and(dedicated))
+        .map(|price| price.setup_fee_microusd)
+        .max()
+        .unwrap_or(0)
 }
 
 /// What a change of the gateway costs and does, as the error of the
@@ -10786,8 +10826,15 @@ impl ChangeCharge {
 fn gateway_change_warning(charge: ChangeCharge) -> String {
     let charge = match charge {
         ChangeCharge::Free => "nothing: the gateway is being retired".to_owned(),
-        ChangeCharge::Amount(charge) => {
-            format!("{} (the instance creation charge)", pretty::dollars(charge))
+        ChangeCharge::Amount { creation, setup } => {
+            let mut charge = format!(
+                "{} (the instance creation charge)",
+                pretty::dollars(creation)
+            );
+            if setup > 0 {
+                let _ = write!(charge, " and {} (the setup fee)", pretty::dollars(setup));
+            }
+            charge
         }
         ChangeCharge::Unknown => "the instance creation charge".to_owned(),
     };
@@ -10961,7 +11008,7 @@ fn gateway_change_quote(
             "prices not known (older backend)".to_owned(),
         ));
     }
-    rows.push(charge_row(instance, offering));
+    rows.extend(charge_rows(instance, offering, Some(target_tier)));
     let mut lines = vec![format!(
         "Changing the gateway of {} ({}) to {} in {place}:",
         escape_control(instance.display_name()),
@@ -10977,23 +11024,38 @@ fn gateway_change_quote(
     Ok(lines)
 }
 
-/// The quote's row of what a change of `instance`'s gateway is charged
-/// under `offering`.
-fn charge_row(instance: &InstanceView, offering: &OfferingView) -> QuoteRow {
-    match ChangeCharge::of(instance, offering) {
-        ChangeCharge::Free => QuoteRow::Fact(
+/// The quote's rows of what a change of `instance`'s gateway to `tier` is
+/// charged under `offering`: the instance creation charge, and the setup
+/// fee of a change onto shared bandwidth or high bandwidth.
+fn charge_rows(
+    instance: &InstanceView,
+    offering: &OfferingView,
+    tier: Option<GatewayTier>,
+) -> Vec<QuoteRow> {
+    match ChangeCharge::of(instance, offering, tier) {
+        ChangeCharge::Free => vec![QuoteRow::Fact(
             "Charge",
             "none: the gateway is being retired and you were asked to move the instance".to_owned(),
-        ),
-        ChangeCharge::Amount(charge) => QuoteRow::Money(
-            "Charge",
-            pretty::dollars(charge),
-            "per change, the instance creation charge".to_owned(),
-        ),
-        ChangeCharge::Unknown => QuoteRow::Fact(
+        )],
+        ChangeCharge::Amount { creation, setup } => {
+            let mut rows = vec![QuoteRow::Money(
+                "Charge",
+                pretty::dollars(creation),
+                "per change, the instance creation charge".to_owned(),
+            )];
+            if setup > 0 {
+                rows.push(QuoteRow::Money(
+                    "",
+                    pretty::dollars(setup),
+                    "setup fee".to_owned(),
+                ));
+            }
+            rows
+        }
+        ChangeCharge::Unknown => vec![QuoteRow::Fact(
             "Charge",
             "the instance creation charge (amount not known: older backend)".to_owned(),
-        ),
+        )],
     }
 }
 
@@ -11081,7 +11143,11 @@ fn high_bandwidth_quote(
             "prices not listed by the offering".to_owned(),
         )),
     }
-    rows.push(charge_row(instance, offering));
+    rows.extend(charge_rows(
+        instance,
+        offering,
+        Some(GatewayTier::HighBandwidth),
+    ));
     let mut lines = vec![format!(
         "Changing the gateway of {} ({}) to high bandwidth, a gateway of its own {place}:",
         escape_control(instance.display_name()),
@@ -11148,7 +11214,7 @@ async fn quote_gateway_change(
                     Err(text) => notice(&text),
                 }
             }
-            Ok(ChangeCharge::of(&instance, &offering))
+            Ok(ChangeCharge::of(&instance, &offering, tier))
         }
         Err(error) => {
             if print {
@@ -18409,6 +18475,7 @@ mod tests {
                 gateway_base_charge_microusd_per_month: 0,
                 combined_microusd_per_tib: 240_000,
                 bandwidth: None,
+                setup_fee_microusd: 0,
             });
         assert_eq!(
             quote(&addressed, Some(GatewayTier::SharedIp), None),
@@ -18478,6 +18545,7 @@ mod tests {
             bandwidth: Some(ghostrack_client_api::website::BandwidthView {
                 limit_mbit: Some(20),
             }),
+            setup_fee_microusd: 0,
         }];
         let quote = offering_quote(&offering, Some(GatewayTier::SharedIp), Some(6_200), false);
         assert_eq!(
@@ -24041,6 +24109,120 @@ mod tests {
             slice.contains("to shared IP in New York (us-new-jersey):")
                 && !slice.contains("no free slice now"),
             "{slice}"
+        );
+    }
+
+    /// The setup fee of a Dedicated IP or a gateway of its own (item 240):
+    /// a one-time row of the rent quote after the creation fee, and of a
+    /// change's quote onto either tier after its charge, which the
+    /// warning without `--yes` names too; none onto a shared IP, for a
+    /// change the drain asked for, or while the backend lists none.
+    #[test]
+    fn the_quotes_name_the_setup_fee() {
+        let mut home = listed_offering(HostMode::HomeGateway);
+        for price in &mut home.network_prices {
+            if matches!(
+                price.gateway_tier,
+                Some(GatewayTier::SharedBandwidth | GatewayTier::HighBandwidth)
+            ) {
+                price.setup_fee_microusd = 1_000_000;
+            }
+        }
+        let rent = offering_quote(&home, Some(GatewayTier::HighBandwidth), None, false).join("\n");
+        assert!(
+            rent.contains("  Now         $0.13  creation fee\n              $1.00  setup fee\n"),
+            "{rent}"
+        );
+        let without = offering_quote(
+            &listed_offering(HostMode::HomeGateway),
+            Some(GatewayTier::HighBandwidth),
+            None,
+            false,
+        )
+        .join("\n");
+        assert!(!without.contains("setup fee"), "{without}");
+
+        let mut offering = quoted_offering();
+        offering.network_prices = serde_json::from_value(json!([
+            {"gateway_tier": "shared_ip", "gateway_base_charge_microusd_per_month": 300_000,
+             "combined_microusd_per_tib": 9_000_000},
+            {"gateway_tier": "shared_bandwidth", "gateway_base_charge_microusd_per_month": 500_000,
+             "combined_microusd_per_tib": 10_000_000, "setup_fee_microusd": 1_000_000},
+            {"gateway_tier": "high_bandwidth", "gateway_base_charge_microusd_per_month": 6_000_000,
+             "combined_microusd_per_tib": 8_000_000, "setup_fee_microusd": 1_000_000},
+        ]))
+        .unwrap();
+        let moved = gateway_change_quote(
+            &quoted_instance(true),
+            &offering,
+            None,
+            Some("de-fra"),
+            false,
+        )
+        .unwrap();
+        assert!(
+            moved.contains(
+                &"  Charge               $0.80  per change, the instance creation charge"
+                    .to_owned()
+            ) && moved.contains(&"                       $1.00  setup fee".to_owned()),
+            "{moved:#?}"
+        );
+        let high = gateway_change_quote(
+            &quoted_instance(true),
+            &offering,
+            Some(GatewayTier::HighBandwidth),
+            None,
+            false,
+        )
+        .unwrap()
+        .join("\n");
+        assert!(high.contains("$1.00  setup fee"), "{high}");
+        let ip = gateway_change_quote(
+            &quoted_instance(true),
+            &offering,
+            Some(GatewayTier::SharedIp),
+            Some("de-fra"),
+            false,
+        )
+        .unwrap()
+        .join("\n");
+        assert!(!ip.contains("setup fee"), "{ip}");
+        let mut asked = quoted_instance(true);
+        asked.gateway_change_free = true;
+        let free = gateway_change_quote(&asked, &offering, None, Some("de-fra"), false)
+            .unwrap()
+            .join("\n");
+        assert!(!free.contains("setup fee"), "{free}");
+        // The warning without `--yes` names it beside the creation charge.
+        let charge = ChangeCharge::of(
+            &quoted_instance(true),
+            &offering,
+            Some(GatewayTier::HighBandwidth),
+        );
+        assert_eq!(
+            charge,
+            ChangeCharge::Amount {
+                creation: 800_000,
+                setup: 1_000_000
+            }
+        );
+        assert!(
+            gateway_change_warning(charge).starts_with(
+                "the change costs $0.80 (the instance creation charge) and $1.00 (the setup fee);"
+            ),
+            "{}",
+            gateway_change_warning(charge)
+        );
+        assert_eq!(
+            ChangeCharge::of(
+                &quoted_instance(true),
+                &offering,
+                Some(GatewayTier::SharedIp)
+            ),
+            ChangeCharge::Amount {
+                creation: 800_000,
+                setup: 0
+            }
         );
     }
 

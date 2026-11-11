@@ -2729,6 +2729,12 @@ pub struct NetworkPriceView {
     /// choice. Absent from older backends.
     #[serde(default)]
     pub bandwidth: Option<BandwidthView>,
+    /// What a rental or a gateway change onto this choice pays once, from
+    /// the funded balance, beside the creation charge: the gateway setup
+    /// fee of a shared bandwidth or high bandwidth lease, 0 for the others
+    /// and while it is off. Absent (0) from older backends.
+    #[serde(default)]
+    pub setup_fee_microusd: u64,
 }
 
 /// An instance's bandwidth limit, each direction.
