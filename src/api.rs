@@ -233,7 +233,7 @@ impl ApiClient {
         let mut delays = retry_delays.iter();
         loop {
             let result = self
-                .send::<(), T>(method(E::METHOD), &path, signed, None, None)
+                .send::<(), T>(method(E::METHOD), &path, signed, None, None, false)
                 .await
                 .map(|answered| answered.value);
             match (result, delays.next()) {
@@ -282,6 +282,31 @@ impl ApiClient {
             !E::ACCESS.is_public(),
             E::HAS_BODY.then_some(body),
             idempotency_key,
+            false,
+        )
+        .await
+        .map(|answered| answered.value)
+    }
+
+    /// [`Self::write_as`] with `Prefer: respond-async`: a change that waits
+    /// the account's timelock (a key move, a payout address change) is
+    /// answered 202 with the pending action, which a ghost of before, which
+    /// does not send it, reads as a 409 `timelock_pending` instead.
+    /// # Errors
+    /// Returns an error if credentials, transport, or the backend reject this request.
+    pub async fn write_async_as<E: Endpoint, T: DeserializeOwned>(
+        &self,
+        endpoint: &E,
+        body: &E::Request,
+        idempotency_key: Option<&str>,
+    ) -> Result<T> {
+        self.send(
+            method(E::METHOD),
+            &endpoint.path(),
+            !E::ACCESS.is_public(),
+            E::HAS_BODY.then_some(body),
+            idempotency_key,
+            true,
         )
         .await
         .map(|answered| answered.value)
@@ -323,6 +348,7 @@ impl ApiClient {
             !E::ACCESS.is_public(),
             E::HAS_BODY.then_some(body),
             Some(&key.key),
+            false,
         )
         .await
         .map_err(|error| {
@@ -348,6 +374,7 @@ impl ApiClient {
         authenticated: bool,
         body: Option<&B>,
         idempotency_key: Option<&str>,
+        prefer_async: bool,
     ) -> Result<Answered<T>> {
         let url = self
             .base_url
@@ -388,6 +415,9 @@ impl ApiClient {
         }
         if let Some(key) = idempotency_key {
             request = request.header("Idempotency-Key", key);
+        }
+        if prefer_async {
+            request = request.header("Prefer", "respond-async");
         }
         if body.is_some() {
             request = request

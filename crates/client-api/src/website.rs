@@ -706,6 +706,74 @@ pub struct MigrateAccountSeedRequest {
     pub new_key_signature: String,
 }
 
+/// The kind of an action that waits the account's timelock (item 202).
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PendingAccountActionKind {
+    /// Closing the account, with its refund address; the operator closes
+    /// it once the wait has passed.
+    AccountClose,
+    /// The move to a new account key.
+    SeedMigration,
+    /// A change of the provider's payout address.
+    PayoutAddress,
+    #[serde(other)]
+    Unknown,
+}
+
+/// Where a pending account action stands.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum PendingAccountActionState {
+    /// Waiting for `effective_at`; any login of the account may cancel it.
+    Pending,
+    Cancelled,
+    Done,
+    /// A check at its time refused it (`failure` says why).
+    Failed,
+    #[serde(other)]
+    Unknown,
+}
+
+/// An action of the account that waits the timelock before it takes
+/// effect (item 202): `ListPendingAccountActions`, and the answer to a
+/// request that starts one.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct PendingAccountActionView {
+    pub action_id: Uuid,
+    pub kind: PendingAccountActionKind,
+    pub state: PendingAccountActionState,
+    pub requested_at: DateTime<Utc>,
+    /// When it takes effect.
+    pub effective_at: DateTime<Utc>,
+    /// Who asked: `key` (a request signed with the account key) or
+    /// `session:<id>` (a website session).
+    pub requested_by: String,
+    #[serde(default)]
+    pub finished_at: Option<DateTime<Utc>>,
+    /// Who cancelled it: `key`, `session:<id>`, or `replaced` by a newer
+    /// request of the kind.
+    #[serde(default)]
+    pub cancelled_by: Option<String>,
+    #[serde(default)]
+    pub failure: Option<String>,
+    /// What it changes to: the refund address of a close, the new payout
+    /// address, the new account key's ID.
+    #[serde(default)]
+    pub target: Option<String>,
+}
+
+/// The holder's request to close the account (item 202): it waits the
+/// timelock, then the operator refunds the balance to `refund_address` and
+/// closes the account.
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct RequestAccountCloseRequest {
+    /// The MMX address the refund is paid to; needed when there is one.
+    #[serde(default)]
+    pub refund_address: Option<String>,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct AccountAuthKeyView {
     pub key_id: String,

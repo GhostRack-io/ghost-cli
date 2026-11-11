@@ -77,6 +77,8 @@ pub const CLIENT_DECODED_ENUMS: &[&str] = &[
     "PowerState",
     "StorageBackend",
     "RestartPolicy",
+    "PendingAccountActionKind",
+    "PendingAccountActionState",
 ];
 pub const ENUMS_WITHOUT_FALLBACK: &[(&str, &str)] = &[];
 /// An enum of [`CLIENT_DECODED_ENUMS`]: its `Unknown` is a variant this
@@ -160,7 +162,9 @@ fallback!(
     crate::hypervisor::ImageCacheState,
     crate::hypervisor::PowerState,
     crate::hypervisor::StorageBackend,
-    crate::hypervisor::RestartPolicy
+    crate::hypervisor::RestartPolicy,
+    crate::website::PendingAccountActionKind,
+    crate::website::PendingAccountActionState
 );
 
 /// Read a field of a received type as `T`, refusing a variant this build

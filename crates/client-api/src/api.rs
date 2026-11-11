@@ -18,23 +18,23 @@ use crate::website::{
     InstanceSystemView, InstanceTagView, InstanceUpgradeView, InstanceView, JobAccepted, JobPage,
     JobView, LocationView, LoginGrant, MigrateAccountSeedRequest, NotificationsReadView,
     OfferingView, PasswordChallenge, PasswordChallengeRequest, PasswordLoginRequest,
-    PrivateRenterView, ProtectedBalanceView, ProviderAgentsView, ProviderBalanceView,
-    ProviderDisplayNameView, ProviderHostDetailView, ProviderHostView, ProviderIncidentView,
-    ProviderOutageDetailView, ProviderOutagePage, ProviderPayoutAddressView, ProviderPayoutView,
-    ProviderReliabilityView, ProviderRentalView, ProviderUptimeView, RedeemLoginGrantRequest,
-    RedeemLoginGrantResponse, RedeployInstanceRequest, ReinstallInstanceRequest,
-    ReleaseChannelsView, RemoveAccountSshKeyRequest, RenameInstanceRequest,
-    RequestProviderDisplayNameRequest, RestoreBackupRequest, RotateGatewayKeysRequest,
-    ScheduleHostRetirementRequest, ScheduleInstanceRetirementRequest, SessionCodeRequest,
-    SessionCodeView, SessionRevocationView, SetAgentUpdatePolicyRequest, SetBackupScheduleRequest,
-    SetHostPrivateRequest, SetHostRentalPauseRequest, SetNotificationReadRequest,
-    SetPortForwardsRequest, SetPowerStateRequest, SetProtectedBalanceRequest,
-    SetProviderIncidentStateRequest, SetProviderPayoutAddressRequest, SetSupportTicketStateRequest,
-    SetTagRedundantRequest, SetWebsitePasswordRequest, StartAgentUpdateSequenceRequest,
-    SupportTicketSummaryView, SupportTicketView, TagInstanceRequest, TotpDisabled, TotpView,
-    TrialClaimStatusView, TrialClaimView, UpdateHostPricingRequest, UpdateInstanceRequest,
-    UpgradeInstanceRequest, UserNotificationView, WebsitePasswordRemoved, WebsitePasswordView,
-    WriteProviderReviewRequest,
+    PendingAccountActionView, PrivateRenterView, ProtectedBalanceView, ProviderAgentsView,
+    ProviderBalanceView, ProviderDisplayNameView, ProviderHostDetailView, ProviderHostView,
+    ProviderIncidentView, ProviderOutageDetailView, ProviderOutagePage, ProviderPayoutAddressView,
+    ProviderPayoutView, ProviderReliabilityView, ProviderRentalView, ProviderUptimeView,
+    RedeemLoginGrantRequest, RedeemLoginGrantResponse, RedeployInstanceRequest,
+    ReinstallInstanceRequest, ReleaseChannelsView, RemoveAccountSshKeyRequest,
+    RenameInstanceRequest, RequestAccountCloseRequest, RequestProviderDisplayNameRequest,
+    RestoreBackupRequest, RotateGatewayKeysRequest, ScheduleHostRetirementRequest,
+    ScheduleInstanceRetirementRequest, SessionCodeRequest, SessionCodeView, SessionRevocationView,
+    SetAgentUpdatePolicyRequest, SetBackupScheduleRequest, SetHostPrivateRequest,
+    SetHostRentalPauseRequest, SetNotificationReadRequest, SetPortForwardsRequest,
+    SetPowerStateRequest, SetProtectedBalanceRequest, SetProviderIncidentStateRequest,
+    SetProviderPayoutAddressRequest, SetSupportTicketStateRequest, SetTagRedundantRequest,
+    SetWebsitePasswordRequest, StartAgentUpdateSequenceRequest, SupportTicketSummaryView,
+    SupportTicketView, TagInstanceRequest, TotpDisabled, TotpView, TrialClaimStatusView,
+    TrialClaimView, UpdateHostPricingRequest, UpdateInstanceRequest, UpgradeInstanceRequest,
+    UserNotificationView, WebsitePasswordRemoved, WebsitePasswordView, WriteProviderReviewRequest,
 };
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::Value;
@@ -373,8 +373,28 @@ endpoints! {
     /// holds.
     RevokeSession { session_id: Uuid } =
         user POST "/api/mut/v1/account/sessions/{session_id}/revoke" => SessionRevocationView;
+    /// Moves the account to a new account key once the timelock has passed
+    /// (item 202). A request that sends `Prefer: respond-async` is answered
+    /// 202 with the pending action (a `PendingAccountActionView`); one that
+    /// does not, as a ghost of before, 409 `timelock_pending`, whose
+    /// message says when it takes effect and how to cancel it.
     MigrateAccountSeed =
         wallet POST "/api/mut/v1/account/migrate-seed" (MigrateAccountSeedRequest) => AccountView;
+    /// The account's actions that wait the timelock (item 202): every
+    /// pending one, then the latest others, newest first.
+    ListPendingAccountActions =
+        user GET "/v1/account/pending-actions" => Vec<PendingAccountActionView>;
+    /// Cancels a pending action. Any login of the account may, the key or a
+    /// website session of any age.
+    CancelPendingAccountAction { action_id: Uuid } =
+        user POST "/api/mut/v1/account/pending-actions/{action_id}/cancel"
+        => PendingAccountActionView;
+    /// Asks to close the account, with the address its refund is paid to:
+    /// a pending action the operator carries out once the timelock has
+    /// passed. Signed with the account key, or from a website session of a
+    /// recent login.
+    RequestAccountClose = user POST "/api/mut/v1/account/close"
+        (RequestAccountCloseRequest) => PendingAccountActionView;
     /// A single-use token that enrolls one host, shown once. It records the
     /// key that signed the request, or for a website session the key whose
     /// login link began it.
@@ -593,7 +613,10 @@ endpoints! {
     CreatePayout = user POST "/api/mut/v1/provider/payouts" (CreateProviderPayoutRequest)
         => ProviderPayoutView;
     /// It decides where earnings leave the platform; a session can only
-    /// request payouts to it.
+    /// request payouts to it. The first address takes effect at once; a
+    /// change waits the timelock (item 202), answered as
+    /// `MigrateAccountSeed`'s: 202 with the pending action for a request
+    /// that sends `Prefer: respond-async`, 409 `timelock_pending` otherwise.
     SetPayoutAddress = wallet PUT "/api/mut/v1/provider/payout-address"
         (SetProviderPayoutAddressRequest) => ProviderPayoutAddressView;
     ListProviderHosts = user GET "/v1/provider/hosts" => Vec<ProviderHostView>;

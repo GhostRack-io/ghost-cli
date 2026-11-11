@@ -588,7 +588,21 @@ enum AccountCommand {
         #[command(subcommand)]
         command: SshKeyCommand,
     },
+    /// The account's changes that wait the timelock: closing it, a new
+    /// account key, a new payout address. Any login can cancel one.
+    Pending {
+        #[command(subcommand)]
+        command: PendingCommand,
+    },
+    /// Ask to close the account. It waits 7 days, then the operator refunds
+    /// the balance to the refund address and closes it.
+    Close {
+        /// MMX address the refund is paid to; needed when there is one.
+        #[arg(long)]
+        refund_address: Option<String>,
+    },
     /// Move the account to an independently generated replacement account key.
+    /// The move takes effect after 7 days; any login can cancel it meanwhile.
     MigrateSeed {
         /// The replacement account key, made with `ghost key generate --output FILE`.
         #[arg(long)]
@@ -629,6 +643,17 @@ enum TotpCommand {
         /// Turn them off; without it the command only says what it would do.
         #[arg(long)]
         yes: bool,
+    },
+}
+
+#[derive(Subcommand)]
+enum PendingCommand {
+    /// The pending changes, then the latest others, newest first.
+    List,
+    /// Cancel a pending change.
+    Cancel {
+        /// Change ID, as `ghost account pending list` shows it.
+        action_id: Uuid,
     },
 }
 
@@ -727,8 +752,9 @@ enum ProviderCommand {
     /// way; whether the conversion waits for an exchange rate; and the
     /// payout address. Released earnings convert to MMX once a day.
     Balance,
-    /// Set the MMX address every payout goes to. Payouts not yet signed go
-    /// there too. Only this signed command can set it, not the website.
+    /// Set the MMX address every payout goes to. The first address takes
+    /// effect at once; a change takes effect after 7 days, and any login can
+    /// cancel it meanwhile. Payouts not yet signed then go there too.
     SetPayoutAddress {
         /// MMX address that receives payouts.
         address: String,
@@ -3264,7 +3290,7 @@ const DEPOSIT_RETURN_NOTE: &str = "A deposit without its memo is sent back less 
 /// sent, and whether older output precedes each part.
 pub async fn closing_notes(cli: &Cli, output: &Value) -> Vec<String> {
     if cli.output_format() == OutputFormat::Readable && hint_keys(&cli.command, output).is_some() {
-        return result_hint_notes(&cli.command);
+        return result_hint_notes(&cli.command, output);
     }
     if let Command::Account {
         command: AccountCommand::ActivationTerms,
@@ -5935,10 +5961,21 @@ fn hint_keys(command: &Command, output: &Value) -> Option<&'static [&'static str
     match command {
         Command::Key {
             command: KeyCommand::Generate { .. },
-        }
-        | Command::Account {
+        } => Some(&["warning"]),
+        // A pending move or change says when in its note; a move by a
+        // backend of before warns.
+        Command::Account {
+            command: AccountCommand::MigrateSeed { .. },
+        } if output.get("note").is_some() => Some(&["note"]),
+        Command::Account {
             command: AccountCommand::MigrateSeed { .. },
         } => Some(&["warning"]),
+        Command::Account {
+            command: AccountCommand::Close { .. },
+        }
+        | Command::Provider {
+            command: ProviderCommand::SetPayoutAddress { .. },
+        } if output.get("note").is_some() => Some(&["note"]),
         Command::Account {
             command: AccountCommand::SetPassword { .. },
         } => Some(&["note"]),
@@ -5956,8 +5993,21 @@ fn hint_keys(command: &Command, output: &Value) -> Option<&'static [&'static str
 }
 
 /// The hints of a result for reading, as lines for standard error: a
-/// warning or note block after the table.
-fn result_hint_notes(command: &Command) -> Vec<String> {
+/// warning or note block after the table. A change that waits the
+/// account's timelock says when, and how to cancel it, in its own note.
+fn result_hint_notes(command: &Command, output: &Value) -> Vec<String> {
+    if let Some(note) = output.get("note").and_then(Value::as_str)
+        && matches!(
+            command,
+            Command::Account {
+                command: AccountCommand::MigrateSeed { .. } | AccountCommand::Close { .. },
+            } | Command::Provider {
+                command: ProviderCommand::SetPayoutAddress { .. },
+            }
+        )
+    {
+        return vec![format!("note: {note}")];
+    }
     let lines: &[&str] = match command {
         Command::Key {
             command: KeyCommand::Generate { .. },
@@ -6722,8 +6772,10 @@ async fn execute_provider(api: &ApiClient, command: &ProviderCommand) -> Result<
         ProviderCommand::SetPayoutAddress { address } => {
             // Setting the same address again changes nothing, so a retry
             // needs no idempotency key.
-            let address: ProviderPayoutAddressView = api
-                .write(
+            // The first address takes effect at once; a change waits the
+            // timelock as a pending action.
+            let answer: Value = api
+                .write_async_as(
                     &SetPayoutAddress,
                     &SetProviderPayoutAddressRequest {
                         address: address.clone(),
@@ -6731,6 +6783,19 @@ async fn execute_provider(api: &ApiClient, command: &ProviderCommand) -> Result<
                     None,
                 )
                 .await?;
+            if answer.get("action_id").is_some() {
+                let pending: ghostrack_client_api::website::PendingAccountActionView =
+                    serde_json::from_value(answer)
+                        .context("decode the pending payout address change")?;
+                let id = pending.action_id;
+                let at = pending.effective_at.format("%Y-%m-%d %H:%M UTC");
+                return Ok(json!({
+                    "pending": pending,
+                    "note": format!("Payouts go to the new address from {at}; until then they go to the current one. Any login can cancel it: ghost account pending cancel {id}.")
+                }));
+            }
+            let address: ProviderPayoutAddressView =
+                serde_json::from_value(answer).context("decode the payout address")?;
             to_value(address)
         }
         ProviderCommand::Payouts => {
@@ -7721,17 +7786,71 @@ async fn execute_account(cli: &Cli, api: &ApiClient, command: &AccountCommand) -
                 new_recovery_public_key: summary.recovery_public_key,
                 new_key_signature: URL_SAFE_NO_PAD.encode(new_identity.sign(&canonical).to_bytes()),
             };
-            let account: AccountView = api
-                .write(
+            // A backend with the timelock answers the pending move; one of
+            // before moves the account at once.
+            let answer: Value = api
+                .write_async_as(
                     &MigrateAccountSeed,
                     &request,
                     Some(&*Uuid::now_v7().to_string()),
                 )
                 .await?;
+            if answer.get("action_id").is_some() {
+                let pending: ghostrack_client_api::website::PendingAccountActionView =
+                    serde_json::from_value(answer)
+                        .context("decode the pending move to the new account key")?;
+                let id = pending.action_id;
+                let at = pending.effective_at.format("%Y-%m-%d %H:%M UTC");
+                return Ok(json!({
+                    "pending": pending,
+                    "replacement_seed_file": new_seed_file,
+                    "note": format!("The move takes effect at {at}; until then the current account key stays in force. Any login can cancel it: ghost account pending cancel {id}. Once it takes effect, select the replacement with --seed-file or GHOST_SEED_FILE; retain the old account key while it protects any existing backups.")
+                }));
+            }
+            let account: AccountView =
+                serde_json::from_value(answer).context("decode the moved account")?;
             Ok(json!({
                 "account": account,
                 "replacement_seed_file": new_seed_file,
                 "warning": "The old account key is revoked for account authentication. Select the replacement with --seed-file or GHOST_SEED_FILE; retain the old account key while it protects any existing backups."
+            }))
+        }
+        AccountCommand::Pending { command } => match command {
+            PendingCommand::List => {
+                let actions: Vec<ghostrack_client_api::website::PendingAccountActionView> = api
+                    .read(&ghostrack_client_api::api::ListPendingAccountActions, "")
+                    .await?;
+                to_value(actions)
+            }
+            PendingCommand::Cancel { action_id } => {
+                let cancelled: ghostrack_client_api::website::PendingAccountActionView = api
+                    .write(
+                        &ghostrack_client_api::api::CancelPendingAccountAction {
+                            action_id: *action_id,
+                        },
+                        &(),
+                        None,
+                    )
+                    .await?;
+                to_value(cancelled)
+            }
+        },
+        AccountCommand::Close { refund_address } => {
+            let request = ghostrack_client_api::website::RequestAccountCloseRequest {
+                refund_address: refund_address.clone(),
+            };
+            let pending: ghostrack_client_api::website::PendingAccountActionView = api
+                .write(
+                    &ghostrack_client_api::api::RequestAccountClose,
+                    &request,
+                    None,
+                )
+                .await?;
+            let id = pending.action_id;
+            let at = pending.effective_at.format("%Y-%m-%d %H:%M UTC");
+            Ok(json!({
+                "pending": pending,
+                "note": format!("The operator closes the account after {at}. Any login can cancel it until then: ghost account pending cancel {id}.")
             }))
         }
         AccountCommand::GetHostEnrollmentToken { label } => {
@@ -15186,7 +15305,7 @@ mod tests {
         // The note is not a row of the table: it follows on standard error.
         assert!(!shown.contains("shown only this once"), "{shown}");
         assert_eq!(
-            result_hint_notes(&cli.command),
+            result_hint_notes(&cli.command, &output),
             [
                 "note: the password is shown only this once.",
                 "Keep it in a password manager."
@@ -20104,6 +20223,146 @@ mod tests {
         };
         assert!(heads[0].contains("provider=gh-examples"));
         assert!(signed(&heads[0]), "the offerings read is signed");
+    }
+
+    /// The changes that wait the account's timelock (item 202): `account
+    /// pending list` and `cancel`, `account close` with its refund address,
+    /// and `provider set-payout-address`, whose change is pending, sent with
+    /// `Prefer: respond-async` and noted with when it takes effect and how
+    /// to cancel it; a first address is set at once.
+    #[tokio::test]
+    async fn pending_changes_are_listed_cancelled_and_noted() {
+        let id = Uuid::now_v7();
+        let action = |kind: &str, state: &str, target: &str| {
+            json!({"action_id": id, "kind": kind, "state": state,
+                "requested_at": "2026-11-11T10:00:00Z", "effective_at": "2026-11-18T10:00:00Z",
+                "requested_by": "key", "target": target})
+        };
+        let parse = |arguments: &[&str]| Cli::try_parse_from(["ghost"].iter().chain(arguments));
+        assert!(parse(&["account", "pending", "list"]).is_ok());
+        assert!(parse(&["account", "pending", "cancel", &id.to_string()]).is_ok());
+        assert!(parse(&["account", "pending", "cancel", "x"]).is_err());
+        assert!(parse(&["account", "close", "--refund-address", "mmx1a"]).is_ok());
+        assert!(parse(&["account", "close"]).is_ok());
+        let (url, received, heads) = canned_server_recording_heads(vec![
+            (
+                200,
+                String::new(),
+                json!([action("payout_address", "pending", "mmx1new")]).to_string(),
+            ),
+            (
+                200,
+                String::new(),
+                action("payout_address", "cancelled", "mmx1new").to_string(),
+            ),
+            (
+                202,
+                String::new(),
+                action("account_close", "pending", "mmx1refund").to_string(),
+            ),
+            (
+                202,
+                String::new(),
+                action("payout_address", "pending", "mmx1new").to_string(),
+            ),
+            (
+                200,
+                String::new(),
+                json!({"address": "mmx1first", "updated_at": "2026-11-11T10:00:00Z"}).to_string(),
+            ),
+        ])
+        .await;
+        let identity = keys::authentication_identity(&[3_u8; 32]).unwrap();
+        let api = ApiClient::new(&url, Some(identity)).unwrap();
+        let cli = parse(&["account", "pending", "list"]).unwrap();
+        let listed = execute_account(
+            &cli,
+            &api,
+            &AccountCommand::Pending {
+                command: PendingCommand::List,
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(listed[0]["kind"], "payout_address");
+        let cancelled = execute_account(
+            &cli,
+            &api,
+            &AccountCommand::Pending {
+                command: PendingCommand::Cancel { action_id: id },
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(cancelled["state"], "cancelled");
+        let close = parse(&["account", "close", "--refund-address", "mmx1refund"]).unwrap();
+        let closing = execute_account(
+            &close,
+            &api,
+            &AccountCommand::Close {
+                refund_address: Some("mmx1refund".to_owned()),
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(closing["pending"]["kind"], "account_close");
+        let note = closing["note"].as_str().unwrap();
+        assert!(
+            note.contains("2026-11-18 10:00 UTC")
+                && note.contains(&format!("ghost account pending cancel {id}")),
+            "{note}"
+        );
+        assert_eq!(
+            result_hint_notes(&close.command, &closing),
+            [format!("note: {note}")]
+        );
+        let changed = execute_provider(
+            &api,
+            &ProviderCommand::SetPayoutAddress {
+                address: "mmx1new".to_owned(),
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(changed["pending"]["target"], "mmx1new");
+        assert!(
+            changed["note"]
+                .as_str()
+                .unwrap()
+                .contains("2026-11-18 10:00 UTC")
+        );
+        let first = execute_provider(
+            &api,
+            &ProviderCommand::SetPayoutAddress {
+                address: "mmx1first".to_owned(),
+            },
+        )
+        .await
+        .unwrap();
+        assert_eq!(first["address"], "mmx1first");
+        let received = received.lock().unwrap();
+        let lines: Vec<&str> = received.iter().map(|(line, _)| line.as_str()).collect();
+        assert_eq!(
+            lines,
+            [
+                "GET /v1/account/pending-actions HTTP/1.1".to_owned(),
+                format!("POST /api/mut/v1/account/pending-actions/{id}/cancel HTTP/1.1"),
+                "POST /api/mut/v1/account/close HTTP/1.1".to_owned(),
+                "PUT /api/mut/v1/provider/payout-address HTTP/1.1".to_owned(),
+                "PUT /api/mut/v1/provider/payout-address HTTP/1.1".to_owned(),
+            ]
+        );
+        assert_eq!(
+            serde_json::from_slice::<Value>(&received[2].1).unwrap(),
+            json!({"refund_address": "mmx1refund"})
+        );
+        let heads = heads.lock().unwrap();
+        let prefers = |head: &String| {
+            head.to_ascii_lowercase()
+                .contains("\r\nprefer: respond-async\r\n")
+        };
+        assert!(prefers(&heads[3]) && prefers(&heads[4]), "{}", heads[3]);
+        assert!(!prefers(&heads[0]) && !prefers(&heads[2]));
     }
 
     /// With an account key the catalog's offerings are read signed (including private
