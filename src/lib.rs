@@ -4871,7 +4871,8 @@ struct NetworkOption<'a> {
 /// at its preselected location among `network_prices`, and lists every
 /// location a renter may choose with the gateway's own prices; a location's
 /// traffic rate adds the provider's, which is the preselected shared price
-/// without that location's gateway rate.
+/// without that location's gateway rate. Shared bandwidth is listed only
+/// at the locations that sell it and have room for it now.
 fn network_options(offering: &OfferingView) -> Vec<NetworkOption<'_>> {
     let shared = offering
         .network_prices
@@ -4893,6 +4894,7 @@ fn network_options(offering: &OfferingView) -> Vec<NetworkOption<'_>> {
                 offering
                     .gateway_locations
                     .iter()
+                    .filter(|location| location.shared_bandwidth_room())
                     .map(|location| NetworkOption {
                         tier: price.gateway_tier,
                         location: Some(location),
@@ -8645,7 +8647,7 @@ async fn execute_instance(
                     !cli.globals.compact,
                     false,
                 )
-                .await
+                .await?
             };
             if !args.yes {
                 bail!(
@@ -8689,7 +8691,7 @@ async fn execute_instance(
                     !cli.globals.compact,
                     true,
                 )
-                .await
+                .await?
             };
             if !args.yes {
                 bail!(
@@ -10715,6 +10717,44 @@ async fn quote_upgrade(api: &ApiClient, instance_id: Uuid, offering_id: &str) {
     }
 }
 
+/// A gateway location as a quote names it: "Frankfurt, Germany (de-fra)",
+/// or its code alone where it has no name.
+fn location_place(target: &ghostrack_client_api::website::GatewayLocationView) -> String {
+    if target.location_name.is_empty() {
+        escape_control(&target.location).into_owned()
+    } else {
+        format!(
+            "{} ({})",
+            escape_control(&target.location_name),
+            escape_control(&target.location)
+        )
+    }
+}
+
+/// Why a change of `instance`'s gateway to shared bandwidth (`tier`, its
+/// own when none) at `location` (its own when none) cannot be made: the
+/// offering lists that location as selling shared IP only.
+fn shared_ip_only_target(
+    instance: &InstanceView,
+    offering: &OfferingView,
+    tier: Option<GatewayTier>,
+    location: Option<&str>,
+) -> Option<String> {
+    if tier.or(instance.gateway_tier) != Some(GatewayTier::SharedBandwidth) {
+        return None;
+    }
+    let location = location.or_else(|| {
+        (instance.gateway_tier != Some(GatewayTier::HighBandwidth))
+            .then_some(instance.gateway_location.as_deref())
+            .flatten()
+    })?;
+    offering
+        .gateway_locations
+        .iter()
+        .find(|place| place.location == location && !place.shared_bandwidth_offered)
+        .map(|place| format!("{} takes shared IP only", location_place(place)))
+}
+
 /// What a change of an instance's gateway costs, as the quote read it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 enum ChangeCharge {
@@ -10830,15 +10870,10 @@ fn gateway_change_quote(
             escape_control(&offering.offering_id)
         ));
     };
-    let place = if target.location_name.is_empty() {
-        escape_control(&target.location).into_owned()
-    } else {
-        format!(
-            "{} ({})",
-            escape_control(&target.location_name),
-            escape_control(&target.location)
-        )
-    };
+    let place = location_place(target);
+    if target_tier == GatewayTier::SharedBandwidth && !target.shared_bandwidth_offered {
+        return Err(format!("{place} takes shared IP only"));
+    }
     // A shared IP pays the slice prices of the location where it lists
     // them, else the gateway's.
     let (target_base, target_network) = if target_tier == GatewayTier::SharedIp
@@ -10862,6 +10897,9 @@ fn gateway_change_quote(
     }
     if target_tier == GatewayTier::SharedIp && target.shared_ip_full {
         distance.push_str(", no free slice now");
+    }
+    if target_tier == GatewayTier::SharedBandwidth && target.shared_bandwidth_full {
+        distance.push_str(", no room now");
     }
     let mut rows = vec![QuoteRow::Fact("Distance", distance)];
     let prices_known = target_base != 0
@@ -11046,6 +11084,11 @@ fn high_bandwidth_quote(
 /// before it is asked for; returns the charge, if the reads gave it. A
 /// read that fails only costs the quote. `move_only`: the quote of
 /// `gateway-location`, which moves a shared tier alone.
+///
+/// # Errors
+///
+/// A change to shared bandwidth at a location the offering lists as
+/// selling shared IP only ([`shared_ip_only_target`]).
 async fn quote_gateway_change(
     api: &ApiClient,
     instance_id: Uuid,
@@ -11053,7 +11096,7 @@ async fn quote_gateway_change(
     location: Option<&str>,
     print: bool,
     move_only: bool,
-) -> ChangeCharge {
+) -> Result<ChangeCharge> {
     let colors = Terminal::stderr().colors;
     let read = async {
         let instance: InstanceView = api.read(&GetInstance { instance_id }, "").await?;
@@ -11069,6 +11112,9 @@ async fn quote_gateway_change(
     };
     match read.await {
         Ok((instance, offering)) => {
+            if let Some(refusal) = shared_ip_only_target(&instance, &offering, tier, location) {
+                bail!(refusal);
+            }
             // `gateway-location` moves a shared tier alone, as the backend
             // answers it.
             if print && move_only && instance.gateway_tier == Some(GatewayTier::HighBandwidth) {
@@ -11086,13 +11132,13 @@ async fn quote_gateway_change(
                     Err(text) => notice(&text),
                 }
             }
-            ChangeCharge::of(&instance, &offering)
+            Ok(ChangeCharge::of(&instance, &offering))
         }
         Err(error) => {
             if print {
                 notice(&prices_unread_notice(&error));
             }
-            ChangeCharge::Unknown
+            Ok(ChangeCharge::Unknown)
         }
     }
 }
@@ -23667,6 +23713,87 @@ mod tests {
         assert!(
             unlisted.contains("not among this offering's gateway locations"),
             "{unlisted}"
+        );
+    }
+
+    /// A location from a backend of before sells shared bandwidth and has
+    /// room for it; one that sells shared IP only or is full for shared
+    /// bandwidth (item 241) is no shared bandwidth option, and a change to
+    /// shared bandwidth there is told so.
+    #[test]
+    fn shared_bandwidth_is_an_option_only_where_it_is_sold_with_room() {
+        let offering = home_offering_with_locations();
+        assert!(
+            offering
+                .gateway_locations
+                .iter()
+                .all(|place| place.shared_bandwidth_offered && !place.shared_bandwidth_full)
+        );
+        let places = |offering: &OfferingView| -> Vec<String> {
+            network_options(offering)
+                .iter()
+                .filter(|option| option.tier == Some(GatewayTier::SharedBandwidth))
+                .filter_map(|option| option.location.map(|place| place.location.clone()))
+                .collect()
+        };
+        assert_eq!(places(&offering), ["sg-singapore", "pl-warsaw"]);
+        let mut only_ip = offering.clone();
+        only_ip.gateway_locations[1].shared_bandwidth_offered = false;
+        assert_eq!(places(&only_ip), ["sg-singapore"]);
+        let mut full = offering;
+        full.gateway_locations[1].shared_bandwidth_full = true;
+        assert_eq!(places(&full), ["sg-singapore"]);
+
+        // The quote: full says so, not sold is refused.
+        let mut offering = quoted_offering();
+        offering.gateway_locations[0].shared_bandwidth_full = true;
+        let quote = gateway_change_quote(
+            &quoted_instance(true),
+            &offering,
+            None,
+            Some("de-fra"),
+            false,
+        )
+        .unwrap()
+        .join("\n");
+        assert!(
+            quote.contains("crosses a bottleneck, no room now"),
+            "{quote}"
+        );
+        offering.gateway_locations[0].shared_bandwidth_full = false;
+        offering.gateway_locations[0].shared_bandwidth_offered = false;
+        let refused = gateway_change_quote(
+            &quoted_instance(true),
+            &offering,
+            None,
+            Some("de-fra"),
+            false,
+        )
+        .unwrap_err();
+        assert_eq!(refused, "Frankfurt, Germany (de-fra) takes shared IP only");
+        assert_eq!(
+            shared_ip_only_target(&quoted_instance(true), &offering, None, Some("de-fra")),
+            Some(refused)
+        );
+        // The shared IP there is a change as before.
+        assert_eq!(
+            shared_ip_only_target(
+                &quoted_instance(true),
+                &offering,
+                Some(GatewayTier::SharedIp),
+                Some("de-fra")
+            ),
+            None
+        );
+        assert!(
+            gateway_change_quote(
+                &quoted_instance(true),
+                &offering,
+                Some(GatewayTier::SharedIp),
+                Some("de-fra"),
+                false
+            )
+            .is_ok()
         );
     }
 

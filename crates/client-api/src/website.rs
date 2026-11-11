@@ -2369,7 +2369,8 @@ impl OfferingView {
 
     /// The gateway a new instance of this offering takes without a choice:
     /// for a home offering the shared gateway location chosen by default,
-    /// or else the cheapest shared location, or else the cheapest gateway
+    /// or else the cheapest location with room for shared bandwidth, or
+    /// else the cheapest gateway
     /// tier of an address of the rental's own (by their base charges, the
     /// first of equals); none for a cloud offering. The listed price and
     /// the traffic price a list shows are this gateway's. A shared IP,
@@ -2385,6 +2386,7 @@ impl OfferingView {
             .or_else(|| {
                 self.gateway_locations
                     .iter()
+                    .filter(|place| place.shared_bandwidth_room())
                     .min_by_key(|place| place.gateway_base_charge_microusd_per_month)
             })
             .map(DefaultGateway::Location)
@@ -2552,7 +2554,8 @@ impl OfferingView {
     /// The provider's own traffic rate per TiB of a home offering, which a
     /// shared gateway location's rate is added to: the shared bandwidth
     /// tier's combined rate less the rate of the location it was priced
-    /// at (the preselected one, else the first); 0 without either.
+    /// at (the preselected one, else the first with room for shared
+    /// bandwidth); 0 without either.
     #[must_use]
     pub fn provider_traffic_microusd_per_tib(&self) -> u64 {
         let shared = self
@@ -2563,7 +2566,11 @@ impl OfferingView {
             .gateway_locations
             .iter()
             .find(|place| place.preselected)
-            .or_else(|| self.gateway_locations.first());
+            .or_else(|| {
+                self.gateway_locations
+                    .iter()
+                    .find(|place| place.shared_bandwidth_room())
+            });
         match (shared, priced) {
             (Some(shared), Some(place)) => shared
                 .combined_microusd_per_tib
@@ -2732,8 +2739,10 @@ pub struct BandwidthView {
 }
 
 /// A location a shared bandwidth or shared IP instance of a home offering
-/// may be reached through: a shared gateway there has room for a shared
-/// bandwidth instance.
+/// may be reached through: a shared gateway there has room for either
+/// tier. `shared_bandwidth_offered` says whether shared bandwidth is sold
+/// there at all, and each tier's `_full` that it has no room now.
+#[allow(clippy::struct_excessive_bools)] // A wire format of flags.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub struct GatewayLocationView {
     pub location: String,
@@ -2762,12 +2771,32 @@ pub struct GatewayLocationView {
     #[serde(default)]
     pub shared_ip_network_microusd_per_tib: u64,
     /// No gateway there has a free slice (or none takes slices): the
-    /// shared IP tier cannot be placed at this location now. A location
-    /// with a free slice but no room for shared bandwidth is not listed
-    /// at all, and the tier itself is offered only where a location that
-    /// crosses no bottleneck has a free slice.
+    /// shared IP tier cannot be placed at this location now. The tier
+    /// itself is offered only where a location that crosses no bottleneck
+    /// has a free slice.
     #[serde(default)]
     pub shared_ip_full: bool,
+    /// Whether a gateway there sells shared bandwidth at all; false where
+    /// its gateways have no address for it and sell shared IP only. Older
+    /// backends list only locations that sell it.
+    #[serde(default = "shared_bandwidth_offered_default")]
+    pub shared_bandwidth_offered: bool,
+    /// Shared bandwidth is sold there, but no gateway there has room for
+    /// it now. Never set where it is not offered.
+    #[serde(default)]
+    pub shared_bandwidth_full: bool,
+}
+
+const fn shared_bandwidth_offered_default() -> bool {
+    true
+}
+
+impl GatewayLocationView {
+    /// Shared bandwidth can be placed here now: offered and not full.
+    #[must_use]
+    pub const fn shared_bandwidth_room(&self) -> bool {
+        self.shared_bandwidth_offered && !self.shared_bandwidth_full
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
