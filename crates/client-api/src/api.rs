@@ -3,38 +3,40 @@ use crate::website::{
     AccountActivationTerms, AccountAuthKeyView, AccountBalanceView, AccountSessionView,
     AccountSshKeyView, AccountView, ActivateAccountRequest, ActiveSessionView,
     AddAccountSshKeyRequest, AddCloudIpAddressesRequest, AddPrivateRenterRequest,
-    AddSupportTicketMessageRequest, AgentUpdateAttemptRequest, AgentUpdateSequenceView,
-    ApproveAgentUpdateRequest, AuthorizeBackupRestoreRequest, BackupDownloadView,
-    BackupInstanceView, BackupPricingView, BackupScheduleView, BackupView, BrowserOperationInput,
-    BrowserOperationView, CloudIpPoolView, CodeLoginRequest, CompleteOperationIntentRequest,
-    CompleteTrialClaimRequest, CompletedTrialClaimView, ContainerLogView, CreateBackupRequest,
-    CreateCloudIpPoolRequest, CreateHostEnrollmentTokenRequest, CreateInstanceRequest,
-    CreateProviderPayoutRequest, CreateSupportTicketRequest, DeclareHostEmergencyRequest,
-    DownloadBackupRequest, EnableTotpRequest, GatewayTrafficView, GithubLoginRequest,
-    GithubLoginStart, GithubUnlinked, HandOverCloudIpPoolRequest, HistoryPage, HostAgentUpdateView,
-    HostEnrollmentToken, HostNetworkTestsView, HostPricingView, HostPrivacyView, ImageView,
-    InstanceConsoleLogView, InstanceConsoleSessionsView, InstanceHardwareView,
-    InstanceLocationView, InstanceProviderTerminationView, InstanceProviderView,
-    InstanceSystemView, InstanceTagView, InstanceUpgradeView, InstanceView, JobAccepted, JobPage,
-    JobView, LocationView, LoginGrant, MigrateAccountSeedRequest, NotificationsReadView,
-    OfferingView, PasswordChallenge, PasswordChallengeRequest, PasswordLoginRequest,
-    PendingAccountActionView, PrivateRenterView, ProtectedBalanceView, ProviderAgentsView,
-    ProviderBalanceView, ProviderDisplayNameView, ProviderHostDetailView, ProviderHostView,
-    ProviderIncidentView, ProviderOutageDetailView, ProviderOutagePage, ProviderPayoutAddressView,
-    ProviderPayoutView, ProviderReliabilityView, ProviderRentalView, ProviderUptimeView,
-    RedeemLoginGrantRequest, RedeemLoginGrantResponse, RedeployInstanceRequest,
-    ReinstallInstanceRequest, ReleaseChannelsView, RemoveAccountSshKeyRequest,
-    RenameInstanceRequest, RequestAccountCloseRequest, RequestProviderDisplayNameRequest,
-    RestoreBackupRequest, RotateGatewayKeysRequest, ScheduleHostRetirementRequest,
-    ScheduleInstanceRetirementRequest, SessionCodeRequest, SessionCodeView, SessionRevocationView,
-    SetAgentUpdatePolicyRequest, SetBackupScheduleRequest, SetHostPrivateRequest,
-    SetHostRentalPauseRequest, SetNotificationReadRequest, SetPortForwardsRequest,
-    SetPowerStateRequest, SetProtectedBalanceRequest, SetProviderIncidentStateRequest,
-    SetProviderPayoutAddressRequest, SetSupportTicketStateRequest, SetTagRedundantRequest,
-    SetWebsitePasswordRequest, StartAgentUpdateSequenceRequest, SupportTicketSummaryView,
-    SupportTicketView, TagInstanceRequest, TotpDisabled, TotpView, TrialClaimStatusView,
-    TrialClaimView, UpdateHostPricingRequest, UpdateInstanceRequest, UpgradeInstanceRequest,
-    UserNotificationView, WebsitePasswordRemoved, WebsitePasswordView, WriteProviderReviewRequest,
+    AddProviderSecurityDepositRequest, AddSupportTicketMessageRequest, AgentUpdateAttemptRequest,
+    AgentUpdateSequenceView, ApproveAgentUpdateRequest, AuthorizeBackupRestoreRequest,
+    BackupDownloadView, BackupInstanceView, BackupPricingView, BackupScheduleView, BackupView,
+    BrowserOperationInput, BrowserOperationView, CloudIpPoolView, CodeLoginRequest,
+    CompleteOperationIntentRequest, CompleteTrialClaimRequest, CompletedTrialClaimView,
+    ContainerLogView, CreateBackupRequest, CreateCloudIpPoolRequest,
+    CreateHostEnrollmentTokenRequest, CreateInstanceRequest, CreateProviderPayoutRequest,
+    CreateSupportTicketRequest, DeclareHostEmergencyRequest, DownloadBackupRequest,
+    EnableTotpRequest, GatewayTrafficView, GithubLoginRequest, GithubLoginStart, GithubUnlinked,
+    HandOverCloudIpPoolRequest, HistoryPage, HostAgentUpdateView, HostEnrollmentToken,
+    HostNetworkTestsView, HostPricingView, HostPrivacyView, ImageView, InstanceConsoleLogView,
+    InstanceConsoleSessionsView, InstanceHardwareView, InstanceLocationView,
+    InstanceProviderTerminationView, InstanceProviderView, InstanceSystemView, InstanceTagView,
+    InstanceUpgradeView, InstanceView, JobAccepted, JobPage, JobView, LocationView, LoginGrant,
+    MigrateAccountSeedRequest, NotificationsReadView, OfferingView, PasswordChallenge,
+    PasswordChallengeRequest, PasswordLoginRequest, PendingAccountActionView, PrivateRenterView,
+    ProtectedBalanceView, ProviderAgentsView, ProviderBalanceView, ProviderDisplayNameView,
+    ProviderHostDetailView, ProviderHostView, ProviderIncidentView, ProviderOutageDetailView,
+    ProviderOutagePage, ProviderPayoutAddressView, ProviderPayoutView, ProviderReliabilityView,
+    ProviderRentalView, ProviderSecurityDepositView, ProviderUptimeView, RedeemLoginGrantRequest,
+    RedeemLoginGrantResponse, RedeployInstanceRequest, ReinstallInstanceRequest,
+    ReleaseChannelsView, RemoveAccountSshKeyRequest, RenameInstanceRequest,
+    RequestAccountCloseRequest, RequestProviderDisplayNameRequest, RestoreBackupRequest,
+    RotateGatewayKeysRequest, ScheduleHostRetirementRequest, ScheduleInstanceRetirementRequest,
+    SessionCodeRequest, SessionCodeView, SessionRevocationView, SetAgentUpdatePolicyRequest,
+    SetBackupScheduleRequest, SetHostPrivateRequest, SetHostRentalPauseRequest,
+    SetNotificationReadRequest, SetPortForwardsRequest, SetPowerStateRequest,
+    SetProtectedBalanceRequest, SetProviderIncidentStateRequest, SetProviderPayoutAddressRequest,
+    SetSupportTicketStateRequest, SetTagRedundantRequest, SetWebsitePasswordRequest,
+    StartAgentUpdateSequenceRequest, SupportTicketSummaryView, SupportTicketView,
+    TagInstanceRequest, TotpDisabled, TotpView, TrialClaimStatusView, TrialClaimView,
+    UpdateHostPricingRequest, UpdateInstanceRequest, UpgradeInstanceRequest, UserNotificationView,
+    WebsitePasswordRemoved, WebsitePasswordView, WithdrawProviderSecurityDepositRequest,
+    WriteProviderReviewRequest,
 };
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::Value;
@@ -738,6 +740,24 @@ endpoints! {
     /// Withdraw the open request: its charge is released.
     WithdrawProviderDisplayName = user POST "/api/mut/v1/provider/display-name/withdraw"
         => ProviderDisplayNameView;
+    /// The provider's security deposit: what it holds, what renters see of
+    /// it, its open withdrawals and what the platform kept of it last.
+    GetProviderSecurityDeposit = user GET "/v1/provider/security-deposit"
+        => ProviderSecurityDepositView;
+    /// Add to the security deposit from the account's balance: whole
+    /// cents, at least $1.00, never from a trial's credit or below the
+    /// protected balance.
+    AddProviderSecurityDeposit = user POST "/api/mut/v1/provider/security-deposit"
+        (AddProviderSecurityDepositRequest) => ProviderSecurityDepositView;
+    /// Withdraw from the security deposit: paid back to the account's
+    /// balance 30 days later, unless the provider is suspended then.
+    WithdrawProviderSecurityDeposit = user POST
+        "/api/mut/v1/provider/security-deposit/withdrawals"
+        (WithdrawProviderSecurityDepositRequest) => ProviderSecurityDepositView;
+    /// Cancel an open withdrawal: the amount stays in the deposit.
+    CancelProviderSecurityDepositWithdrawal { withdrawal_id: Uuid } = user POST
+        "/api/mut/v1/provider/security-deposit/withdrawals/{withdrawal_id}/cancel"
+        => ProviderSecurityDepositView;
     RetireHost { host_id: Uuid } =
         user DELETE "/api/mut/v1/provider/hosts/{host_id}" => ProviderHostView;
     ScheduleHostRetirement { host_id: Uuid } = user POST

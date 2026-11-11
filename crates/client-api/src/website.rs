@@ -378,6 +378,12 @@ pub enum LedgerKind {
     VpnUsage,
     /// A VPN connection's setup fee for an address of its own.
     VpnCreation,
+    /// A provider's security deposit, from its owner's balance (item 243).
+    SecurityDeposit,
+    /// A withdrawal of that deposit, paid back to the balance.
+    SecurityDepositReturn,
+    /// That deposit, kept by the platform when cheating was proven.
+    SecurityDepositForfeit,
     /// A variant of a newer release, which this one does not know.
     #[serde(other)]
     #[cfg_attr(feature = "clap", value(skip))]
@@ -2245,6 +2251,10 @@ pub struct OfferingView {
     pub provider_rating_millistars: Option<u32>,
     #[serde(default)]
     pub provider_review_count: u32,
+    /// What the provider holds as a security deposit, less what it is
+    /// withdrawing; absent when none and from older backends (item 243).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_security_deposit_microusd: Option<u64>,
     pub cpu_model: String,
     /// The highest x86-64 level (1 to 4) among the hosts the offering
     /// lists, a host that never reported one counting as 1: an image of a
@@ -2761,6 +2771,10 @@ pub struct ProviderSummaryView {
     pub rating_millistars: Option<u32>,
     #[serde(default)]
     pub review_count: u32,
+    /// What the provider holds as a security deposit, less what it is
+    /// withdrawing; absent when none and from older backends (item 243).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub provider_security_deposit_microusd: Option<u64>,
 }
 
 /// A location of a provider's offerings ([`ProviderSummaryView`]).
@@ -6689,6 +6703,64 @@ pub struct ProviderDisplayNameDecisionView {
 #[serde(deny_unknown_fields)]
 pub struct RequestProviderDisplayNameRequest {
     pub name: String,
+}
+
+/// The provider's security deposit (`GetProviderSecurityDeposit`, item
+/// 243): what it holds, what renters see of it, its open withdrawals and
+/// what the platform kept of it last. Fields added later are optional.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct ProviderSecurityDepositView {
+    /// What the deposit holds, its open withdrawals included.
+    #[serde(default)]
+    pub held_microusd: u64,
+    /// What renters see: what is held less the open withdrawals.
+    #[serde(default)]
+    pub shown_microusd: u64,
+    /// The withdrawals not paid yet, oldest first.
+    #[serde(default)]
+    pub withdrawals: Vec<SecurityDepositWithdrawalView>,
+    /// What the platform kept of the deposit last, if anything.
+    #[serde(default)]
+    pub last_forfeit: Option<SecurityDepositForfeitView>,
+    /// How many days after it is asked for a withdrawal is paid.
+    #[serde(default)]
+    pub withdrawal_wait_days: u32,
+}
+
+/// A withdrawal of a provider's security deposit, waiting to be paid back
+/// to its owner's balance.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct SecurityDepositWithdrawalView {
+    pub id: Uuid,
+    pub amount_microusd: u64,
+    pub requested_at: DateTime<Utc>,
+    /// When it is paid, unless the provider is suspended then.
+    pub payable_at: DateTime<Utc>,
+}
+
+/// What the platform kept of a provider's security deposit, and why.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct SecurityDepositForfeitView {
+    pub amount_microusd: u64,
+    pub reason: String,
+    pub created_at: DateTime<Utc>,
+}
+
+/// Add to the provider's security deposit from the owner's balance
+/// (`AddProviderSecurityDeposit`): whole cents, at least $1.00.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct AddProviderSecurityDepositRequest {
+    pub amount_microusd: u64,
+}
+
+/// Withdraw from the provider's security deposit
+/// (`WithdrawProviderSecurityDeposit`): whole cents, at most what is held
+/// less the open withdrawals; paid to the owner's balance 30 days later.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct WithdrawProviderSecurityDepositRequest {
+    pub amount_microusd: u64,
 }
 
 /// Allow an account on the provider's private hosts, by its alias
