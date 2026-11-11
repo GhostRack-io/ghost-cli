@@ -8282,7 +8282,7 @@ pub const DEFAULT_VPN_TRACKED_CONNECTIONS: u32 = 4_096;
 #[serde(deny_unknown_fields)]
 pub struct CreateVpnConnectionRequest {
     /// Lowercase letters, digits and `-`, at most 63; `vpn-` and the
-    /// start of its ID when absent.
+    /// end of its ID when absent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub name: Option<String>,
     pub tier: GatewayTier,
