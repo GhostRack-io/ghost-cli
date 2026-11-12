@@ -453,6 +453,10 @@ endpoints! {
     GetInstance { instance_id: Uuid } = user GET "/v1/instances/{instance_id}" => InstanceView;
     DeleteInstance { instance_id: Uuid } =
         user DELETE "/api/mut/v1/instances/{instance_id}" => JobAccepted;
+    /// Cancel an instance's delayed deletion (item 267) without turning it
+    /// on. No job: the instance as it is now, also when no deletion waits.
+    CancelInstanceDelete { instance_id: Uuid } = user POST
+        "/api/mut/v1/instances/{instance_id}/cancel-delete" => InstanceView;
     SetInstancePower { instance_id: Uuid } =
         user POST "/api/mut/v1/instances/{instance_id}/power" (SetPowerStateRequest) => JobAccepted;
     ReinstallInstance { instance_id: Uuid } = wallet POST

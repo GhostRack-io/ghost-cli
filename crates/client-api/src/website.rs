@@ -1298,14 +1298,29 @@ pub struct InstanceListQuery {
     /// Which way: the newest, costliest, largest or last name first by
     /// default.
     pub order: Option<SortOrder>,
+    /// Only those whose deletion waits out its delay (`true`), or those
+    /// without one (`false`) (item 267).
+    pub delete_scheduled: Option<bool>,
 }
 
 impl InstanceListQuery {
     /// The fields in the order a query names them, as serde names them in
     /// its refusals.
     const FIELDS: &'static [&'static str] = &[
-        "ids", "limit", "before", "state", "busy", "location", "provider", "mode", "image", "name",
-        "tag", "sort", "order",
+        "ids",
+        "limit",
+        "before",
+        "state",
+        "busy",
+        "location",
+        "provider",
+        "mode",
+        "image",
+        "name",
+        "tag",
+        "sort",
+        "order",
+        "delete_scheduled",
     ];
 
     /// The read of the instances `ids` names.
@@ -1331,6 +1346,7 @@ impl InstanceListQuery {
             || !self.tag.is_empty()
             || self.sort.is_some()
             || self.order.is_some()
+            || self.delete_scheduled.is_some()
     }
 }
 
@@ -1376,6 +1392,9 @@ impl Serialize for InstanceListQuery {
         }
         if let Some(order) = self.order {
             map.serialize_entry("order", &order)?;
+        }
+        if let Some(scheduled) = self.delete_scheduled {
+            map.serialize_entry("delete_scheduled", &scheduled)?;
         }
         map.end()
     }
@@ -1425,6 +1444,11 @@ impl<'de> Deserialize<'de> for InstanceListQuery {
                         "tag" => query.tag.push(map.next_value()?),
                         "sort" => once(&mut query.sort, "sort", map.next_value()?)?,
                         "order" => once(&mut query.order, "order", map.next_value()?)?,
+                        "delete_scheduled" => once(
+                            &mut query.delete_scheduled,
+                            "delete_scheduled",
+                            map.next_value()?,
+                        )?,
                         other => {
                             return Err(serde::de::Error::unknown_field(
                                 other,
@@ -4275,6 +4299,31 @@ pub struct InstanceView {
     /// host or rental that caps it, and from older backends.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub connection_limits: Option<ConnectionLimitsView>,
+    /// When the instance is deleted, while its renter's deletion waits out
+    /// its delay (item 267): it is off until then, and turning it on or
+    /// keeping it (`CancelInstanceDelete`) cancels the deletion. Absent
+    /// otherwise, and from older backends.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delete_at: Option<DateTime<Utc>>,
+    /// What its age asks of a deletion, a reinstall and an in-place
+    /// restore now (item 267). Absent for an instance younger than the
+    /// first age, and from older backends.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub deletion_safety: Option<DeletionSafetyView>,
+}
+
+/// What an instance's age asks of a deletion, a reinstall and an in-place
+/// restore (item 267): the platform's tier for its age.
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct DeletionSafetyView {
+    /// How long a deletion waits, the instance turned off meanwhile.
+    pub delete_delay_minutes: u32,
+    /// How long a backup taken before a reinstall or restore is kept from
+    /// its renter's deletion.
+    pub backup_lock_days: u32,
+    /// An in-place restore from a backup of the instance taken within this
+    /// many days takes no backup first.
+    pub restore_without_backup_days: u32,
 }
 
 /// The connection limits of an instance (item 229).
@@ -5226,6 +5275,12 @@ pub struct JobAccepted {
     pub job_id: Uuid,
     pub resource_id: Uuid,
     pub status_url: String,
+    /// A delayed deletion's time (`DeleteInstance` of an instance old
+    /// enough for a delay, item 267): the instance is turned off now and
+    /// deleted then, unless it is turned on or kept before. The job is the
+    /// stop's. Absent for every other answer, and from older backends.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub delete_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

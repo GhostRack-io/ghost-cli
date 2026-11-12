@@ -46,27 +46,28 @@ use ghostrack_client_api::{
     api::{
         AccountDeposits, AccountHistory, AccountSlaCredits, ActivateAccount, AddIpAddresses,
         AddPrivateRenter, AddTicketMessage, ApproveHostAgentUpdate, AuthorizeBackupRestore,
-        CancelBackup, CancelHostAgentUpdate, ChangeGateway, CheckHostPublicPath, CheckIpAddress,
-        CompleteOperationIntent, CreateBackup, CreateGithubLink, CreateGithubSignup,
-        CreateHostEnrollmentToken, CreateInstance, CreateIpPool, CreateLoginGrant, CreatePayout,
-        CreateTicket, DeclareHostEmergency, DeleteBackup, DeleteInstance, DeleteIpPool,
-        DownloadBackup, EndInstanceRescue, GetAccount, GetAccountBalance, GetActivationTerms,
-        GetBackup, GetBackupPricing, GetBackupSchedule, GetDepositLookup, GetGithubClaim,
-        GetHostAgentUpdate, GetHostNetworkTests, GetHostPricing, GetHostPrivacy, GetIncident,
-        GetInstance, GetInstanceConsoleLog, GetInstanceGatewayTraffic, GetInstanceLogs,
-        GetInstanceMesh, GetInstanceMeshUsage, GetInstanceUsage, GetJob, GetOffering,
-        GetOperationIntent, GetProviderAgents, GetProviderBalance, GetProviderDisplayName,
-        GetProviderHost, GetProviderHostInstanceUsage, GetProviderHostMetrics, GetProviderOutage,
-        GetProviderReliability, GetProviderUptime, GetTicket, HandOverIpPool, ListAuthKeys,
-        ListBackups, ListContainerImages, ListImages, ListIncidents, ListInstanceAddressChanges,
-        ListInstanceBackups, ListInstanceTags, ListInstanceUpgrades, ListInstances, ListIpPools,
-        ListJobs, ListLocations, ListNotifications, ListOfferings, ListPayouts, ListPrivateRenters,
-        ListProviderConversions, ListProviderHosts, ListProviderOutages, ListProviderReviews,
-        ListSessions, ListTickets, MigrateAccountSeed, MoveGatewayLocation, RedeployInstance,
-        ReinstallInstance, RemoveIpAddress, RemovePrivateRenter, RemoveWebsitePassword,
-        RenameInstance, RequestProviderDisplayName, RescueInstance, ResetInstanceAccess,
-        RestoreBackup, RetireHost, RetryHostAgentUpdate, RevokeSession, RevokeSessions,
-        RotateGatewayKeys, ScheduleHostRetirement, ScheduleInstanceRetirement, SetBackupSchedule,
+        CancelBackup, CancelHostAgentUpdate, CancelInstanceDelete, ChangeGateway,
+        CheckHostPublicPath, CheckIpAddress, CompleteOperationIntent, CreateBackup,
+        CreateGithubLink, CreateGithubSignup, CreateHostEnrollmentToken, CreateInstance,
+        CreateIpPool, CreateLoginGrant, CreatePayout, CreateTicket, DeclareHostEmergency,
+        DeleteBackup, DeleteInstance, DeleteIpPool, DownloadBackup, EndInstanceRescue, GetAccount,
+        GetAccountBalance, GetActivationTerms, GetBackup, GetBackupPricing, GetBackupSchedule,
+        GetDepositLookup, GetGithubClaim, GetHostAgentUpdate, GetHostNetworkTests, GetHostPricing,
+        GetHostPrivacy, GetIncident, GetInstance, GetInstanceConsoleLog, GetInstanceGatewayTraffic,
+        GetInstanceLogs, GetInstanceMesh, GetInstanceMeshUsage, GetInstanceUsage, GetJob,
+        GetOffering, GetOperationIntent, GetProviderAgents, GetProviderBalance,
+        GetProviderDisplayName, GetProviderHost, GetProviderHostInstanceUsage,
+        GetProviderHostMetrics, GetProviderOutage, GetProviderReliability, GetProviderUptime,
+        GetTicket, HandOverIpPool, ListAuthKeys, ListBackups, ListContainerImages, ListImages,
+        ListIncidents, ListInstanceAddressChanges, ListInstanceBackups, ListInstanceTags,
+        ListInstanceUpgrades, ListInstances, ListIpPools, ListJobs, ListLocations,
+        ListNotifications, ListOfferings, ListPayouts, ListPrivateRenters, ListProviderConversions,
+        ListProviderHosts, ListProviderOutages, ListProviderReviews, ListSessions, ListTickets,
+        MigrateAccountSeed, MoveGatewayLocation, RedeployInstance, ReinstallInstance,
+        RemoveIpAddress, RemovePrivateRenter, RemoveWebsitePassword, RenameInstance,
+        RequestProviderDisplayName, RescueInstance, ResetInstanceAccess, RestoreBackup, RetireHost,
+        RetryHostAgentUpdate, RevokeSession, RevokeSessions, RotateGatewayKeys,
+        ScheduleHostRetirement, ScheduleInstanceRetirement, SetBackupSchedule,
         SetHostAgentUpdatePolicy, SetHostPrivate, SetHostRentalAdmission, SetIncidentState,
         SetInstancePower, SetPayoutAddress, SetPortForwards, SetTagRedundant, SetTicketState,
         SetWebsitePassword, StartAgentUpdateSequence, StopAgentUpdateSequence, TagInstance,
@@ -1741,7 +1742,14 @@ enum InstanceCommand {
     /// one in its place went.
     Ports(PortsArgs),
     /// Irreversibly enqueue instance deletion.
+    ///
+    /// An instance older than 10 days is turned off now and deleted after
+    /// a delay: 30 minutes, 2 hours past 30 days, 6 hours past 90 days.
+    /// Turning it on (`ghost instance power INSTANCE on`) or `ghost instance
+    /// keep` cancels the deletion meanwhile.
     Delete(DeleteArgs),
+    /// Keep an instance whose deletion waits, without turning it on.
+    Keep(KeepArgs),
 }
 
 // What the instance runs is given explicitly, one of the four: no source
@@ -2290,6 +2298,15 @@ struct DeleteArgs {
     yes: bool,
     #[command(flatten)]
     mutation: MutationArgs,
+}
+
+#[derive(Args)]
+struct KeepArgs {
+    /// Instance ID or name, from `ghost instance list`.
+    #[arg(value_name = "INSTANCE", value_parser = parse_instance_reference)]
+    instance_id: InstanceReference,
+    #[command(flatten)]
+    idempotency: IdempotencyArgs,
 }
 
 #[derive(Args)]
@@ -4036,8 +4053,11 @@ impl Summary {
                         "instance_id": instance.instance_id,
                         "name": instance.display_name(),
                         "tags": instance.tags.join(", "),
-                        // In rescue it shows as such.
-                        "state": if instance.rescue.is_some()
+                        // In rescue it shows as such, and a waiting
+                        // deletion (item 267) by its time.
+                        "state": if let Some(delete_at) = instance.delete_at {
+                            json!(format!("deleting at {}", local_moment(delete_at, Utc::now())))
+                        } else if instance.rescue.is_some()
                             && matches!(instance.state, InstanceState::Running | InstanceState::Stopped)
                         {
                             json!("rescue")
@@ -7855,6 +7875,18 @@ async fn execute_account(cli: &Cli, api: &ApiClient, command: &AccountCommand) -
                 let actions: Vec<ghostrack_client_api::website::PendingAccountActionView> = api
                     .read(&ghostrack_client_api::api::ListPendingAccountActions, "")
                     .await?;
+                // The instances whose deletion waits (item 267), as a
+                // second table beside the result; an older backend that
+                // refuses the filter shows none.
+                let query = InstanceListQuery {
+                    delete_scheduled: Some(true),
+                    ..InstanceListQuery::default()
+                };
+                if let Ok(deletions) = api.read(&ListInstances, &instance_list_query(&query)).await
+                    && let Some(table) = instance_deletions_table(&deletions, Utc::now())
+                {
+                    notice(&table);
+                }
                 to_value(actions)
             }
             PendingCommand::Cancel { action_id } => {
@@ -7957,6 +7989,7 @@ async fn approve_browser_operation(
             job_id,
             resource_id: job.resource_id,
             status_url: format!("/v1/jobs/{job_id}"),
+            delete_at: None,
         };
         let (destination_instance_id, backup_id) = match &intent.operation {
             BrowserOperation::RestoreBackup {
@@ -8922,6 +8955,18 @@ async fn execute_instance(
                     &retried_by_id(args.mutation.key(), &args.instance_id, instance_id),
                 )
                 .await?;
+            // A deletion that waits (item 267): the instance is turned off
+            // now and deleted then; nothing waits for it.
+            if let Some(delete_at) = accepted.delete_at {
+                notice(&delayed_deletion_note(
+                    &instance_reference_text(&args.instance_id),
+                    delete_at,
+                ));
+                if let Some(note) = backups.as_deref().and_then(kept_backups_note) {
+                    notice(&note);
+                }
+                return to_value(accepted);
+            }
             #[cfg(unix)]
             ghostd::forget_instance(instance_id);
             if let Some(note) = backups.as_deref().and_then(kept_backups_note) {
@@ -8929,7 +8974,38 @@ async fn execute_instance(
             }
             mutation_result(api, accepted, &args.mutation, show_progress).await
         }
+        InstanceCommand::Keep(args) => {
+            let instance_id = resolve_instance(api, &args.instance_id, InstanceUse::Change).await?;
+            let instance: InstanceView = api
+                .write_retryable(
+                    &CancelInstanceDelete { instance_id },
+                    &(),
+                    &retried_by_id(args.idempotency.key(), &args.instance_id, instance_id),
+                )
+                .await?;
+            to_value(instance)
+        }
     }
+}
+
+/// A time in this machine's zone: the time of day alone on today's date.
+fn local_moment(at: DateTime<Utc>, now: DateTime<Utc>) -> String {
+    let at = at.with_timezone(&chrono::Local);
+    if at.date_naive() == now.with_timezone(&chrono::Local).date_naive() {
+        at.format("%H:%M").to_string()
+    } else {
+        at.format("%Y-%m-%d %H:%M").to_string()
+    }
+}
+
+/// What `ghost instance delete` says of a deletion that waits until
+/// `delete_at` (item 267).
+fn delayed_deletion_note(name: &str, delete_at: DateTime<Utc>) -> String {
+    let name = escape_control(name);
+    format!(
+        "Deleting {name} at {}. `ghost instance power {name} on` or `ghost instance keep {name}` cancels.",
+        local_moment(delete_at, Utc::now())
+    )
 }
 
 /// The query string of the account's instance list `query`: each
@@ -8976,8 +9052,41 @@ fn instance_list_query(query: &InstanceListQuery) -> String {
         if let Some(order) = query.order {
             pairs.append_pair("order", order.as_str());
         }
+        if let Some(scheduled) = query.delete_scheduled {
+            pairs.append_pair("delete_scheduled", &scheduled.to_string());
+        }
     }
     url.query().unwrap_or_default().to_owned()
+}
+
+/// `ghost account pending list`'s table of the instances whose deletion
+/// waits (item 267): each by name with its time; none when none waits.
+fn instance_deletions_table(instances: &[InstanceView], now: DateTime<Utc>) -> Option<String> {
+    let rows: Vec<(String, String)> = instances
+        .iter()
+        .filter_map(|instance| {
+            instance.delete_at.map(|at| {
+                (
+                    escape_control(instance.display_name()).into_owned(),
+                    local_moment(at, now),
+                )
+            })
+        })
+        .collect();
+    if rows.is_empty() {
+        return None;
+    }
+    let width = rows
+        .iter()
+        .map(|(name, _)| name.chars().count())
+        .chain(["NAME".len()])
+        .max()
+        .unwrap_or(0);
+    let mut table = format!("Instance deletions\n{:<width$}  DELETING AT", "NAME");
+    for (name, at) in rows {
+        let _ = write!(table, "\n{name:<width$}  {at}");
+    }
+    Some(table)
 }
 
 /// The query string of the account's backup list `query`: each parameter
@@ -16420,6 +16529,7 @@ mod tests {
                 job_id,
                 resource_id: Uuid::nil(),
                 status_url: String::new(),
+                delete_at: None,
             },
             server_date,
             elapsed,
@@ -16501,6 +16611,8 @@ mod tests {
         let seed = seed.to_str().unwrap().to_owned();
         let instance_id = Uuid::now_v7();
         let instance = InstanceView {
+            delete_at: None,
+            deletion_safety: None,
             kind: ghostrack_client_api::website::InstanceKind::Vm,
             container: None,
             instance_id,
@@ -16617,6 +16729,7 @@ mod tests {
             job_id,
             resource_id: instance_id,
             status_url: format!("/v1/jobs/{job_id}"),
+            delete_at: None,
         };
         let (second_url, second_requests) =
             canned_server(vec![(202, serde_json::to_string(&accepted).unwrap())]).await;
@@ -20488,6 +20601,8 @@ mod tests {
                 String::new(),
                 json!([action("payout_address", "pending", "mmx1new")]).to_string(),
             ),
+            // The instances whose deletion waits (item 267): none.
+            (200, String::new(), json!([]).to_string()),
             (
                 200,
                 String::new(),
@@ -20584,6 +20699,7 @@ mod tests {
             lines,
             [
                 "GET /v1/account/pending-actions HTTP/1.1".to_owned(),
+                "GET /v1/instances?delete_scheduled=true HTTP/1.1".to_owned(),
                 format!("POST /api/mut/v1/account/pending-actions/{id}/cancel HTTP/1.1"),
                 "POST /api/mut/v1/account/close HTTP/1.1".to_owned(),
                 "PUT /api/mut/v1/provider/payout-address HTTP/1.1".to_owned(),
@@ -20591,7 +20707,7 @@ mod tests {
             ]
         );
         assert_eq!(
-            serde_json::from_slice::<Value>(&received[2].1).unwrap(),
+            serde_json::from_slice::<Value>(&received[3].1).unwrap(),
             json!({"refund_address": "mmx1refund"})
         );
         let heads = heads.lock().unwrap();
@@ -20599,8 +20715,102 @@ mod tests {
             head.to_ascii_lowercase()
                 .contains("\r\nprefer: respond-async\r\n")
         };
-        assert!(prefers(&heads[3]) && prefers(&heads[4]), "{}", heads[3]);
-        assert!(!prefers(&heads[0]) && !prefers(&heads[2]));
+        assert!(prefers(&heads[4]) && prefers(&heads[5]), "{}", heads[4]);
+        assert!(!prefers(&heads[0]) && !prefers(&heads[3]));
+    }
+
+    /// `ghost account pending list`'s second table names the instances
+    /// whose deletion waits (item 267), each with its time; none, nothing.
+    #[test]
+    fn the_pending_deletions_table_names_each_instance_and_its_time() {
+        let now = Utc::now();
+        let at = now + chrono::Duration::minutes(90);
+        let view = |name: &str, delete_at: Option<DateTime<Utc>>| -> InstanceView {
+            let mut view: InstanceView = serde_json::from_value(json!({
+                "instance_id": Uuid::now_v7(),
+                "offering_id": "of2_x",
+                "restored_from_backup_id": null,
+                "hostname": name,
+                "root_disk_bytes": 10_737_418_240_u64,
+                "state": "stopped",
+                "desired_power_state": "stopped",
+                "holds_capacity": true,
+                "public_ipv4": null,
+                "gateway_tier": null,
+                "network_microusd_per_tib": 0,
+                "created_at": "2026-09-01T00:00:00Z",
+                "billing_started_at": null,
+                "balance_reservation_microusd": 0,
+                "provider_termination": null
+            }))
+            .unwrap();
+            view.delete_at = delete_at;
+            view
+        };
+        assert_eq!(instance_deletions_table(&[view("web-1", None)], now), None);
+        let table =
+            instance_deletions_table(&[view("web-1", Some(at)), view("db", None)], now).unwrap();
+        assert_eq!(
+            table,
+            format!(
+                "Instance deletions\nNAME   DELETING AT\nweb-1  {}",
+                local_moment(at, now)
+            )
+        );
+        let local = at.with_timezone(&chrono::Local);
+        let expected = if local.date_naive() == now.with_timezone(&chrono::Local).date_naive() {
+            local.format("%H:%M").to_string()
+        } else {
+            local.format("%Y-%m-%d %H:%M").to_string()
+        };
+        assert_eq!(local_moment(at, now), expected);
+    }
+
+    /// `ghost instance delete` of an older instance says when it is deleted
+    /// and how to cancel it, and waits for nothing (item 267).
+    #[test]
+    fn a_delayed_deletion_says_when_and_how_to_cancel() {
+        let at = Utc::now() + chrono::Duration::minutes(30);
+        assert_eq!(
+            delayed_deletion_note("web-1", at),
+            format!(
+                "Deleting web-1 at {}. `ghost instance power web-1 on` or `ghost instance keep web-1` cancels.",
+                local_moment(at, Utc::now())
+            )
+        );
+        let cli = Cli::try_parse_from(["ghost", "instance", "keep", "web-1"]).unwrap();
+        assert!(matches!(
+            cli.command,
+            Command::Instance {
+                command: InstanceCommand::Keep(_)
+            }
+        ));
+        let listed = Summary::instances(vec![{
+            let mut view: InstanceView = serde_json::from_value(json!({
+                "instance_id": Uuid::now_v7(),
+                "offering_id": "of2_x",
+                "restored_from_backup_id": null,
+                "hostname": "web-1",
+                "root_disk_bytes": 10_737_418_240_u64,
+                "state": "stopped",
+                "desired_power_state": "stopped",
+                "holds_capacity": true,
+                "public_ipv4": null,
+                "gateway_tier": null,
+                "network_microusd_per_tib": 0,
+                "created_at": "2026-09-01T00:00:00Z",
+                "billing_started_at": null,
+                "balance_reservation_microusd": 0,
+                "provider_termination": null
+            }))
+            .unwrap();
+            view.delete_at = Some(at);
+            view
+        }]);
+        assert_eq!(
+            listed.rows[0]["state"],
+            format!("deleting at {}", local_moment(at, Utc::now()))
+        );
     }
 
     /// With an account key the catalog's offerings are read signed (including private

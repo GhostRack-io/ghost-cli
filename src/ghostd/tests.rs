@@ -303,6 +303,8 @@ fn exit_codes_map_as_a_shell_does() {
 
 fn instance_fixture() -> InstanceView {
     InstanceView {
+        delete_at: None,
+        deletion_safety: None,
         kind: ghostrack_client_api::website::InstanceKind::Vm,
         container: None,
         instance_id: Uuid::now_v7(),
