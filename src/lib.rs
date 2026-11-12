@@ -753,7 +753,9 @@ enum ProviderCommand {
         /// pricing` are such a file, with the whole-host total. No fixed
         /// price per instance: it is the platform's, and a file that sets
         /// `fixed_instance_earnings_microusd_per_month` to anything but 0
-        /// is refused.
+        /// is refused. On a host with several capacity profiles, give the
+        /// parts instead: `{"terms": {...}, "compute": [{"root_pool": ...,
+        /// "compute_earnings": {...}}]}`, each published apart.
         #[arg(long)]
         file: PathBuf,
         /// What a cloud host earns per rental's address and 30-day month,
@@ -6830,17 +6832,15 @@ async fn execute_provider(api: &ApiClient, command: &ProviderCommand) -> Result<
             reason,
             mutation,
         } => {
-            let mut values = host_pricing_input(&read_text_file(file)?)?;
-            if let Some(address) = address_earnings_microusd {
-                values.address_earnings_microusd_per_month = Some(*address);
-            }
+            let request = host_pricing_request(
+                &read_text_file(file)?,
+                *address_earnings_microusd,
+                *expected_revision,
+                reason,
+            )?;
             api.write_retryable(
                 &UpdateHostPricing { host_id: *host_id },
-                &ghostrack_client_api::website::UpdateHostPricingRequest {
-                    expected_revision: *expected_revision,
-                    values,
-                    change_reason: reason.clone(),
-                },
+                &request,
                 &mutation.key(),
             )
             .await
@@ -12827,6 +12827,66 @@ fn host_pricing_input(text: &str) -> Result<ghostrack_client_api::website::HostP
     Ok(input)
 }
 
+/// A host pricing file in its parts (item 257): the host's terms and
+/// each capacity profile's compute earnings, named by its root pool.
+#[derive(Deserialize)]
+#[serde(deny_unknown_fields)]
+struct HostPricingParts {
+    #[serde(default)]
+    terms: Option<ghostrack_client_api::website::HostTermsInput>,
+    #[serde(default)]
+    compute: Vec<ghostrack_client_api::website::ProfileComputeInput>,
+}
+
+/// The request a pricing file makes: today's combined file (`values`), or
+/// the parts when it has a top-level `terms` or `compute` key.
+/// `address_earnings` replaces the file's address earnings, which are the
+/// terms'.
+fn host_pricing_request(
+    text: &str,
+    address_earnings: Option<u64>,
+    expected_revision: u64,
+    reason: &str,
+) -> Result<ghostrack_client_api::website::UpdateHostPricingRequest> {
+    let file: Value = serde_json::from_str(text).context("parse host pricing JSON")?;
+    let is_parts = file
+        .as_object()
+        .is_some_and(|keys| keys.contains_key("terms") || keys.contains_key("compute"));
+    let mut request = ghostrack_client_api::website::UpdateHostPricingRequest {
+        expected_revision,
+        values: None,
+        terms: None,
+        compute: Vec::new(),
+        change_reason: reason.to_owned(),
+    };
+    if is_parts {
+        let mut parts: HostPricingParts =
+            serde_json::from_value(file).context("parse host pricing JSON")?;
+        for part in &parts.compute {
+            part.compute().map_err(|why| {
+                anyhow::anyhow!("host pricing JSON: compute of {}: {why}", part.root_pool)
+            })?;
+        }
+        if let Some(address) = address_earnings {
+            let terms = parts.terms.as_mut().ok_or_else(|| {
+                anyhow::anyhow!(
+                    "--address-earnings sets the host's terms: give them in the file's terms"
+                )
+            })?;
+            terms.address_earnings_microusd_per_month = Some(address);
+        }
+        request.terms = parts.terms;
+        request.compute = parts.compute;
+    } else {
+        let mut values = host_pricing_input(text)?;
+        if let Some(address) = address_earnings {
+            values.address_earnings_microusd_per_month = Some(address);
+        }
+        request.values = Some(values);
+    }
+    Ok(request)
+}
+
 fn read_text_file(path: &Path) -> Result<String> {
     fs::read_to_string(path).with_context(|| format!("read {}", path.display()))
 }
@@ -13959,6 +14019,73 @@ mod tests {
         let both = host_pricing_input(&file(
             r#""compute_earnings": {"microusd_per_month": 2000000, "vcpus": 1}, "base_host_earnings_microusd_per_month": 32000000,"#,
         ))
+        .unwrap_err()
+        .to_string();
+        assert!(both.contains("not both"), "{both}");
+    }
+
+    /// A pricing file makes today's combined request, or the parts of item
+    /// 257 when it has a top-level `terms` or `compute`.
+    #[test]
+    fn a_pricing_file_makes_the_combined_request_or_the_parts() {
+        let combined = host_pricing_request(
+            r#"{"compute_earnings": {"microusd_per_month": 2000000, "vcpus": 1}, "network_earnings_microusd_per_tib": 5000000, "sla_target_basis_points": 9900}"#,
+            Some(1_500_000),
+            3,
+            "cheaper",
+        )
+        .unwrap();
+        assert_eq!(
+            serde_json::to_value(&combined).unwrap(),
+            serde_json::json!({
+                "expected_revision": 3,
+                "values": {
+                    "compute_earnings": {"microusd_per_month": 2_000_000, "vcpus": 1},
+                    "network_earnings_microusd_per_tib": 5_000_000,
+                    "sla_target_basis_points": 9900,
+                    "address_earnings_microusd_per_month": 1_500_000
+                },
+                "change_reason": "cheaper"
+            })
+        );
+        let parts = host_pricing_request(
+            r#"{"terms": {"network_earnings_microusd_per_tib": 5000000, "sla_target_basis_points": 9990}, "compute": [{"root_pool": "hdd/guest-root", "compute_earnings": {"microusd_per_month": 17000000, "vcpus": 1}}, {"root_pool": "vg0/guest-root", "base_host_earnings_microusd_per_month": 32000000}]}"#,
+            Some(1_500_000),
+            4,
+            "per profile",
+        )
+        .unwrap();
+        assert_eq!(
+            serde_json::to_value(&parts).unwrap(),
+            serde_json::json!({
+                "expected_revision": 4,
+                "terms": {
+                    "network_earnings_microusd_per_tib": 5_000_000,
+                    "sla_target_basis_points": 9990,
+                    "address_earnings_microusd_per_month": 1_500_000
+                },
+                "compute": [
+                    {"root_pool": "hdd/guest-root", "compute_earnings": {"microusd_per_month": 17_000_000, "vcpus": 1}},
+                    {"root_pool": "vg0/guest-root", "base_host_earnings_microusd_per_month": 32_000_000}
+                ],
+                "change_reason": "per profile"
+            })
+        );
+        let compute_only = r#"{"compute": [{"root_pool": "hdd/guest-root", "compute_earnings": {"microusd_per_month": 17000000, "vcpus": 1}}]}"#;
+        assert!(host_pricing_request(compute_only, None, 4, "x").is_ok());
+        let address = host_pricing_request(compute_only, Some(1), 4, "x")
+            .unwrap_err()
+            .to_string();
+        assert!(
+            address.contains("give them in the file's terms"),
+            "{address}"
+        );
+        let both = host_pricing_request(
+            r#"{"compute": [{"root_pool": "a", "compute_earnings": {"microusd_per_month": 1, "vcpus": 1}, "base_host_earnings_microusd_per_month": 2}]}"#,
+            None,
+            4,
+            "x",
+        )
         .unwrap_err()
         .to_string();
         assert!(both.contains("not both"), "{both}");
