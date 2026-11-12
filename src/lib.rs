@@ -8450,6 +8450,7 @@ async fn execute_instance(
                     (!args.tags.is_empty()).then(|| args.tags.clone())
                 },
                 lan_mesh_id: args.lan_mesh,
+                host_id: None,
             };
             let accepted = accepted_job(
                 api.write_retryable_answered(&CreateInstance, &request, &key)
@@ -10025,6 +10026,22 @@ async fn mutation_result(
     } else {
         to_value(accepted)
     }
+}
+
+/// Follow the job `job_id` until it ends, polling every `interval`, as
+/// `--wait` does without progress lines: its final snapshot, or
+/// [`JobUnsuccessful`] unless it succeeded. `ghost admin` waits so.
+///
+/// # Errors
+///
+/// [`JobUnsuccessful`] for a job that failed or was cancelled, and read
+/// failures past their retries.
+pub async fn wait_for_job_result(
+    api: &ApiClient,
+    job_id: Uuid,
+    interval: Duration,
+) -> Result<Value> {
+    finished_job(wait_for_job(api, job_id, interval, false).await?)
 }
 
 /// A waited job that ended failed or cancelled. The binary prints its final

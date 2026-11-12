@@ -1700,6 +1700,7 @@ mod tests {
             ssh_key_ids: None,
             tags: None,
             lan_mesh_id: None,
+            host_id: None,
         })
         .unwrap();
 

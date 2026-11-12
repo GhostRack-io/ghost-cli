@@ -2955,6 +2955,12 @@ pub struct CreateInstanceRequest {
     /// instance now. Absent, any host of the offering.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub lan_mesh_id: Option<Uuid>,
+    /// The operator's alone (`ghost admin instance create --host`, item
+    /// 261): place the instance on this host of the offering, which must
+    /// take rentals now; refused (403) for anyone else. `ghost` never sends
+    /// it, and a backend before it refuses the field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host_id: Option<Uuid>,
 }
 
 /// The initial contents for a newly rented instance. Backup restoration is a
