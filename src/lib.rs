@@ -10307,6 +10307,8 @@ fn job_step_words(key: &str) -> String {
         "await_gateway_termination" => "waiting for the gateway to end",
         "terminate_gateway" => "ending the gateway",
         "move_gateway_lease" => "moving the gateway",
+        "change_cloud_address" => "changing the address",
+        "switch_cloud_address" => "switching to the new address",
         "configure_router_gateway" => "configuring the router gateway",
         "unconfigure_router_gateway" => "removing the router gateway",
         "attach_router_address" => "attaching the address",
