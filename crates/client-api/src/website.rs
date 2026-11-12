@@ -998,9 +998,11 @@ pub struct OfferingFilters {
         skip_serializing_if = "Option::is_none"
     )]
     pub disk: Option<DiskChoice>,
-    /// `true`: only offerings whose root storage has a redundant RAID level
-    /// (`raid1`, `raid4`, `raid5`, `raid6` or `raid10`, software or
-    /// hardware). `false` or absent: no filter.
+    /// `true`: only offerings whose root storage has a redundant RAID level:
+    /// software `raid1`, `raid4`, `raid5`, `raid6` or `raid10`, or a
+    /// hardware level numbered from 1 (`raid1`, `raid1e`, `raid50`,
+    /// `raid60`, …) or `raid01`, not `raid0`, `raid00` or the level-unknown
+    /// `raid`. `false` or absent: no filter.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub redundant_disks: Option<bool>,
 }

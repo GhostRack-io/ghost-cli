@@ -450,8 +450,8 @@ struct OfferingFilters {
     /// `raid` (a hardware RAID controller's disk).
     #[arg(long, value_enum)]
     disk: Option<DiskChoice>,
-    /// Only offerings whose root storage is on redundant RAID (RAID 1, 4,
-    /// 5, 6 or 10).
+    /// Only offerings whose root storage is on RAID that survives a
+    /// drive's loss (RAID 1, 5, 6, 10, 50, 60 and the like; not RAID 0).
     #[arg(long)]
     redundant_disks: bool,
     #[command(flatten)]
