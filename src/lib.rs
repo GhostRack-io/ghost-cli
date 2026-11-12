@@ -21130,7 +21130,10 @@ mod tests {
             assert_eq!(output["format"], "raw");
             let disk = fs::read(&image).unwrap();
             assert_eq!(format!("{:x}", Sha256::digest(&disk)), disk_sha256);
-            #[cfg(unix)]
+            // Holes are checked where the filesystem reports them
+            // faithfully: macOS's APFS runners count the skipped zeros as
+            // allocated, so the bytes alone are checked there.
+            #[cfg(target_os = "linux")]
             {
                 use std::os::unix::fs::MetadataExt as _;
                 let allocated = fs::metadata(&image).unwrap().blocks() * 512;
