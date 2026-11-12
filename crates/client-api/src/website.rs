@@ -3880,6 +3880,14 @@ pub struct HttpProxyEntryView {
     /// Whether customer DNS setup is required; unknown on older servers.
     #[serde(default)]
     pub cname_setup_required: Option<bool>,
+    /// The TXT record that proves the hostname for the account instead of
+    /// the CNAME, e.g. at an apex: its name (`_ghostrack.<hostname>`) and
+    /// value (`ghostrack-verify=<token>`). Set with `cname_target` once the
+    /// account has a token for the name; omitted by older servers.
+    #[serde(default)]
+    pub txt_name: Option<String>,
+    #[serde(default)]
+    pub txt_value: Option<String>,
     #[serde(default)]
     pub protocol: HttpProxyProtocol,
     pub subdomain: String,
