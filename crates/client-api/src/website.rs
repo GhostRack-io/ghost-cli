@@ -5258,6 +5258,9 @@ pub enum JobKind {
     /// A VM's rescue ended: by the renter, by its stop or reset, or by a stop of the platform's.
     /// Older releases read it as [`Self::Unknown`].
     EndInstanceRescue,
+    /// The renter changed a cloud instance between its Shared IP and a Dedicated IP. Older
+    /// releases read it as [`Self::Unknown`].
+    ChangeCloudAddress,
     /// A variant of a newer release, which this one does not know.
     #[serde(other)]
     #[cfg_attr(feature = "clap", value(skip))]
@@ -8057,6 +8060,9 @@ pub struct MoveGatewayLocationRequest {
 /// for a shared tier (for high bandwidth a location with an enabled Vultr region, or without one
 /// the nearest to the host), or both; at least one of them, and at least one different from now.
 /// Every change gives the instance a new public address and costs the instance creation charge.
+///
+/// A cloud instance changes between its Shared IP and a Dedicated IP: `{"dedicated_ip": true}`
+/// changes up, `{"tier": "shared_ip"}` changes down; it restarts with its new address.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ChangeGatewayRequest {
@@ -8071,6 +8077,9 @@ pub struct ChangeGatewayRequest {
     /// The location to change to; absent keeps the instance's.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gateway_location: Option<String>,
+    /// For a cloud instance, an address of its own from its host, in place of its Shared IP.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub dedicated_ip: bool,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

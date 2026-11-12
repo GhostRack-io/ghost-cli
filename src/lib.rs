@@ -8825,6 +8825,7 @@ async fn execute_instance(
                     &ChangeGatewayRequest {
                         tier: args.tier,
                         gateway_location: args.location.clone(),
+                        dedicated_ip: false,
                     },
                     &retried_by_id(args.mutation.key(), &args.instance_id, instance_id),
                 )
@@ -10550,6 +10551,7 @@ fn job_kind_words(kind: JobKind) -> String {
         JobKind::ResetInstanceAccess => "resetting SSH access",
         JobKind::RescueInstance => "booting into rescue",
         JobKind::EndInstanceRescue => "ending the rescue",
+        JobKind::ChangeCloudAddress => "changing its address",
         JobKind::UpgradeInstance => "upgrading",
         JobKind::RotateGatewayKeys => "rotating gateway keys",
         JobKind::MoveGatewayLease => "moving the gateway",
