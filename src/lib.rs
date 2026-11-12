@@ -10367,7 +10367,7 @@ fn job_step_words(key: &str) -> String {
         "unconfigure_router_gateway" => "removing the router gateway",
         "attach_router_address" => "attaching the address",
         "detach_router_address" => "detaching the address",
-        "start_address_check" => "starting the address check",
+        "start_address_check" | "start_container_address_check" => "starting the address check",
         "probe_address_check" => "probing the address",
         "stop_address_check" => "stopping the address check",
         other => return escape_control(&other.replace('_', " ")).into_owned(),
