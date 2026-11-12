@@ -14985,12 +14985,17 @@ mod tests {
     }
 
     /// A renter or provider never reads of a platform fee: the long help of
-    /// every customer command names no fee besides the creation fee.
+    /// every customer command names no fee besides the creation fee and the
+    /// setup fee of an address of its own (item 240).
     #[test]
     fn renter_and_provider_help_names_no_platform_fee() {
         fn walk(command: &mut clap::Command, path: &str, found: &mut Vec<String>) {
             let help = command.render_long_help().to_string().to_lowercase();
-            if help.replace("creation fee", "").contains("fee") {
+            if help
+                .replace("creation fee", "")
+                .replace("setup fee", "")
+                .contains("fee")
+            {
                 found.push(format!("{path}:\n{help}"));
             }
             for subcommand in command.get_subcommands_mut() {
