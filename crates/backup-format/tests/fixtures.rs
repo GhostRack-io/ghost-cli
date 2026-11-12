@@ -210,9 +210,10 @@ fn zero_chunks_are_holes_in_the_sparse_output() {
         let disk = std::fs::read(&path).unwrap();
         assert_eq!(Sha256::digest(&disk).as_slice(), fixture.disk_sha256);
         // The 4 MiB zero chunk takes no blocks: what is allocated is the
-        // two data chunks, rounded up to the file system's blocks. Only
-        // Unix reports a file's blocks; the CLI's CI also tests on Windows.
-        #[cfg(unix)]
+        // two data chunks, rounded up to the file system's blocks. Checked
+        // on Linux only: Windows reports no blocks, and the macOS arm64
+        // runners' APFS counts the hole as allocated.
+        #[cfg(target_os = "linux")]
         {
             use std::os::unix::fs::MetadataExt as _;
             let allocated = std::fs::metadata(&path).unwrap().blocks() * 512;
