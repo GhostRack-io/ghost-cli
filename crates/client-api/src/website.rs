@@ -2325,12 +2325,18 @@ pub struct LocationView {
 pub struct OfferingHostStorage {
     pub host_id: Uuid,
     pub storage_devices: Vec<StorageDeviceInventory>,
-    /// How many instances of the offering this host alone could admit now,
-    /// counted as [`OfferingView::available_instances`] is, which is the
-    /// sum of these over the offering's hosts. At least one for a host the
-    /// offering lists. Absent (0) from older backends.
+    /// How many instances of the offering this pool of the host admits of
+    /// the host's count, counted as [`OfferingView::available_instances`]
+    /// is: a host's entries sum to its count, and every host's to the
+    /// offering's. At least one for an entry the offering lists. Absent (0)
+    /// from older backends.
     #[serde(default)]
     pub available_instances: u32,
+    /// The root pool these drives are, where the host has two or more pools
+    /// in the offering (item 257, D4): an opaque ID, the same for the pool
+    /// in every offering; absent otherwise, and from older backends.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub storage_pool_id: Option<Uuid>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -5200,38 +5206,117 @@ impl HostPricingInput {
     ///
     /// What is wrong with the input, in words for the provider.
     pub const fn compute(&self) -> Result<ComputeEarningsForm, &'static str> {
-        match (
+        compute_form(
             self.compute_earnings,
             self.base_host_earnings_microusd_per_month,
-        ) {
-            (Some(_), Some(_)) => {
-                Err("give compute_earnings or base_host_earnings_microusd_per_month, not both")
-            }
-            (None, None) => Err(
-                "give the compute earnings: compute_earnings (per vCPU) or base_host_earnings_microusd_per_month (for the whole host)",
-            ),
-            (Some(earnings), None) => {
-                if earnings.vcpus == 0 || earnings.vcpus > MAXIMUM_COMPUTE_VCPUS {
-                    Err("compute_earnings.vcpus must be 1 to 16777216")
-                } else {
-                    Ok(ComputeEarningsForm::ForVcpus(ComputeEarnings {
-                        microusd_per_month: earnings.microusd_per_month,
-                        vcpus: earnings.vcpus,
-                    }))
-                }
-            }
-            (None, Some(total)) => Ok(ComputeEarningsForm::WholeHost(total)),
+        )
+    }
+}
+
+/// The compute earnings of one of the two forms, or why they are none.
+const fn compute_form(
+    compute_earnings: Option<ComputeEarningsInput>,
+    base_host_earnings_microusd_per_month: Option<u64>,
+) -> Result<ComputeEarningsForm, &'static str> {
+    match (compute_earnings, base_host_earnings_microusd_per_month) {
+        (Some(_), Some(_)) => {
+            Err("give compute_earnings or base_host_earnings_microusd_per_month, not both")
         }
+        (None, None) => Err(
+            "give the compute earnings: compute_earnings (per vCPU) or base_host_earnings_microusd_per_month (for the whole host)",
+        ),
+        (Some(earnings), None) => {
+            if earnings.vcpus == 0 || earnings.vcpus > MAXIMUM_COMPUTE_VCPUS {
+                Err("compute_earnings.vcpus must be 1 to 16777216")
+            } else {
+                Ok(ComputeEarningsForm::ForVcpus(ComputeEarnings {
+                    microusd_per_month: earnings.microusd_per_month,
+                    vcpus: earnings.vcpus,
+                }))
+            }
+        }
+        (None, Some(total)) => Ok(ComputeEarningsForm::WholeHost(total)),
+    }
+}
+
+/// A host's terms (item 257): what it earns per TiB of a rental's
+/// traffic (0 on a home host), its SLA target and, left out to keep
+/// them, its address earnings (0 on a home host). They reach every
+/// rental of the host.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct HostTermsInput {
+    pub network_earnings_microusd_per_tib: u64,
+    pub sla_target_basis_points: u32,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub address_earnings_microusd_per_month: Option<u64>,
+}
+
+/// One capacity profile's compute earnings (item 257), named by its
+/// root pool, in one of the two forms of [`HostPricingInput`]. They
+/// reach that profile's rentals alone.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ProfileComputeInput {
+    pub root_pool: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compute_earnings: Option<ComputeEarningsInput>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_host_earnings_microusd_per_month: Option<u64>,
+}
+
+impl ProfileComputeInput {
+    /// The compute earnings the input gives, by the rules of
+    /// [`HostPricingInput::compute`].
+    ///
+    /// # Errors
+    ///
+    /// What is wrong with the input, in words for the provider.
+    pub const fn compute(&self) -> Result<ComputeEarningsForm, &'static str> {
+        compute_form(
+            self.compute_earnings,
+            self.base_host_earnings_microusd_per_month,
+        )
     }
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct UpdateHostPricingRequest {
-    /// Zero creates the first profile; subsequent updates compare revisions.
+    /// Zero creates the first prices; subsequent updates compare revisions.
     pub expected_revision: u64,
-    pub values: HostPricingInput,
+    /// The terms and one profile's compute together, as clients of
+    /// before item 257 send them: taken only on a host with at most one
+    /// capacity profile. Give `terms` and `compute` instead.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub values: Option<HostPricingInput>,
+    /// The host's terms, published apart (item 257).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub terms: Option<HostTermsInput>,
+    /// Capacity profiles' compute earnings, each published apart (item 257).
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub compute: Vec<ProfileComputeInput>,
     pub change_reason: String,
+}
+
+/// A capacity profile's compute earnings in a host's pricing (item
+/// 257): its root pool, whether it is the primary, and what it earns,
+/// none while its provider has published none, when its sizes are not
+/// listed.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct CapacityProfilePricingView {
+    pub root_pool: String,
+    pub primary: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compute_earnings: Option<ComputeEarnings>,
+    /// The whole host's compute at these earnings and its saleable
+    /// vCPUs now, as [`HostPricingValues::base_host_earnings_microusd_per_month`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_host_earnings_microusd_per_month: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub published_at: Option<DateTime<Utc>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub existing_instances_effective_at: Option<DateTime<Utc>>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -5252,6 +5337,18 @@ pub struct HostPricingView {
     /// allowed NUMA nodes. None as `compute_earnings`.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub saleable_vcpus: Option<u32>,
+    /// Each live capacity profile's compute earnings, the first first
+    /// (item 257); empty for a host with none yet, and in a host list.
+    /// `values` and `compute_earnings` stay the terms with the primary's
+    /// compute, for clients of before.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub capacity_profiles: Vec<CapacityProfilePricingView>,
+    /// When the host's terms were last published, and when the rentals of
+    /// then take them (item 257); none in a host list.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub terms_published_at: Option<DateTime<Utc>>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub terms_effective_at: Option<DateTime<Utc>>,
 }
 
 /// What one rental earns its provider at the prices in effect, as the
