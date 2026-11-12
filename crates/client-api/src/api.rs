@@ -206,6 +206,9 @@ endpoints! {
     /// The enabled locations; with `listed=true` only those the catalog
     /// lists an offering in now, as the cached catalog has them.
     ListLocations = public GET "/v1/catalog/locations" => Vec<LocationView>;
+    /// The distinct CPU models of the listed offerings, sorted: the
+    /// choices of the catalog's `cpu_model` filter (item 264).
+    ListCpuModels = public GET "/v1/catalog/cpu-models" => Vec<String>;
     /// The listed offerings, cheapest first by the listed price
     /// ([`OfferingView::price_for`] of the `ip` asked for, dedicated
     /// without it) and then by ID; `after=PRICE.ID` starts after that

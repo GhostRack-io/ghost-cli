@@ -973,6 +973,101 @@ pub struct OfferingFilters {
     /// without a score is left out.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub minimum_instance_mark: Option<u64>,
+    /// Only offerings of this CPU model ([`OfferingView::cpu_model`]),
+    /// compared trimmed and in any case; at most 200 characters. A model
+    /// no offering has lists none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cpu_model: Option<String>,
+    /// 1 to 4: only offerings every host of which has at least this x86-64
+    /// level ([`OfferingView::host_minimum_x86_64_level`]).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub minimum_x86_64_level: Option<u8>,
+    /// Only offerings every host of which has this memory
+    /// ([`OfferingView::memory_technology`], [`OfferingView::memory_ecc`]).
+    #[serde(
+        default,
+        deserialize_with = "known_option",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub memory: Option<MemoryChoice>,
+    /// Only offerings whose root pool drives are all of this class
+    /// ([`StorageDeviceInventory::class`]).
+    #[serde(
+        default,
+        deserialize_with = "known_option",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub disk: Option<DiskChoice>,
+    /// `true`: only offerings whose root storage has a redundant RAID level
+    /// (`raid1`, `raid4`, `raid5`, `raid6` or `raid10`, software or
+    /// hardware). `false` or absent: no filter.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub redundant_disks: Option<bool>,
+}
+
+/// Which memory a catalog list holds ([`OfferingFilters::memory`]).
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "clap", derive(clap::ValueEnum))]
+#[cfg_attr(feature = "clap", value(rename_all = "snake_case"))]
+pub enum MemoryChoice {
+    Ddr2,
+    Ddr3,
+    Ddr4,
+    Ddr5,
+    /// Error-correcting memory, of any generation.
+    Ecc,
+    /// A variant of a newer release, which this one does not know.
+    #[serde(other)]
+    #[cfg_attr(feature = "clap", value(skip))]
+    Unknown,
+}
+
+impl MemoryChoice {
+    /// The memory technology ([`OfferingView::memory_technology`]) this
+    /// choice names, `None` for ECC and an unknown choice.
+    #[must_use]
+    pub const fn technology(self) -> Option<&'static str> {
+        match self {
+            Self::Ddr2 => Some("DDR2"),
+            Self::Ddr3 => Some("DDR3"),
+            Self::Ddr4 => Some("DDR4"),
+            Self::Ddr5 => Some("DDR5"),
+            Self::Ecc | Self::Unknown => None,
+        }
+    }
+}
+
+/// Which root pool drives a catalog list holds ([`OfferingFilters::disk`]).
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+#[cfg_attr(feature = "clap", derive(clap::ValueEnum))]
+#[cfg_attr(feature = "clap", value(rename_all = "snake_case"))]
+pub enum DiskChoice {
+    Nvme,
+    Ssd,
+    Hdd,
+    /// A hardware RAID controller's logical disk.
+    Raid,
+    /// A variant of a newer release, which this one does not know.
+    #[serde(other)]
+    #[cfg_attr(feature = "clap", value(skip))]
+    Unknown,
+}
+
+impl DiskChoice {
+    /// The drive class this choice names, `None` for an unknown choice.
+    #[must_use]
+    pub const fn class(self) -> Option<crate::hypervisor::StorageClass> {
+        use crate::hypervisor::StorageClass;
+        match self {
+            Self::Nvme => Some(StorageClass::Nvme),
+            Self::Ssd => Some(StorageClass::Ssd),
+            Self::Hdd => Some(StorageClass::Hdd),
+            Self::Raid => Some(StorageClass::Raid),
+            Self::Unknown => None,
+        }
+    }
 }
 
 /// The query of `GET /v1/catalog/providers` (`ListProviders`): a page of
@@ -2286,6 +2381,22 @@ pub struct OfferingView {
     /// Absent from older backends.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub host_x86_64_level: Option<u8>,
+    /// The lowest x86-64 level (1 to 4) among all the offering's hosts, a
+    /// host that never reported one counting as 1: the level every rental
+    /// of it gets. Absent from older backends.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host_minimum_x86_64_level: Option<u8>,
+    /// The memory technology every memory module of every host of the
+    /// offering reports, upper-cased (`DDR4`); absent where hosts or
+    /// modules differ, a host reports no module or `Unknown`, and from
+    /// older backends.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub memory_technology: Option<String>,
+    /// Whether every host of the offering has error-correcting memory: its
+    /// kernel reports EDAC memory controllers. Absent (false) otherwise and
+    /// from older backends.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub memory_ecc: bool,
     pub cpu_tier: CpuTier,
     pub vcpu_count: u32,
     pub memory_bytes: u64,

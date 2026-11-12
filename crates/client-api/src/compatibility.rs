@@ -131,6 +131,8 @@ fallback!(
     crate::website::InstanceKind,
     crate::website::InstanceState,
     crate::website::KindChoice,
+    crate::website::DiskChoice,
+    crate::website::MemoryChoice,
     crate::website::JobKind,
     crate::website::JobState,
     crate::website::JobStepState,
@@ -368,9 +370,26 @@ mod tests {
         });
         let older: OfferingView = serde_json::from_value(offering.clone()).unwrap();
         assert_eq!(older.host_x86_64_level, None);
+        assert_eq!(older.host_minimum_x86_64_level, None);
+        assert_eq!(older.memory_technology, None);
+        assert!(!older.memory_ecc);
+        let written = serde_json::to_value(&older).unwrap();
+        for absent in [
+            "host_minimum_x86_64_level",
+            "memory_technology",
+            "memory_ecc",
+        ] {
+            assert!(written.get(absent).is_none(), "{absent}");
+        }
         offering["host_x86_64_level"] = 2.into();
+        offering["host_minimum_x86_64_level"] = 1.into();
+        offering["memory_technology"] = "DDR4".into();
+        offering["memory_ecc"] = true.into();
         let newer: OfferingView = serde_json::from_value(offering).unwrap();
         assert_eq!(newer.host_x86_64_level, Some(2));
+        assert_eq!(newer.host_minimum_x86_64_level, Some(1));
+        assert_eq!(newer.memory_technology.as_deref(), Some("DDR4"));
+        assert!(newer.memory_ecc);
 
         let mut instance = serde_json::json!({
             "instance_id": "00000000-0000-0000-0000-000000000000", "offering_id": "o",
@@ -384,6 +403,63 @@ mod tests {
         instance["host_x86_64_level"] = 3.into();
         let newer: InstanceView = serde_json::from_value(instance).unwrap();
         assert_eq!(newer.host_x86_64_level, Some(3));
+    }
+
+    /// Capacity's hardware filters (item 264) round-trip through a query
+    /// string in the struct's order, and a choice of a newer release reads
+    /// as Unknown.
+    #[test]
+    fn the_hardware_filters_round_trip_through_a_query() {
+        use crate::website::{DiskChoice, MemoryChoice, OfferingFilters};
+        let filters = OfferingFilters {
+            minimum_vcpus: Some(2),
+            cpu_model: Some("AMD EPYC 7543 32-Core Processor".to_owned()),
+            minimum_x86_64_level: Some(3),
+            memory: Some(MemoryChoice::Ecc),
+            disk: Some(DiskChoice::Nvme),
+            redundant_disks: Some(true),
+            ..OfferingFilters::default()
+        };
+        let query = serde_urlencoded::to_string(&filters).unwrap();
+        assert_eq!(
+            query,
+            "minimum_vcpus=2&cpu_model=AMD+EPYC+7543+32-Core+Processor&minimum_x86_64_level=3&memory=ecc&disk=nvme&redundant_disks=true"
+        );
+        let read: OfferingFilters = serde_urlencoded::from_str(&query).unwrap();
+        assert_eq!(read, filters);
+        for (memory, choice) in [
+            ("ddr2", MemoryChoice::Ddr2),
+            ("ddr3", MemoryChoice::Ddr3),
+            ("ddr4", MemoryChoice::Ddr4),
+            ("ddr5", MemoryChoice::Ddr5),
+        ] {
+            let read: OfferingFilters =
+                serde_urlencoded::from_str(&format!("memory={memory}")).unwrap();
+            assert_eq!(read.memory, Some(choice));
+        }
+        for (disk, choice) in [
+            ("ssd", DiskChoice::Ssd),
+            ("hdd", DiskChoice::Hdd),
+            ("raid", DiskChoice::Raid),
+        ] {
+            let read: OfferingFilters =
+                serde_urlencoded::from_str(&format!("disk={disk}")).unwrap();
+            assert_eq!(read.disk, Some(choice));
+        }
+        // A choice of a newer release reads as Unknown, and the query that
+        // names one is refused, as `ip` and `kind` are.
+        assert_eq!(
+            serde_json::from_str::<MemoryChoice>(r#""ddr6""#).unwrap(),
+            MemoryChoice::Unknown
+        );
+        assert_eq!(
+            serde_json::from_str::<DiskChoice>(r#""tape""#).unwrap(),
+            DiskChoice::Unknown
+        );
+        assert!(serde_urlencoded::from_str::<OfferingFilters>("memory=ddr6").is_err());
+        assert!(serde_urlencoded::from_str::<OfferingFilters>("disk=tape").is_err());
+        assert_eq!(MemoryChoice::Ddr5.technology(), Some("DDR5"));
+        assert_eq!(MemoryChoice::Ecc.technology(), None);
     }
 
     /// A host's opening checks are additive (item 193d): a view without

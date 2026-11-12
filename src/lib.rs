@@ -89,7 +89,7 @@ use ghostrack_client_api::{
         CloudIpPoolView, ContainerEnvVar, ContainerImageView, ContainerLogView,
         CreateBackupRequest, CreateCloudIpPoolRequest, CreateContainerRequest,
         CreateHostEnrollmentTokenRequest, CreateInstanceRequest, CreateProviderPayoutRequest,
-        CreateSupportTicketRequest, DeclareHostEmergencyRequest, DepositLookupView,
+        CreateSupportTicketRequest, DeclareHostEmergencyRequest, DepositLookupView, DiskChoice,
         DownloadBackupRequest, GatewayTier, GatewayTrafficView, GithubUnlinked,
         HandOverCloudIpPoolRequest, HostAgentUpdateView, HostEnrollmentToken, HostModeFilter,
         HostPrivacyView, ImageView, InstanceConsoleLogView, InstanceEgressLevel, InstanceKind,
@@ -97,13 +97,13 @@ use ghostrack_client_api::{
         InstanceState, InstanceStateFilter, InstanceTagView, InstanceUpgradeView, InstanceView,
         IpChoice, JobAccepted, JobEventView, JobKind, JobPage, JobState, JobStateFilter,
         JobStepState, JobView, KindChoice, LedgerKind, LocationView, LoginGrant,
-        MAX_SSH_PUBLIC_KEYS, MigrateAccountSeedRequest, MoveGatewayLocationRequest, OfferingView,
-        PortForwardChange, PrivateRenterView, ProviderAgentsView, ProviderBalanceView,
-        ProviderConversionView, ProviderDisplayNameView, ProviderHostDetailView, ProviderHostView,
-        ProviderIncidentSeverity, ProviderIncidentState, ProviderIncidentView,
-        ProviderOutageDetailView, ProviderOutagePage, ProviderPayoutAddressView,
-        ProviderPayoutView, ProviderReliabilityView, ProviderUptimeView, RedeployInstanceRequest,
-        RedeploySetting, ReinstallInstanceRequest, RenameInstanceRequest,
+        MAX_SSH_PUBLIC_KEYS, MemoryChoice, MigrateAccountSeedRequest, MoveGatewayLocationRequest,
+        OfferingView, PortForwardChange, PrivateRenterView, ProviderAgentsView,
+        ProviderBalanceView, ProviderConversionView, ProviderDisplayNameView,
+        ProviderHostDetailView, ProviderHostView, ProviderIncidentSeverity, ProviderIncidentState,
+        ProviderIncidentView, ProviderOutageDetailView, ProviderOutagePage,
+        ProviderPayoutAddressView, ProviderPayoutView, ProviderReliabilityView, ProviderUptimeView,
+        RedeployInstanceRequest, RedeploySetting, ReinstallInstanceRequest, RenameInstanceRequest,
         RequestProviderDisplayNameRequest, RescueInstanceRequest, ResetInstanceAccessRequest,
         RestoreBackupRequest, RotateGatewayKeysRequest, SSH_PUBLIC_KEY_TYPES,
         ScheduleHostRetirementRequest, ScheduleInstanceRetirementRequest, SessionRevocationView,
@@ -333,7 +333,7 @@ enum CatalogCommand {
     /// Every kind is listed unless `--kind` names one. The `kinds` column
     /// names what each can be rented as, the kind it is offered as by
     /// default first.
-    Offerings(OfferingFilters),
+    Offerings(Box<OfferingFilters>),
     /// Show one listed offering in full: the hardware and storage of its
     /// hosts, their network test readings, and every price.
     Offering {
@@ -434,6 +434,26 @@ struct OfferingFilters {
     /// host, a count is that host's room alone).
     #[arg(long, value_name = "N", value_parser = clap::value_parser!(u32).range(1..))]
     available: Option<u32>,
+    /// Only offerings of this CPU model, as an offering's `cpu_model` shows
+    /// it, in any case.
+    #[arg(long, value_name = "MODEL")]
+    cpu_model: Option<String>,
+    /// Only offerings every host of which has at least this x86-64 level,
+    /// 1 to 4.
+    #[arg(long = "min-x86-64-level", value_name = "LEVEL", value_parser = clap::value_parser!(u8).range(1..=4))]
+    min_x86_64_level: Option<u8>,
+    /// Only offerings every host of which has this memory: `ddr2`, `ddr3`,
+    /// `ddr4`, `ddr5`, or `ecc` (error-correcting, of any generation).
+    #[arg(long, value_enum)]
+    memory: Option<MemoryChoice>,
+    /// Only offerings whose root drives are all `nvme`, `ssd`, `hdd` or
+    /// `raid` (a hardware RAID controller's disk).
+    #[arg(long, value_enum)]
+    disk: Option<DiskChoice>,
+    /// Only offerings whose root storage is on redundant RAID (RAID 1, 4,
+    /// 5, 6 or 10).
+    #[arg(long)]
+    redundant_disks: bool,
     #[command(flatten)]
     placement: OfferingPlacementFilters,
     /// List at most this many offerings, 1 to 500; 500 when left out.
@@ -3278,7 +3298,13 @@ pub async fn execute(cli: &Cli) -> Result<Value> {
             let api = api_client(cli)?;
             match command {
                 Some(command) => execute_catalog(&api, command).await,
-                None => execute_catalog(&api, &CatalogCommand::Offerings(offerings.clone())).await,
+                None => {
+                    execute_catalog(
+                        &api,
+                        &CatalogCommand::Offerings(Box::new(offerings.clone())),
+                    )
+                    .await
+                }
             }
         }
         Command::Account { command } => {
@@ -3981,8 +4007,8 @@ impl Summary {
             Command::Catalog {
                 command: None,
                 offerings: filters,
-            }
-            | Command::Catalog {
+            } => parsed(output).map(|offerings| Self::offerings(offerings, filters.ip())),
+            Command::Catalog {
                 command: Some(CatalogCommand::Offerings(filters)),
                 ..
             } => parsed(output).map(|offerings| Self::offerings(offerings, filters.ip())),
@@ -13383,6 +13409,17 @@ impl OfferingFilters {
                     .map(|bytes| bytes.to_string()),
             ),
             ("minimum_available", self.available.map(|n| n.to_string())),
+            ("cpu_model", self.cpu_model.clone()),
+            (
+                "minimum_x86_64_level",
+                self.min_x86_64_level.map(|level| level.to_string()),
+            ),
+            ("memory", self.memory.map(wire_name)),
+            ("disk", self.disk.map(wire_name)),
+            (
+                "redundant_disks",
+                self.redundant_disks.then(|| "true".to_owned()),
+            ),
             ("limit", self.limit.map(|limit| limit.to_string())),
             ("after", self.after.clone()),
         ] {
@@ -14057,6 +14094,34 @@ mod tests {
         assert!(
             Cli::try_parse_from(["ghost", "catalog", "offerings", "--kind", "unknown"]).is_err()
         );
+        assert_eq!(
+            query(&[
+                "--cpu-model",
+                "AMD EPYC 7543",
+                "--min-x86-64-level",
+                "3",
+                "--memory",
+                "ecc",
+                "--disk",
+                "nvme",
+                "--redundant-disks",
+            ]),
+            "kind=any&cpu_model=AMD+EPYC+7543&minimum_x86_64_level=3&memory=ecc&disk=nvme&redundant_disks=true"
+        );
+        assert_eq!(query(&["--memory", "ddr5"]), "kind=any&memory=ddr5");
+        assert_eq!(query(&["--disk", "raid"]), "kind=any&disk=raid");
+        for refused in [
+            ["--min-x86-64-level", "5"],
+            ["--min-x86-64-level", "0"],
+            ["--memory", "unknown"],
+            ["--disk", "tape"],
+        ] {
+            assert!(
+                Cli::try_parse_from(["ghost", "catalog", "offerings"].iter().chain(&refused))
+                    .is_err(),
+                "{refused:?}"
+            );
+        }
         assert_eq!(query(&["--ip", "shared"]), "ip=shared&kind=any");
         assert_eq!(query(&["--ip", "dedicated"]), "ip=dedicated&kind=any");
         assert!(
