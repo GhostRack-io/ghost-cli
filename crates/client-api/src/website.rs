@@ -5353,6 +5353,10 @@ pub struct UserNotificationView {
     pub title: String,
     pub message: String,
     pub instance_id: Option<Uuid>,
+    /// The VPN connection the notice is about; none from a backend of
+    /// before.
+    #[serde(default)]
+    pub vpn_connection_id: Option<Uuid>,
     pub host_id: Option<Uuid>,
     pub created_at: DateTime<Utc>,
     pub read_at: Option<DateTime<Utc>>,
