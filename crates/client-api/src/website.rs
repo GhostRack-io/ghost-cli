@@ -3680,6 +3680,34 @@ pub struct InstanceUpgradeView {
     pub available: bool,
 }
 
+/// What changing a cloud instance's public address costs and gives, and whether its host has room
+/// for the new side now (`ListInstanceAddressChanges`): one entry, or none when the instance
+/// cannot change its address.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct InstanceAddressChangeView {
+    /// The side it changes to: `true` changes up to a Dedicated IP (`ChangeGateway` with
+    /// `dedicated_ip`), `false` down to the host's Shared IP (`tier` `shared_ip`).
+    pub dedicated_ip: bool,
+    /// The instance creation charge the change costs.
+    pub charge_microusd: u64,
+    /// The one-time setup fee of a Dedicated IP, charged beside it; 0 for a change down.
+    pub setup_fee_microusd: u64,
+    /// The monthly price of the Dedicated IP the instance would pay; 0 for a change down.
+    pub address_microusd_per_month: u64,
+    /// The traffic rate per TiB the instance would pay after the change: the provider's rate
+    /// times the new side's factor, rounded up.
+    pub combined_microusd_per_tib: u64,
+    /// For a change down, the incoming ports a slice of the host's Shared IP has.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub shared_ip_ports: Option<u16>,
+    /// The bandwidth limit after the change.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bandwidth: Option<BandwidthView>,
+    /// Whether the host has an address or a slice free for the new side right now. Nothing is
+    /// held: what is free now may not be when the change is asked for.
+    pub available: bool,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ReinstallInstanceRequest {

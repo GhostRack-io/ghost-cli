@@ -13,30 +13,30 @@ use crate::website::{
     CreateSupportTicketRequest, DeclareHostEmergencyRequest, DownloadBackupRequest,
     EnableTotpRequest, GatewayTrafficView, GithubLoginRequest, GithubLoginStart, GithubUnlinked,
     HandOverCloudIpPoolRequest, HistoryPage, HostAgentUpdateView, HostEnrollmentToken,
-    HostNetworkTestsView, HostPricingView, HostPrivacyView, ImageView, InstanceConsoleLogView,
-    InstanceConsoleSessionsView, InstanceHardwareView, InstanceLocationView,
-    InstanceProviderTerminationView, InstanceProviderView, InstanceSystemView, InstanceTagView,
-    InstanceUpgradeView, InstanceView, JobAccepted, JobPage, JobView, LocationView, LoginGrant,
-    MigrateAccountSeedRequest, NotificationsReadView, OfferingView, PasswordChallenge,
-    PasswordChallengeRequest, PasswordLoginRequest, PendingAccountActionView, PrivateRenterView,
-    ProtectedBalanceView, ProviderAgentsView, ProviderBalanceView, ProviderDisplayNameView,
-    ProviderHostDetailView, ProviderHostView, ProviderIncidentView, ProviderOutageDetailView,
-    ProviderOutagePage, ProviderPayoutAddressView, ProviderPayoutView, ProviderReliabilityView,
-    ProviderRentalView, ProviderSecurityDepositView, ProviderUptimeView, RedeemLoginGrantRequest,
-    RedeemLoginGrantResponse, RedeployInstanceRequest, ReinstallInstanceRequest,
-    ReleaseChannelsView, RemoveAccountSshKeyRequest, RenameInstanceRequest,
-    RequestAccountCloseRequest, RequestProviderDisplayNameRequest, RestoreBackupRequest,
-    RotateGatewayKeysRequest, ScheduleHostRetirementRequest, ScheduleInstanceRetirementRequest,
-    SessionCodeRequest, SessionCodeView, SessionRevocationView, SetAgentUpdatePolicyRequest,
-    SetBackupScheduleRequest, SetHostPrivateRequest, SetHostRentalPauseRequest,
-    SetNotificationReadRequest, SetPortForwardsRequest, SetPowerStateRequest,
-    SetProtectedBalanceRequest, SetProviderIncidentStateRequest, SetProviderPayoutAddressRequest,
-    SetSupportTicketStateRequest, SetTagRedundantRequest, SetWebsitePasswordRequest,
-    StartAgentUpdateSequenceRequest, SupportTicketSummaryView, SupportTicketView,
-    TagInstanceRequest, TotpDisabled, TotpView, TrialClaimStatusView, TrialClaimView,
-    UpdateHostPricingRequest, UpdateInstanceRequest, UpgradeInstanceRequest, UserNotificationView,
-    WebsitePasswordRemoved, WebsitePasswordView, WithdrawProviderSecurityDepositRequest,
-    WriteProviderReviewRequest,
+    HostNetworkTestsView, HostPricingView, HostPrivacyView, ImageView, InstanceAddressChangeView,
+    InstanceConsoleLogView, InstanceConsoleSessionsView, InstanceHardwareView,
+    InstanceLocationView, InstanceProviderTerminationView, InstanceProviderView,
+    InstanceSystemView, InstanceTagView, InstanceUpgradeView, InstanceView, JobAccepted, JobPage,
+    JobView, LocationView, LoginGrant, MigrateAccountSeedRequest, NotificationsReadView,
+    OfferingView, PasswordChallenge, PasswordChallengeRequest, PasswordLoginRequest,
+    PendingAccountActionView, PrivateRenterView, ProtectedBalanceView, ProviderAgentsView,
+    ProviderBalanceView, ProviderDisplayNameView, ProviderHostDetailView, ProviderHostView,
+    ProviderIncidentView, ProviderOutageDetailView, ProviderOutagePage, ProviderPayoutAddressView,
+    ProviderPayoutView, ProviderReliabilityView, ProviderRentalView, ProviderSecurityDepositView,
+    ProviderUptimeView, RedeemLoginGrantRequest, RedeemLoginGrantResponse, RedeployInstanceRequest,
+    ReinstallInstanceRequest, ReleaseChannelsView, RemoveAccountSshKeyRequest,
+    RenameInstanceRequest, RequestAccountCloseRequest, RequestProviderDisplayNameRequest,
+    RestoreBackupRequest, RotateGatewayKeysRequest, ScheduleHostRetirementRequest,
+    ScheduleInstanceRetirementRequest, SessionCodeRequest, SessionCodeView, SessionRevocationView,
+    SetAgentUpdatePolicyRequest, SetBackupScheduleRequest, SetHostPrivateRequest,
+    SetHostRentalPauseRequest, SetNotificationReadRequest, SetPortForwardsRequest,
+    SetPowerStateRequest, SetProtectedBalanceRequest, SetProviderIncidentStateRequest,
+    SetProviderPayoutAddressRequest, SetSupportTicketStateRequest, SetTagRedundantRequest,
+    SetWebsitePasswordRequest, StartAgentUpdateSequenceRequest, SupportTicketSummaryView,
+    SupportTicketView, TagInstanceRequest, TotpDisabled, TotpView, TrialClaimStatusView,
+    TrialClaimView, UpdateHostPricingRequest, UpdateInstanceRequest, UpgradeInstanceRequest,
+    UserNotificationView, WebsitePasswordRemoved, WebsitePasswordView,
+    WithdrawProviderSecurityDepositRequest, WriteProviderReviewRequest,
 };
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::Value;
@@ -478,6 +478,9 @@ endpoints! {
         "/api/mut/v1/instances/{instance_id}/rescue/exit" => JobAccepted;
     ListInstanceUpgrades { instance_id: Uuid } =
         user GET "/v1/instances/{instance_id}/upgrades" => Vec<InstanceUpgradeView>;
+    /// What changing a cloud instance's public address costs, and whether its host has room.
+    ListInstanceAddressChanges { instance_id: Uuid } =
+        user GET "/v1/instances/{instance_id}/address-changes" => Vec<InstanceAddressChangeView>;
     UpgradeInstance { instance_id: Uuid } = user POST
         "/api/mut/v1/instances/{instance_id}/upgrade" (UpgradeInstanceRequest) => JobAccepted;
     /// Move a shared bandwidth instance to a shared gateway at another

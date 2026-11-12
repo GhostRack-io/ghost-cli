@@ -58,9 +58,9 @@ use ghostrack_client_api::{
         GetOperationIntent, GetProviderAgents, GetProviderBalance, GetProviderDisplayName,
         GetProviderHost, GetProviderHostInstanceUsage, GetProviderHostMetrics, GetProviderOutage,
         GetProviderReliability, GetProviderUptime, GetTicket, HandOverIpPool, ListAuthKeys,
-        ListBackups, ListContainerImages, ListImages, ListIncidents, ListInstanceBackups,
-        ListInstanceTags, ListInstanceUpgrades, ListInstances, ListIpPools, ListJobs,
-        ListLocations, ListNotifications, ListOfferings, ListPayouts, ListPrivateRenters,
+        ListBackups, ListContainerImages, ListImages, ListIncidents, ListInstanceAddressChanges,
+        ListInstanceBackups, ListInstanceTags, ListInstanceUpgrades, ListInstances, ListIpPools,
+        ListJobs, ListLocations, ListNotifications, ListOfferings, ListPayouts, ListPrivateRenters,
         ListProviderConversions, ListProviderHosts, ListProviderOutages, ListProviderReviews,
         ListSessions, ListTickets, MigrateAccountSeed, MoveGatewayLocation, RedeployInstance,
         ReinstallInstance, RemoveIpAddress, RemovePrivateRenter, RemoveWebsitePassword,
@@ -1722,6 +1722,10 @@ enum InstanceCommand {
     /// from then on. To shared IP, the new slice's default ports are forwarded; from shared IP,
     /// every port of the new address is the VM's. Leaving high bandwidth retires the VM's gateway
     /// of its own. A failed change leaves the VM on its old gateway and refunds the charge.
+    ///
+    /// A cloud VM changes between a Dedicated IP and its host's Shared IP with `--tier
+    /// dedicated-ip` or `--tier shared-ip`; it restarts with a new public address, and the
+    /// change costs the instance creation charge, plus the setup fee for a Dedicated IP.
     Gateway(GatewayArgs),
     /// Move a home VM to a gateway at another location, where it gets a new public address; an
     /// alias of `gateway --location`, with its charge (the instance creation charge). The
@@ -2205,15 +2209,49 @@ struct RotateGatewayKeysArgs {
     mutation: MutationArgs,
 }
 
+/// What `ghost instance gateway --tier` takes: a home instance's gateway tiers, and a cloud
+/// instance's Dedicated IP, which is no wire tier.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+enum GatewayTierArg {
+    SharedIp,
+    SharedBandwidth,
+    HighBandwidth,
+    DedicatedIp,
+}
+
+impl GatewayTierArg {
+    /// The wire tier it sends; none for a Dedicated IP, which the request sends as
+    /// `dedicated_ip`.
+    const fn wire(self) -> Option<GatewayTier> {
+        match self {
+            Self::SharedIp => Some(GatewayTier::SharedIp),
+            Self::SharedBandwidth => Some(GatewayTier::SharedBandwidth),
+            Self::HighBandwidth => Some(GatewayTier::HighBandwidth),
+            Self::DedicatedIp => None,
+        }
+    }
+
+    /// The word the command line takes for it.
+    const fn word(self) -> &'static str {
+        match self {
+            Self::SharedIp => "shared-ip",
+            Self::SharedBandwidth => "shared-bandwidth",
+            Self::HighBandwidth => "high-bandwidth",
+            Self::DedicatedIp => "dedicated-ip",
+        }
+    }
+}
+
 #[derive(Args)]
 struct GatewayArgs {
-    /// Instance ID or name of a home instance.
+    /// Instance ID or name of a home or cloud instance.
     #[arg(value_name = "INSTANCE", value_parser = parse_instance_reference)]
     instance_id: InstanceReference,
-    /// The tier to change to, `shared-ip`, `shared-bandwidth` or `high-bandwidth`; without it
-    /// the VM keeps its tier.
+    /// The tier to change to: `shared-ip`, `shared-bandwidth` or `high-bandwidth` for a home
+    /// instance, `dedicated-ip` or `shared-ip` for a cloud instance; without it the VM keeps
+    /// its tier.
     #[arg(long, value_enum)]
-    tier: Option<GatewayTier>,
+    tier: Option<GatewayTierArg>,
     /// The location to change to, from the offering's `gateway_locations` for a shared tier;
     /// without it the VM keeps its location, or high bandwidth takes the one nearest to the
     /// host.
@@ -8785,12 +8823,9 @@ async fn execute_instance(
             if args.tier.is_none() && args.location.is_none() {
                 bail!("name the gateway to change to: --tier, --location, or both");
             }
-            if args.tier == Some(GatewayTier::Unknown) {
-                bail!("choose shared-ip, shared-bandwidth or high-bandwidth");
-            }
             let instance_id = resolve_instance(api, &args.instance_id, InstanceUse::Change).await?;
-            let charge = if args.yes && cli.globals.compact {
-                ChangeCharge::Unknown
+            let (charge, cloud) = if args.yes && cli.globals.compact {
+                (ChangeCharge::Unknown, false)
             } else {
                 quote_gateway_change(
                     api,
@@ -8805,12 +8840,14 @@ async fn execute_instance(
             if !args.yes {
                 bail!(
                     "{}\nTo change: ghost instance gateway {}{}{} --yes",
-                    gateway_change_warning(charge),
+                    if cloud || args.tier == Some(GatewayTierArg::DedicatedIp) {
+                        cloud_change_warning(charge)
+                    } else {
+                        gateway_change_warning(charge)
+                    },
                     escape_control(&instance_reference_text(&args.instance_id)),
-                    args.tier.map_or_else(String::new, |tier| format!(
-                        " --tier {}",
-                        gateway_tier_words(tier).replace(' ', "-").to_lowercase()
-                    )),
+                    args.tier
+                        .map_or_else(String::new, |tier| format!(" --tier {}", tier.word())),
                     args.location
                         .as_deref()
                         .map_or_else(String::new, |location| format!(
@@ -8823,9 +8860,9 @@ async fn execute_instance(
                 .write_retryable(
                     &ChangeGateway { instance_id },
                     &ChangeGatewayRequest {
-                        tier: args.tier,
+                        tier: args.tier.and_then(GatewayTierArg::wire),
                         gateway_location: args.location.clone(),
-                        dedicated_ip: false,
+                        dedicated_ip: args.tier == Some(GatewayTierArg::DedicatedIp),
                     },
                     &retried_by_id(args.mutation.key(), &args.instance_id, instance_id),
                 )
@@ -8834,8 +8871,8 @@ async fn execute_instance(
         }
         InstanceCommand::GatewayLocation(args) => {
             let instance_id = resolve_instance(api, &args.instance_id, InstanceUse::Change).await?;
-            let charge = if args.yes && cli.globals.compact {
-                ChangeCharge::Unknown
+            let (charge, _) = if args.yes && cli.globals.compact {
+                (ChangeCharge::Unknown, false)
             } else {
                 quote_gateway_change(
                     api,
@@ -11001,6 +11038,120 @@ fn gateway_change_warning(charge: ChangeCharge) -> String {
     )
 }
 
+/// [`gateway_change_warning`] of a cloud instance's change of address,
+/// which restarts it.
+fn cloud_change_warning(charge: ChangeCharge) -> String {
+    let charge = match charge {
+        ChangeCharge::Amount { creation, setup } => {
+            let mut charge = format!(
+                "{} (the instance creation charge)",
+                pretty::dollars(creation)
+            );
+            if setup > 0 {
+                let _ = write!(charge, " and {} (the setup fee)", pretty::dollars(setup));
+            }
+            charge
+        }
+        ChangeCharge::Free | ChangeCharge::Unknown => "the instance creation charge".to_owned(),
+    };
+    format!("the change costs {charge}; the VM restarts with a new public address.")
+}
+
+/// Why a cloud instance's change of address to a Dedicated IP (`up`) or
+/// its Shared IP is refused before it is asked for, from what
+/// `ListInstanceAddressChanges` lists; none when it can be asked for.
+fn address_change_refusal(
+    changes: &[ghostrack_client_api::website::InstanceAddressChangeView],
+    up: bool,
+) -> Option<&'static str> {
+    let Some(change) = changes.first() else {
+        return Some("this instance cannot change its address now");
+    };
+    if change.dedicated_ip != up {
+        return Some(if up {
+            "this instance has a Dedicated IP already"
+        } else {
+            "this instance has its Shared IP already"
+        });
+    }
+    if !change.available {
+        return Some(if up {
+            "its host has no free Dedicated IP right now"
+        } else {
+            "its host has no free shared IPv4 ports right now"
+        });
+    }
+    None
+}
+
+/// The block that tells what a cloud instance's change of address costs
+/// and gives, as the list read it.
+fn address_change_quote(
+    instance: &InstanceView,
+    change: &ghostrack_client_api::website::InstanceAddressChangeView,
+    colors: bool,
+) -> Vec<String> {
+    let current = instance.pricing.as_ref().map(|pricing| &pricing.current);
+    let mut rows = vec![
+        QuoteRow::Money(
+            "Traffic",
+            price_change(
+                current.map(|prices| prices.provider_network_microusd_per_tib),
+                change.combined_microusd_per_tib,
+            ),
+            "per TiB".to_owned(),
+        ),
+        QuoteRow::Money(
+            "Address",
+            if change.dedicated_ip {
+                price_change(
+                    current.map(|prices| prices.address_microusd_per_month),
+                    change.address_microusd_per_month,
+                )
+            } else {
+                price_change(current.map(|prices| prices.address_microusd_per_month), 0)
+            },
+            if change.dedicated_ip {
+                "per month".to_owned()
+            } else {
+                "per month, the shared IPv4 is included".to_owned()
+            },
+        ),
+    ];
+    if let Some(ports) = change.shared_ip_ports {
+        rows.push(QuoteRow::Fact("Ports", format!("{ports} public ports")));
+    }
+    if let Some(bandwidth) = change.bandwidth {
+        rows.push(QuoteRow::Fact("Bandwidth", bandwidth_text(bandwidth)));
+    }
+    rows.push(QuoteRow::Money(
+        "Charge",
+        pretty::dollars(change.charge_microusd),
+        "per change, the instance creation charge".to_owned(),
+    ));
+    if change.setup_fee_microusd > 0 {
+        rows.push(QuoteRow::Money(
+            "",
+            pretty::dollars(change.setup_fee_microusd),
+            "setup fee".to_owned(),
+        ));
+    }
+    let mut lines = vec![format!(
+        "Changing the address of {} ({}) to {}:",
+        escape_control(instance.display_name()),
+        instance.instance_id,
+        if change.dedicated_ip {
+            "a Dedicated IP"
+        } else {
+            "its host's Shared IP"
+        }
+    )];
+    lines.extend(quote_block(&rows, colors));
+    lines.push("  From now on: the new prices apply at once.".to_owned());
+    lines.push("  The VM restarts with a new public address.".to_owned());
+    lines
+}
+
 /// The block that tells what a change of `instance`'s gateway to `tier`
 /// (its own when none) at `location` (its own when none) costs and
 /// changes, or the notice that says why there is none.
@@ -11332,14 +11483,21 @@ fn high_bandwidth_quote(
 async fn quote_gateway_change(
     api: &ApiClient,
     instance_id: Uuid,
-    tier: Option<GatewayTier>,
+    asked: Option<GatewayTierArg>,
     location: Option<&str>,
     print: bool,
     move_only: bool,
-) -> Result<ChangeCharge> {
+) -> Result<(ChangeCharge, bool)> {
     let colors = Terminal::stderr().colors;
+    let tier = asked.and_then(GatewayTierArg::wire);
     let read = async {
         let instance: InstanceView = api.read(&GetInstance { instance_id }, "").await?;
+        if instance.host_mode == Some(HostMode::CloudRouted) {
+            let changes: Vec<ghostrack_client_api::website::InstanceAddressChangeView> = api
+                .read(&ListInstanceAddressChanges { instance_id }, "")
+                .await?;
+            return Ok::<_, anyhow::Error>((instance, Err(changes)));
+        }
         let offering: OfferingView = api
             .read_as_account(
                 &GetOffering {
@@ -11348,10 +11506,44 @@ async fn quote_gateway_change(
                 "",
             )
             .await?;
-        Ok::<_, anyhow::Error>((instance, offering))
+        Ok::<_, anyhow::Error>((instance, Ok(offering)))
     };
     match read.await {
-        Ok((instance, offering)) => {
+        Ok((instance, Err(changes))) => {
+            // A cloud instance changes between a Dedicated IP and its
+            // Shared IP, which the host's list prices.
+            let up = match asked {
+                Some(GatewayTierArg::DedicatedIp) => Some(true),
+                Some(GatewayTierArg::SharedIp) => Some(false),
+                _ => None,
+            };
+            let Some(up) = up else {
+                if print {
+                    notice(
+                        "a cloud instance changes to dedicated-ip or shared-ip; the backend decides",
+                    );
+                }
+                return Ok((ChangeCharge::Unknown, true));
+            };
+            if let Some(refusal) = address_change_refusal(&changes, up) {
+                bail!(refusal);
+            }
+            let change = &changes[0];
+            if print {
+                for line in address_change_quote(&instance, change, colors) {
+                    notice(&line);
+                }
+                notice("");
+            }
+            Ok((
+                ChangeCharge::Amount {
+                    creation: change.charge_microusd,
+                    setup: change.setup_fee_microusd,
+                },
+                true,
+            ))
+        }
+        Ok((instance, Ok(offering))) => {
             if let Some(refusal) = shared_ip_only_target(&instance, &offering, tier, location) {
                 bail!(refusal);
             }
@@ -11372,13 +11564,13 @@ async fn quote_gateway_change(
                     Err(text) => notice(&text),
                 }
             }
-            Ok(ChangeCharge::of(&instance, &offering, tier))
+            Ok((ChangeCharge::of(&instance, &offering, tier), false))
         }
         Err(error) => {
             if print {
                 notice(&prices_unread_notice(&error));
             }
-            Ok(ChangeCharge::Unknown)
+            Ok((ChangeCharge::Unknown, false))
         }
     }
 }
@@ -24907,5 +25099,289 @@ mod tests {
         .await
         .unwrap_err();
         assert!(request_lines(&received).is_empty());
+    }
+    /// A cloud instance of the quote tests, with a Dedicated IP or its host's
+    /// Shared IP, as the list of its address changes goes with it.
+    fn cloud_instance(shared: bool) -> InstanceView {
+        let mut view = serde_json::to_value(quoted_instance(true)).unwrap();
+        view["host_mode"] = json!("cloud_routed");
+        view["gateway_tier"] = json!(null);
+        view["gateway_location"] = json!(null);
+        view["pricing"]["current"] = json!({
+            "base_price_microusd_per_month": 2_350_000,
+            "full_utilization_price_microusd_per_month": 7_060_000,
+            "provider_network_microusd_per_tib": 1_000_000,
+            "gateway_network_microusd_per_tib": 0,
+            "gateway_base_microusd_per_month": 0,
+            "address_microusd_per_month": if shared { 0 } else { 2_000_000 }});
+        serde_json::from_value(view).unwrap()
+    }
+
+    /// The change a cloud instance lists: up to a Dedicated IP when it
+    /// shares, else down to its host's Shared IP.
+    fn address_change(up: bool, available: bool) -> String {
+        serde_json::to_string(&[json!({
+            "dedicated_ip": up, "charge_microusd": 500_000,
+            "setup_fee_microusd": if up { 1_000_000 } else { 0 },
+            "address_microusd_per_month": if up { 2_000_000 } else { 0 },
+            "combined_microusd_per_tib": if up { 1_000_000 } else { 1_200_000 },
+            "shared_ip_ports": if up { json!(null) } else { json!(20) },
+            "bandwidth": {"limit_mbit": if up { 200 } else { 100 }},
+            "available": available})])
+        .unwrap()
+    }
+
+    /// `--tier dedicated-ip` is a tier of the command line, which sends no
+    /// wire tier.
+    #[test]
+    fn the_gateway_command_takes_dedicated_ip_as_a_tier() {
+        let id = Uuid::nil().to_string();
+        for (word, arg, wire) in [
+            ("dedicated-ip", GatewayTierArg::DedicatedIp, None),
+            (
+                "shared-ip",
+                GatewayTierArg::SharedIp,
+                Some(GatewayTier::SharedIp),
+            ),
+            (
+                "shared-bandwidth",
+                GatewayTierArg::SharedBandwidth,
+                Some(GatewayTier::SharedBandwidth),
+            ),
+            (
+                "high-bandwidth",
+                GatewayTierArg::HighBandwidth,
+                Some(GatewayTier::HighBandwidth),
+            ),
+        ] {
+            let cli =
+                Cli::try_parse_from(["ghost", "instance", "gateway", &id, "--tier", word]).unwrap();
+            let Command::Instance {
+                command: InstanceCommand::Gateway(args),
+            } = cli.command
+            else {
+                panic!("not the gateway command");
+            };
+            assert_eq!(args.tier, Some(arg));
+            assert_eq!(arg.word(), word);
+            assert_eq!(arg.wire(), wire);
+        }
+        assert!(
+            Cli::try_parse_from(["ghost", "instance", "gateway", &id, "--tier", "unknown"])
+                .is_err()
+        );
+    }
+
+    /// A cloud instance's change of address is quoted from the list of its
+    /// address changes, refused before anything is asked when the list says
+    /// it cannot happen, worded as a restart, and sent as `dedicated_ip`
+    /// alone or as the Shared IP's tier.
+    #[tokio::test]
+    async fn a_cloud_instance_changes_its_address() {
+        let directory = tempfile::tempdir().unwrap();
+        let seed = directory.path().join("account.seed");
+        keys::generate_seed(&seed).unwrap();
+        let id = Uuid::nil().to_string();
+        let sharing = serde_json::to_string(&cloud_instance(true)).unwrap();
+        let owning = serde_json::to_string(&cloud_instance(false)).unwrap();
+        let job_id = Uuid::now_v7();
+        let accepted = json!({"job_id": job_id, "resource_id": Uuid::nil(),
+            "status_url": format!("/v1/jobs/{job_id}")})
+        .to_string();
+
+        // Up without --yes: the instance and the list are read, nothing is
+        // written, and the warning names the charge and the restart.
+        let (url, received) = canned_server(vec![
+            (200, sharing.clone()),
+            (200, address_change(true, true)),
+        ])
+        .await;
+        let error = execute(&account_command(
+            &url,
+            &seed,
+            &["instance", "gateway", &id, "--tier", "dedicated-ip"],
+        ))
+        .await
+        .unwrap_err();
+        assert_eq!(
+            request_lines(&received),
+            [
+                format!("GET /v1/instances/{id}"),
+                format!("GET /v1/instances/{id}/address-changes")
+            ]
+        );
+        assert!(
+            error.to_string().starts_with(
+                "the change costs $0.50 (the instance creation charge) and $1.00 (the setup fee); the VM restarts with a new public address."
+            ) && error.to_string().ends_with(&format!(
+                "To change: ghost instance gateway {id} --tier dedicated-ip --yes"
+            )),
+            "{error}"
+        );
+
+        // The quote's lines.
+        let quote = address_change_quote(
+            &cloud_instance(true),
+            &serde_json::from_str::<Vec<_>>(&address_change(true, true)).unwrap()[0],
+            false,
+        );
+        assert_eq!(
+            quote[0],
+            format!(
+                "Changing the address of web-1 ({}) to a Dedicated IP:",
+                Uuid::nil()
+            )
+        );
+        let text = quote.join("\n");
+        for words in [
+            "Traffic",
+            "$1.00 → $1.00",
+            "per TiB",
+            "$0.00 → $2.00",
+            "per month",
+            "200 Mbit/s",
+            "$0.50  per change, the instance creation charge",
+            "$1.00  setup fee",
+            "The VM restarts with a new public address.",
+        ] {
+            assert!(text.contains(words), "{words}\n{text}");
+        }
+        let down = address_change_quote(
+            &cloud_instance(false),
+            &serde_json::from_str::<Vec<_>>(&address_change(false, true)).unwrap()[0],
+            false,
+        )
+        .join("\n");
+        for words in [
+            "to its host's Shared IP:",
+            "$1.00 → $1.20",
+            "$2.00 → $0.00",
+            "20 public ports",
+            "100 Mbit/s",
+        ] {
+            assert!(down.contains(words), "{words}\n{down}");
+        }
+        assert!(!down.contains("setup fee"), "{down}");
+
+        // With --yes the request carries `dedicated_ip` and no tier.
+        let (url, received) = canned_server(vec![
+            (200, sharing.clone()),
+            (200, address_change(true, true)),
+            (202, accepted.clone()),
+        ])
+        .await;
+        let result = execute(&account_command(
+            &url,
+            &seed,
+            &[
+                "instance",
+                "gateway",
+                &id,
+                "--tier",
+                "dedicated-ip",
+                "--yes",
+            ],
+        ))
+        .await
+        .unwrap();
+        assert_eq!(result["job_id"], job_id.to_string());
+        let posted = received.lock().unwrap()[2].clone();
+        assert!(
+            posted
+                .0
+                .starts_with(&format!("POST /api/mut/v1/instances/{id}/gateway "))
+        );
+        let body: serde_json::Value = serde_json::from_slice(&posted.1).unwrap();
+        assert_eq!(body, json!({"dedicated_ip": true}));
+
+        // Back: the Shared IP's tier alone.
+        let (url, received) = canned_server(vec![
+            (200, owning.clone()),
+            (200, address_change(false, true)),
+            (202, accepted.clone()),
+        ])
+        .await;
+        execute(&account_command(
+            &url,
+            &seed,
+            &["instance", "gateway", &id, "--tier", "shared-ip", "--yes"],
+        ))
+        .await
+        .unwrap();
+        let posted = received.lock().unwrap()[2].clone();
+        let body: serde_json::Value = serde_json::from_slice(&posted.1).unwrap();
+        assert_eq!(body, json!({"tier": "shared_ip"}));
+
+        // The refusals come before any write.
+        for (instance, list, tier, refusal) in [
+            (
+                &sharing,
+                "[]".to_owned(),
+                "dedicated-ip",
+                "this instance cannot change its address now",
+            ),
+            (
+                &owning,
+                address_change(false, true),
+                "dedicated-ip",
+                "this instance has a Dedicated IP already",
+            ),
+            (
+                &sharing,
+                address_change(true, true),
+                "shared-ip",
+                "this instance has its Shared IP already",
+            ),
+            (
+                &sharing,
+                address_change(true, false),
+                "dedicated-ip",
+                "its host has no free Dedicated IP right now",
+            ),
+            (
+                &owning,
+                address_change(false, false),
+                "shared-ip",
+                "its host has no free shared IPv4 ports right now",
+            ),
+        ] {
+            let (url, received) = canned_server(vec![(200, instance.clone()), (200, list)]).await;
+            let error = execute(&account_command(
+                &url,
+                &seed,
+                &["instance", "gateway", &id, "--tier", tier, "--yes"],
+            ))
+            .await
+            .unwrap_err();
+            assert_eq!(error.to_string(), refusal);
+            assert_eq!(request_lines(&received).len(), 2, "{refusal}");
+        }
+
+        // A list that cannot be read costs the quote only.
+        let down = json!({"code": "not_found", "message": "no such path"}).to_string();
+        let (url, received) = canned_server(vec![
+            (200, sharing.clone()),
+            (404, down),
+            (202, accepted.clone()),
+        ])
+        .await;
+        execute(&account_command(
+            &url,
+            &seed,
+            &[
+                "instance",
+                "gateway",
+                &id,
+                "--tier",
+                "dedicated-ip",
+                "--yes",
+            ],
+        ))
+        .await
+        .unwrap();
+        assert_eq!(request_lines(&received).len(), 3);
+        let posted = received.lock().unwrap()[2].clone();
+        let body: serde_json::Value = serde_json::from_slice(&posted.1).unwrap();
+        assert_eq!(body, json!({"dedicated_ip": true}));
     }
 }
