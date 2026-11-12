@@ -11052,7 +11052,11 @@ fn cloud_change_warning(charge: ChangeCharge) -> String {
             }
             charge
         }
-        ChangeCharge::Free | ChangeCharge::Unknown => "the instance creation charge".to_owned(),
+        // Not read: a change to a Dedicated IP also pays the setup fee, and
+        // the side the backend decides is not known here.
+        ChangeCharge::Free | ChangeCharge::Unknown => {
+            "the instance creation charge, and for a Dedicated IP the setup fee".to_owned()
+        }
     };
     format!("the change costs {charge}; the VM restarts with a new public address.")
 }
@@ -11471,6 +11475,14 @@ fn high_bandwidth_quote(
     Ok(lines)
 }
 
+/// What [`quote_gateway_change`] read besides the instance: a cloud
+/// instance's address changes (or why they were not read), else a home
+/// instance's offering.
+enum GatewayQuoteRead {
+    Cloud(Result<Vec<ghostrack_client_api::website::InstanceAddressChangeView>>),
+    Home(OfferingView),
+}
+
 /// Read what a gateway change costs and changes, and print it (`print`)
 /// before it is asked for; returns the charge, if the reads gave it. A
 /// read that fails only costs the quote. `move_only`: the quote of
@@ -11493,10 +11505,13 @@ async fn quote_gateway_change(
     let read = async {
         let instance: InstanceView = api.read(&GetInstance { instance_id }, "").await?;
         if instance.host_mode == Some(HostMode::CloudRouted) {
-            let changes: Vec<ghostrack_client_api::website::InstanceAddressChangeView> = api
+            // The instance is kept when its list cannot be read: it is a
+            // cloud instance whatever the list says, and its change restarts
+            // it.
+            let changes = api
                 .read(&ListInstanceAddressChanges { instance_id }, "")
-                .await?;
-            return Ok::<_, anyhow::Error>((instance, Err(changes)));
+                .await;
+            return Ok::<_, anyhow::Error>((instance, GatewayQuoteRead::Cloud(changes)));
         }
         let offering: OfferingView = api
             .read_as_account(
@@ -11506,10 +11521,16 @@ async fn quote_gateway_change(
                 "",
             )
             .await?;
-        Ok::<_, anyhow::Error>((instance, Ok(offering)))
+        Ok::<_, anyhow::Error>((instance, GatewayQuoteRead::Home(offering)))
     };
     match read.await {
-        Ok((instance, Err(changes))) => {
+        Ok((_, GatewayQuoteRead::Cloud(Err(error)))) => {
+            if print {
+                notice(&prices_unread_notice(&error));
+            }
+            Ok((ChangeCharge::Unknown, true))
+        }
+        Ok((instance, GatewayQuoteRead::Cloud(Ok(changes)))) => {
             // A cloud instance changes between a Dedicated IP and its
             // Shared IP, which the host's list prices.
             let up = match asked {
@@ -11543,7 +11564,7 @@ async fn quote_gateway_change(
                 true,
             ))
         }
-        Ok((instance, Ok(offering))) => {
+        Ok((instance, GatewayQuoteRead::Home(offering))) => {
             if let Some(refusal) = shared_ip_only_target(&instance, &offering, tier, location) {
                 bail!(refusal);
             }
@@ -25383,5 +25404,52 @@ mod tests {
         let posted = received.lock().unwrap()[2].clone();
         let body: serde_json::Value = serde_json::from_slice(&posted.1).unwrap();
         assert_eq!(body, json!({"dedicated_ip": true}));
+    }
+
+    /// A list that cannot be read still leaves a cloud instance a cloud
+    /// instance: the warning of the change names the restart, and for a
+    /// Dedicated IP the setup fee beside the creation charge, whichever side
+    /// is asked for.
+    #[tokio::test]
+    async fn a_cloud_change_whose_list_cannot_be_read_still_warns_of_the_restart() {
+        let directory = tempfile::tempdir().unwrap();
+        let seed = directory.path().join("account.seed");
+        keys::generate_seed(&seed).unwrap();
+        let id = Uuid::nil().to_string();
+        let down = json!({"code": "not_found", "message": "no such path"}).to_string();
+        for (instance, tier) in [
+            (cloud_instance(true), "dedicated-ip"),
+            (cloud_instance(false), "shared-ip"),
+        ] {
+            let (url, received) = canned_server(vec![
+                (200, serde_json::to_string(&instance).unwrap()),
+                (404, down.clone()),
+            ])
+            .await;
+            let error = execute(&account_command(
+                &url,
+                &seed,
+                &["instance", "gateway", &id, "--tier", tier],
+            ))
+            .await
+            .unwrap_err()
+            .to_string();
+            assert_eq!(
+                request_lines(&received),
+                [
+                    format!("GET /v1/instances/{id}"),
+                    format!("GET /v1/instances/{id}/address-changes")
+                ],
+                "{tier}"
+            );
+            assert!(
+                error.starts_with(
+                    "the change costs the instance creation charge, and for a Dedicated IP the setup fee; the VM restarts with a new public address."
+                ) && error.ends_with(&format!(
+                    "To change: ghost instance gateway {id} --tier {tier} --yes"
+                )),
+                "{tier}: {error}"
+            );
+        }
     }
 }
