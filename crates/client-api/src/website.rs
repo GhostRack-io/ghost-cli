@@ -8101,6 +8101,11 @@ pub struct ErrorResponse {
     /// codes; `CodeLogin` completes it with a code, within 5 minutes.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub code_challenge: Option<String>,
+    /// Until when the account checks no two-factor code, for 429
+    /// `two_factor_locked`: too many wrong codes. The account key logs in
+    /// meanwhile.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub locked_until: Option<DateTime<Utc>>,
 }
 
 /// A component's state on the public status page, from the platform's own
