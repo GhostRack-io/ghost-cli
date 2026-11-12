@@ -371,6 +371,13 @@ pub enum LedgerKind {
     DisplayNameCharge,
     /// A provider's released earnings, converted to MMX (item 212).
     EarningsConversion,
+    /// A VPN connection's gateway and tracked connections, a month's price
+    /// charged each 15 minutes (backlog 161b).
+    VpnCharge,
+    /// A VPN connection's traffic through its gateway.
+    VpnUsage,
+    /// A VPN connection's setup fee for an address of its own.
+    VpnCreation,
     /// A variant of a newer release, which this one does not know.
     #[serde(other)]
     #[cfg_attr(feature = "clap", value(skip))]
@@ -5458,7 +5465,12 @@ pub struct AccountProjectionView {
     pub local_backups_microusd: u64,
     /// The storage of the backups GhostRack hosts.
     pub hosted_backups_microusd: u64,
-    /// The four together.
+    /// The VPN connections' gateways and tracked connections at their
+    /// prices now, and their traffic of the past 30 days (backlog 161b);
+    /// None from an older backend.
+    #[serde(default)]
+    pub vpn_microusd: Option<u64>,
+    /// The rows together.
     pub total_microusd: u64,
     /// How many whole days the available balance lasts at the total's
     /// daily rate when that is less than 30, with a live trial's credit
@@ -8313,6 +8325,27 @@ pub struct SetVpnIncomingRequest {
     pub allowed: bool,
 }
 
+/// Change a VPN connection's tracked connections to another of
+/// [`VPN_TRACKED_CONNECTION_TIERS`]: up while its gateway has room, down
+/// always.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct SetVpnTrackedConnectionsRequest {
+    pub tracked_connections: u32,
+}
+
+/// A price change of a VPN connection that takes effect later: a rise
+/// after its 90-day notice.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct VpnPriceChangeView {
+    /// `gateway_base` (a month), `gateway_traffic` (a TiB) or `tracked`
+    /// (a month).
+    pub component: String,
+    pub microusd: u64,
+    pub announced_at: DateTime<Utc>,
+    pub effective_at: DateTime<Utc>,
+}
+
 /// A port of a Shared IP VPN connection's slice and the device's port it
 /// reaches.
 #[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -8371,6 +8404,9 @@ pub struct VpnConnectionView {
     pub tracked_connections_microusd_per_month: Option<u64>,
     #[serde(default)]
     pub last_error: Option<String>,
+    /// Its price changes to come; empty from a backend of before 161b.
+    #[serde(default)]
+    pub pending_price_changes: Vec<VpnPriceChangeView>,
 }
 
 /// What a VPN connection of `tier` costs at a location, and whether one

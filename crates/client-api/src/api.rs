@@ -624,6 +624,10 @@ endpoints! {
     SetVpnIncoming { connection_id: Uuid } = user POST
         "/api/mut/v1/vpn/connections/{connection_id}/incoming"
         (crate::website::SetVpnIncomingRequest) => crate::website::VpnConnectionView;
+    /// Change a VPN connection's tracked connections.
+    SetVpnTrackedConnections { connection_id: Uuid } = user POST
+        "/api/mut/v1/vpn/connections/{connection_id}/tracked-connections"
+        (crate::website::SetVpnTrackedConnectionsRequest) => crate::website::VpnConnectionView;
 
     // Provider
     GetProviderBalance = user GET "/v1/provider/balance" => Option<ProviderBalanceView>;
