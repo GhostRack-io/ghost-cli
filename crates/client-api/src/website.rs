@@ -8440,6 +8440,17 @@ pub struct SetVpnIncomingRequest {
     pub allowed: bool,
 }
 
+/// Replace a ready VPN connection's device key with another the customer
+/// generated: its gateway takes the new key at its next poll, and the old
+/// key stops working then. One rotation at a time.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct RotateVpnKeyRequest {
+    /// The device's new `WireGuard` public key, standard base64 (44
+    /// characters). Never a private key.
+    pub public_key: String,
+}
+
 /// Change a VPN connection's tracked connections to another of
 /// [`VPN_TRACKED_CONNECTION_TIERS`]: up while its gateway has room, down
 /// always.
@@ -8522,6 +8533,21 @@ pub struct VpnConnectionView {
     /// Its price changes to come; empty from a backend of before 161b.
     #[serde(default)]
     pub pending_price_changes: Vec<VpnPriceChangeView>,
+    /// The revision of the device key, which a rotation raises; none from
+    /// a backend of before 161c, and without a live lease.
+    #[serde(default)]
+    pub key_revision: Option<u64>,
+    /// The revision the gateway applied: below `key_revision` while a key
+    /// is pending.
+    #[serde(default)]
+    pub applied_key_revision: Option<u64>,
+    /// Why the gateway refused the current key, while it does.
+    #[serde(default)]
+    pub refused_reason: Option<String>,
+    /// The device's latest handshake with the gateway, since its current
+    /// key was applied.
+    #[serde(default)]
+    pub last_handshake_at: Option<DateTime<Utc>>,
 }
 
 /// What a VPN connection of `tier` costs at a location, and whether one
