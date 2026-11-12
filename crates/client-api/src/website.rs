@@ -2814,8 +2814,9 @@ pub struct NetworkPriceView {
     pub bandwidth: Option<BandwidthView>,
     /// What a rental or a gateway change onto this choice pays once, from
     /// the funded balance, beside the creation charge: the gateway setup
-    /// fee of a shared bandwidth or high bandwidth lease, 0 for the others
-    /// and while it is off. Absent (0) from older backends.
+    /// fee of a shared bandwidth or high bandwidth lease or of a cloud
+    /// offering's Dedicated IP (its own address), 0 for the others and
+    /// while it is off. Absent (0) from older backends.
     #[serde(default)]
     pub setup_fee_microusd: u64,
 }

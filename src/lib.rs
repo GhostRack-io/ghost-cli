@@ -10690,10 +10690,11 @@ fn offering_quote(
         pretty::dollars(offering.instance_creation_charge_microusd),
         "creation fee".to_owned(),
     ));
-    // A Dedicated IP's or a gateway of its own's setup fee, once.
+    // A Dedicated IP's or a gateway of its own's setup fee, once: a home
+    // rental's lease's, or a cloud rental's address of its own.
     if let Some(setup) = network
         .map(|network| network.setup_fee_microusd)
-        .filter(|setup| *setup > 0 && !cloud)
+        .filter(|setup| *setup > 0)
     {
         rows.push(QuoteRow::Money(
             "",
@@ -24499,6 +24500,25 @@ mod tests {
         )
         .join("\n");
         assert!(!without.contains("setup fee"), "{without}");
+
+        // A cloud offering's Dedicated IP, an address of its own, carries
+        // it; its shared IP does not.
+        let mut cloud = listed_offering(HostMode::CloudRouted);
+        cloud.network_prices = serde_json::from_value(json!([
+            {"gateway_tier": null, "gateway_base_charge_microusd_per_month": 0,
+             "combined_microusd_per_tib": 240_000, "setup_fee_microusd": 1_000_000},
+            {"gateway_tier": "shared_ip", "gateway_base_charge_microusd_per_month": 0,
+             "combined_microusd_per_tib": 240_000},
+        ]))
+        .unwrap();
+        let own = offering_quote(&cloud, None, None, false).join("\n");
+        assert!(
+            own.contains("  Now        $0.13  creation fee\n             $1.00  setup fee\n"),
+            "{own}"
+        );
+        let shared = offering_quote(&cloud, Some(GatewayTier::SharedIp), None, false).join("\n");
+        assert!(shared.contains("creation fee"), "{shared}");
+        assert!(!shared.contains("setup fee"), "{shared}");
 
         let mut offering = quoted_offering();
         offering.network_prices = serde_json::from_value(json!([
