@@ -5354,8 +5354,8 @@ pub struct UserNotificationView {
     pub message: String,
     pub instance_id: Option<Uuid>,
     /// The VPN connection the notice is about; none from a backend of
-    /// before.
-    #[serde(default)]
+    /// before, and absent where there is none.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub vpn_connection_id: Option<Uuid>,
     pub host_id: Option<Uuid>,
     pub created_at: DateTime<Utc>,
