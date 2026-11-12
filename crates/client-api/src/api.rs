@@ -455,7 +455,7 @@ endpoints! {
         user DELETE "/api/mut/v1/instances/{instance_id}" => JobAccepted;
     SetInstancePower { instance_id: Uuid } =
         user POST "/api/mut/v1/instances/{instance_id}/power" (SetPowerStateRequest) => JobAccepted;
-    ReinstallInstance { instance_id: Uuid } = user POST
+    ReinstallInstance { instance_id: Uuid } = wallet POST
         "/api/mut/v1/instances/{instance_id}/reinstall" (ReinstallInstanceRequest) => JobAccepted;
     /// Refresh the saved container image or replace only its tag, keeping all settings, secrets and
     /// allocations.
@@ -465,12 +465,12 @@ endpoints! {
     RedeployInstance { instance_id: Uuid } = user POST
         "/api/mut/v1/instances/{instance_id}/redeploy" (RedeployInstanceRequest) => JobAccepted;
     /// Reset a VM's SSH access through cloud-init at its next boot, which the reset starts.
-    ResetInstanceAccess { instance_id: Uuid } = user POST
+    ResetInstanceAccess { instance_id: Uuid } = wallet POST
         "/api/mut/v1/instances/{instance_id}/reset-access"
         (crate::website::ResetInstanceAccessRequest) => JobAccepted;
     /// Boot a VM into the platform's rescue system with its own disk attached, reached over SSH at
     /// its own addresses.
-    RescueInstance { instance_id: Uuid } = user POST
+    RescueInstance { instance_id: Uuid } = wallet POST
         "/api/mut/v1/instances/{instance_id}/rescue"
         (crate::website::RescueInstanceRequest) => JobAccepted;
     /// End a VM's rescue: it boots its own system again.
