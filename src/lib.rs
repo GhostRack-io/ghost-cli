@@ -11480,7 +11480,7 @@ fn high_bandwidth_quote(
 /// instance's offering.
 enum GatewayQuoteRead {
     Cloud(Result<Vec<ghostrack_client_api::website::InstanceAddressChangeView>>),
-    Home(OfferingView),
+    Home(Box<OfferingView>),
 }
 
 /// Read what a gateway change costs and changes, and print it (`print`)
@@ -11521,7 +11521,7 @@ async fn quote_gateway_change(
                 "",
             )
             .await?;
-        Ok::<_, anyhow::Error>((instance, GatewayQuoteRead::Home(offering)))
+        Ok::<_, anyhow::Error>((instance, GatewayQuoteRead::Home(Box::new(offering))))
     };
     match read.await {
         Ok((_, GatewayQuoteRead::Cloud(Err(error)))) => {
