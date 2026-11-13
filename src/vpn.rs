@@ -9,6 +9,7 @@
 
 use std::{
     fmt::Write as _,
+    future::Future,
     io::{Read as _, Write as _},
     net::{IpAddr, SocketAddr},
     path::{Path, PathBuf},
@@ -37,8 +38,8 @@ use zeroize::Zeroizing;
 
 use crate::{
     ApiClient, Cli, GatewayTierArg, IdempotencyArgs, InstanceReference, MutationArgs, OutputFormat,
-    TRANSIENT_POLL_WINDOW, Terminal, escape_control, gateway_tier_words, keys, local_moment,
-    notice, pretty, retried_by_id, to_value, typed_refusal, wire_name,
+    TRANSIENT_POLL_WINDOW, Terminal, api, escape_control, gateway_tier_words, keys, local_moment,
+    next_poll_retry_delay, notice, pretty, retried_by_id, to_value, typed_refusal, wire_name,
 };
 
 /// `ghost vpn`'s commands.
@@ -445,19 +446,95 @@ fn refuse_existing(out: Option<&Path>, force: bool) -> Result<()> {
 
 /// Write `config` to `out`, `0600`, and draw it as a QR code when `qr`.
 fn deliver(config: &str, out: &Path, force: bool, qr: bool) -> Result<()> {
-    keys::write_private_file(out, config.as_bytes(), force, "VPN configuration file")?;
+    keys::write_private_file(out, config.as_bytes(), force, CONFIG_FILE)?;
     if qr {
         print_now(&qr_text(config)?)?;
     }
     Ok(())
 }
 
-/// The line to recover by when a key ghost made was sent but its
-/// configuration could not be written.
-fn recover_line(connection_id: Uuid) -> String {
-    format!(
-        "Its private key was not kept. To give it a new key and a configuration: ghost vpn new-config {connection_id} --out FILE"
-    )
+/// What a VPN configuration file is called in errors.
+const CONFIG_FILE: &str = "VPN configuration file";
+
+/// How long `new-config` waits for the gateway to take the new key: as
+/// long as the backend gives a new connection to be ready.
+const KEY_APPLY_LIMIT: Duration = Duration::from_mins(15);
+
+/// A wait that stopped because the connection will never use the device
+/// key it waited with: the connection failed or ended, or its gateway
+/// refused the key. A key ghost made for it is then not kept.
+#[derive(Debug)]
+struct KeyUnused(String);
+
+impl std::fmt::Display for KeyUnused {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.0)
+    }
+}
+
+impl std::error::Error for KeyUnused {}
+
+fn key_unused(error: &anyhow::Error) -> bool {
+    error.downcast_ref::<KeyUnused>().is_some()
+}
+
+/// Whether a mutation that ended in `error` may have been applied: the
+/// backend did not answer it, or answered success in a shape this ghost
+/// cannot read.
+fn maybe_applied(error: &anyhow::Error) -> bool {
+    api::unanswered(error) || error.downcast_ref::<serde_json::Error>().is_some()
+}
+
+/// Ctrl-C, from the first time this is polled on; never where it cannot
+/// be caught. A creation or a new key that it stops keeps the key ghost
+/// made, as a failed wait does.
+async fn interrupted() {
+    if tokio::signal::ctrl_c().await.is_err() {
+        std::future::pending::<()>().await;
+    }
+}
+
+/// The line to recover by when a key ghost made was sent but could not be
+/// kept, for the connection `connection_id`, or one the backend may have
+/// created.
+fn recover_line(connection_id: Option<Uuid>) -> String {
+    match connection_id {
+        Some(id) => format!(
+            "Its private key was not kept. To give it a new key and a configuration once it is ready: ghost vpn new-config {id} --out FILE"
+        ),
+        None => "Its private key was not kept. If `ghost vpn list` lists the connection, to give it a new key and a configuration once it is ready: ghost vpn new-config CONNECTION --out FILE".to_owned(),
+    }
+}
+
+/// Keep the private key ghost made alone in `out`'s reserved `file`
+/// (`0600`, as `wg genkey` writes one) when `error` stopped a creation
+/// that the backend has made, or may have, and say how to write the
+/// configuration from it; when even that fails, how to give the
+/// connection a new key.
+fn keep_key(
+    file: keys::PrivateFile,
+    key: &DeviceKey,
+    connection_id: Option<Uuid>,
+    out: &Path,
+    error: anyhow::Error,
+) -> anyhow::Error {
+    let mut text = Zeroizing::new(String::with_capacity(45));
+    text.push_str(&key.private_base64());
+    text.push('\n');
+    if let Err(kept) = file.place(text.as_bytes()) {
+        return error
+            .context(format!("{kept:#}"))
+            .context(recover_line(connection_id));
+    }
+    let out = out.display();
+    error.context(match connection_id {
+        Some(id) => format!(
+            "The device's private key is in {out}. To write its configuration from it once VPN connection {id} is ready: ghost vpn config {id} --private-key-file {out} --out {out} --force"
+        ),
+        None => format!(
+            "The VPN connection may have been created; the device's private key is in {out}. If `ghost vpn list` lists the connection, to write its configuration from it once it is ready: ghost vpn config CONNECTION --private-key-file {out} --out {out} --force"
+        ),
+    })
 }
 
 /// Run a `ghost vpn` command.
@@ -474,7 +551,7 @@ pub(crate) async fn execute(
             let connection_id = resolve(api, connection, false).await?;
             to_value(api.read(&GetVpnConnection { connection_id }, "").await?)
         }
-        VpnCommand::Create(args) => create(cli, api, args, show_progress).await,
+        VpnCommand::Create(args) => create(cli, api, args, show_progress, interrupted()).await,
         VpnCommand::Config(args) => {
             refuse_qr_with_json(cli, args.qr)?;
             let key = DeviceKey::read(&args.private_key_file)?;
@@ -499,7 +576,9 @@ pub(crate) async fn execute(
                 None => Ok(json!({"config": config.as_str()})),
             }
         }
-        VpnCommand::NewConfig(args) => new_config(cli, api, args, show_progress).await,
+        VpnCommand::NewConfig(args) => {
+            new_config(cli, api, args, show_progress, interrupted()).await
+        }
         VpnCommand::Incoming {
             connection,
             setting,
@@ -555,114 +634,227 @@ pub(crate) async fn execute(
     }
 }
 
+/// The creation `args` asks for, with the device's public key.
+fn creation(args: &CreateArgs, device_public_key: String) -> CreateVpnConnectionRequest {
+    CreateVpnConnectionRequest {
+        name: args.name.clone(),
+        tier: vpn_tier(args.tier),
+        location: args.location.clone(),
+        device_public_key,
+        tracked_connections: args.tracked_connections,
+    }
+}
+
+/// `ghost vpn create`. With --out, the file's place is reserved before
+/// anything is sent; once the backend may have the key, any stop short of
+/// the configuration (a failed wait, `interrupt`) keeps the private key
+/// alone in that file, unless the connection ended and will never use it.
 async fn create(
     cli: &Cli,
     api: &ApiClient,
     args: &CreateArgs,
     show_progress: bool,
+    interrupt: impl Future<Output = ()>,
 ) -> Result<Value> {
     refuse_qr_with_json(cli, args.qr)?;
-    refuse_existing(args.key.out.as_deref(), args.force)?;
-    let made = args.key.out.as_ref().map(|_| DeviceKey::generate());
-    let device_public_key = match (&made, &args.key.public_key) {
-        (Some(key), _) => key.public_base64(),
-        (None, Some(public_key)) => public_key.clone(),
-        (None, None) => bail!("give --out FILE or --public-key KEY"),
-    };
-    let created = api
-        .write_retryable(
-            &CreateVpnConnection,
-            &CreateVpnConnectionRequest {
-                name: args.name.clone(),
-                tier: vpn_tier(args.tier),
-                location: args.location.clone(),
-                device_public_key,
-                tracked_connections: args.tracked_connections,
-            },
-            &args.mutation.key(),
-        )
-        .await?;
-    let connection_id = created.id;
-    let (Some(key), Some(out)) = (made, &args.key.out) else {
+    let interval = Duration::from_secs(args.mutation.poll_seconds);
+    let Some(out) = &args.key.out else {
+        let Some(public_key) = &args.key.public_key else {
+            bail!("give --out FILE or --public-key KEY");
+        };
+        let created = api
+            .write_retryable(
+                &CreateVpnConnection,
+                &creation(args, public_key.clone()),
+                &args.mutation.key(),
+            )
+            .await?;
         if !args.mutation.wait {
             return to_value(created);
         }
-        return to_value(wait_until_ready(api, created, &args.mutation, show_progress).await?);
+        return to_value(wait_until_ready(api, created, interval, show_progress).await?);
     };
-    let written = async {
-        let ready = wait_until_ready(api, created, &args.mutation, show_progress).await?;
-        let config = config_text(&key, &ready)?;
-        deliver(&config, out, args.force, args.qr)?;
-        Ok::<_, anyhow::Error>(ready)
-    }
-    .await;
-    match written {
-        Ok(ready) => {
-            let mut output = to_value(ready)?;
-            output["config_file"] = json!(out);
-            Ok(output)
+    let file = keys::PrivateFile::reserve(out, args.force, CONFIG_FILE)?;
+    let key = DeviceKey::generate();
+    let request = creation(args, key.public_base64());
+    let mutation_key = args.mutation.key();
+    tokio::pin!(interrupt);
+    let created = tokio::select! {
+        created = api.write_retryable(&CreateVpnConnection, &request, &mutation_key) => match created {
+            Ok(created) => created,
+            Err(error) if maybe_applied(&error) => {
+                return Err(keep_key(file, &key, None, out, error));
+            }
+            Err(error) => return Err(error),
+        },
+        () = &mut interrupt => {
+            let error = anyhow::anyhow!("interrupted before the backend answered");
+            return Err(keep_key(file, &key, None, out, error));
         }
-        Err(error) => Err(error.context(recover_line(connection_id))),
+    };
+    let connection_id = created.id;
+    let waited = tokio::select! {
+        ready = wait_until_ready(api, created, interval, show_progress) => ready,
+        () = &mut interrupt => Err(anyhow::anyhow!(
+            "interrupted before VPN connection {connection_id} was ready"
+        )),
+    };
+    let ready = match waited {
+        Ok(ready) => ready,
+        Err(error) if key_unused(&error) => return Err(error),
+        Err(error) => return Err(keep_key(file, &key, Some(connection_id), out, error)),
+    };
+    let config = match config_text(&key, &ready) {
+        Ok(config) => config,
+        Err(error) => return Err(keep_key(file, &key, Some(connection_id), out, error)),
+    };
+    file.place(config.as_bytes())
+        .map_err(|error| error.context(recover_line(Some(connection_id))))?;
+    if args.qr {
+        print_now(&qr_text(&config)?)?;
     }
+    let mut output = to_value(ready)?;
+    output["config_file"] = json!(out);
+    Ok(output)
 }
 
+/// `ghost vpn new-config`. With --out, the file's place is reserved before
+/// the key is sent. The rotation's answer has what the configuration needs,
+/// so a wait that stops short of the gateway taking the key (a failed read,
+/// [`KEY_APPLY_LIMIT`], `interrupt`) still writes the new configuration; a
+/// refused key, or a connection that ended, writes nothing, and the file
+/// that was there stays.
 async fn new_config(
     cli: &Cli,
     api: &ApiClient,
     args: &NewConfigArgs,
     show_progress: bool,
+    interrupt: impl Future<Output = ()>,
 ) -> Result<Value> {
     refuse_qr_with_json(cli, args.qr)?;
     refuse_existing(args.key.out.as_deref(), args.force)?;
+    let interval = Duration::from_secs(args.mutation.poll_seconds);
     let connection_id = resolve(api, &args.connection, true).await?;
-    let made = args.key.out.as_ref().map(|_| DeviceKey::generate());
-    let public_key = match (&made, &args.key.public_key) {
-        (Some(key), _) => key.public_base64(),
-        (None, Some(public_key)) => public_key.clone(),
-        (None, None) => bail!("give --out FILE or --public-key KEY"),
-    };
-    let rotated = api
-        .write_retryable(
-            &RotateVpnKey { connection_id },
-            &RotateVpnKeyRequest { public_key },
-            &retried_by_id(args.mutation.key(), &args.connection, connection_id),
-        )
-        .await?;
-    let (Some(key), Some(out)) = (made, &args.key.out) else {
+    let mutation_key = retried_by_id(args.mutation.key(), &args.connection, connection_id);
+    let Some(out) = &args.key.out else {
+        let Some(public_key) = &args.key.public_key else {
+            bail!("give --out FILE or --public-key KEY");
+        };
+        let rotated = api
+            .write_retryable(
+                &RotateVpnKey { connection_id },
+                &RotateVpnKeyRequest {
+                    public_key: public_key.clone(),
+                },
+                &mutation_key,
+            )
+            .await?;
         if !args.mutation.wait {
             return to_value(rotated);
         }
-        return to_value(wait_until_applied(api, rotated, &args.mutation, show_progress).await?);
+        return to_value(
+            wait_until_applied(api, rotated, interval, show_progress, KEY_APPLY_LIMIT).await?,
+        );
     };
-    let written = async {
-        let applied = wait_until_applied(api, rotated, &args.mutation, show_progress).await?;
-        let config = config_text(&key, &applied)?;
-        deliver(&config, out, args.force, args.qr)?;
-        Ok::<_, anyhow::Error>(applied)
-    }
-    .await;
-    match written {
-        Ok(applied) => {
-            let mut output = to_value(applied)?;
-            output["config_file"] = json!(out);
-            Ok(output)
+    let file = keys::PrivateFile::reserve(out, args.force, CONFIG_FILE)?;
+    let key = DeviceKey::generate();
+    let endpoint = RotateVpnKey { connection_id };
+    let request = RotateVpnKeyRequest {
+        public_key: key.public_base64(),
+    };
+    tokio::pin!(interrupt);
+    let rotated = tokio::select! {
+        rotated = api.write_retryable(&endpoint, &request, &mutation_key) => match rotated {
+            Ok(rotated) => rotated,
+            Err(error) if maybe_applied(&error) => {
+                return Err(error.context(recover_line(Some(connection_id))));
+            }
+            Err(error) => return Err(error),
+        },
+        () = &mut interrupt => {
+            return Err(anyhow::anyhow!("interrupted before the backend answered")
+                .context(recover_line(Some(connection_id))));
         }
-        Err(error) => Err(error.context(recover_line(connection_id))),
+    };
+    let early = config_text(&key, &rotated)
+        .map_err(|error| error.context(recover_line(Some(connection_id))))?;
+    let waited = tokio::select! {
+        applied = wait_until_applied(api, rotated, interval, show_progress, KEY_APPLY_LIMIT) => applied,
+        () = &mut interrupt => Err(anyhow::anyhow!(
+            "interrupted before the gateway of VPN connection {connection_id} took the new key"
+        )),
+    };
+    let applied = match waited {
+        Ok(applied) => applied,
+        Err(error) if key_unused(&error) => return Err(error),
+        Err(error) => {
+            if let Err(placed) = file.place(early.as_bytes()) {
+                return Err(error
+                    .context(format!("{placed:#}"))
+                    .context(recover_line(Some(connection_id))));
+            }
+            return Err(error.context(format!(
+                "The new configuration is in {}; it works once the gateway takes the new key. To see when: ghost vpn get {connection_id}",
+                out.display()
+            )));
+        }
+    };
+    let config = config_text(&key, &applied)
+        .and_then(|config| {
+            file.place(config.as_bytes())?;
+            Ok(config)
+        })
+        .map_err(|error| error.context(recover_line(Some(connection_id))))?;
+    if args.qr {
+        print_now(&qr_text(&config)?)?;
+    }
+    let mut output = to_value(applied)?;
+    output["config_file"] = json!(out);
+    Ok(output)
+}
+
+/// Read the connection `connection_id` for a wait, retrying transport
+/// failures, timeouts, and overloaded or failing servers with backoff for
+/// up to [`TRANSIENT_POLL_WINDOW`], as a job's wait does: a backend deploy
+/// does not end the wait.
+async fn read_connection(
+    api: &ApiClient,
+    connection_id: Uuid,
+    interval: Duration,
+) -> Result<VpnConnectionView> {
+    let started = tokio::time::Instant::now();
+    let mut delay = interval;
+    loop {
+        match api.read(&GetVpnConnection { connection_id }, "").await {
+            Ok(view) => return Ok(view),
+            Err(error)
+                if api::is_transient(&error) && started.elapsed() < TRANSIENT_POLL_WINDOW =>
+            {
+                notice(&format!(
+                    "VPN connection {connection_id}: {}. Retrying in {} s.",
+                    escape_control(format!("{error:#}").trim_end_matches('.')),
+                    delay.as_secs()
+                ));
+                tokio::time::sleep(delay).await;
+                delay = next_poll_retry_delay(delay, interval);
+            }
+            Err(error) => return Err(error),
+        }
     }
 }
 
-/// Follow a new connection until it is ready, at `--poll-seconds`. One
-/// that fails, or that ends, stops the wait with why; one in a state this
-/// ghost does not know stops it after [`TRANSIENT_POLL_WINDOW`], as a
-/// job's does. The backend fails a connection that is not ready within
-/// its provisioning limit, so the wait ends.
+/// Follow a new connection until it is ready, every `interval`. One that
+/// fails, or that ends, stops the wait with why ([`KeyUnused`]); one in a
+/// state this ghost does not know stops it after
+/// [`TRANSIENT_POLL_WINDOW`], as a job's does. The backend fails a
+/// connection that is not ready within its provisioning limit, so the wait
+/// ends.
 async fn wait_until_ready(
     api: &ApiClient,
     mut view: VpnConnectionView,
-    mutation: &MutationArgs,
+    interval: Duration,
     show_progress: bool,
 ) -> Result<VpnConnectionView> {
-    let interval = Duration::from_secs(mutation.poll_seconds);
     let connection_id = view.id;
     if show_progress && view.state == VpnConnectionState::Provisioning {
         notice(&format!(
@@ -674,14 +866,25 @@ async fn wait_until_ready(
         match view.state {
             VpnConnectionState::Ready => return Ok(view),
             VpnConnectionState::Provisioning => unknown_since = None,
-            VpnConnectionState::Failed => bail!(
-                "VPN connection {connection_id} failed: {}",
-                escape_control(view.last_error.as_deref().unwrap_or("no reason given"))
-            ),
-            VpnConnectionState::Suspended | VpnConnectionState::Deleted => bail!(
-                "VPN connection {connection_id} is {}",
-                wire_name(view.state)
-            ),
+            VpnConnectionState::Failed => {
+                return Err(KeyUnused(format!(
+                    "VPN connection {connection_id} failed: {}. Its charges were given back; to try again, create a new one.",
+                    escape_control(
+                        view.last_error
+                            .as_deref()
+                            .unwrap_or("no reason given")
+                            .trim_end_matches('.')
+                    )
+                ))
+                .into());
+            }
+            VpnConnectionState::Suspended | VpnConnectionState::Deleted => {
+                return Err(KeyUnused(format!(
+                    "VPN connection {connection_id} is {}",
+                    wire_name(view.state)
+                ))
+                .into());
+            }
             VpnConnectionState::Unknown => {
                 let since = *unknown_since.get_or_insert_with(tokio::time::Instant::now);
                 if since.elapsed() >= TRANSIENT_POLL_WINDOW {
@@ -692,20 +895,22 @@ async fn wait_until_ready(
             }
         }
         tokio::time::sleep(interval).await;
-        view = api.read(&GetVpnConnection { connection_id }, "").await?;
+        view = read_connection(api, connection_id, interval).await?;
     }
 }
 
 /// Follow a key rotation until the gateway applied the new key's revision,
-/// at `--poll-seconds`. A refusal of the key, or a connection that is no
-/// longer ready, stops the wait with why.
+/// every `interval`, for at most `limit`. A refusal of the key, or a
+/// connection that is no longer ready, stops the wait with why
+/// ([`KeyUnused`]).
 async fn wait_until_applied(
     api: &ApiClient,
     mut view: VpnConnectionView,
-    mutation: &MutationArgs,
+    interval: Duration,
     show_progress: bool,
+    limit: Duration,
 ) -> Result<VpnConnectionView> {
-    let interval = Duration::from_secs(mutation.poll_seconds);
+    let started = tokio::time::Instant::now();
     let connection_id = view.id;
     let Some(wanted) = view.key_revision else {
         bail!(
@@ -720,10 +925,11 @@ async fn wait_until_applied(
     let mut unknown_since = None;
     loop {
         if let Some(reason) = &view.refused_reason {
-            bail!(
+            return Err(KeyUnused(format!(
                 "the gateway refused the new key of VPN connection {connection_id}: {}",
                 escape_control(reason)
-            );
+            ))
+            .into());
         }
         match view.state {
             VpnConnectionState::Ready => {
@@ -743,13 +949,22 @@ async fn wait_until_applied(
                     );
                 }
             }
-            state => bail!(
-                "VPN connection {connection_id} is {} and takes no new key",
-                wire_name(state)
-            ),
+            state => {
+                return Err(KeyUnused(format!(
+                    "VPN connection {connection_id} is {} and takes no new key",
+                    wire_name(state)
+                ))
+                .into());
+            }
+        }
+        if started.elapsed() >= limit {
+            bail!(
+                "the gateway of VPN connection {connection_id} has not taken the new key within {} minutes",
+                limit.as_secs() / 60
+            );
         }
         tokio::time::sleep(interval).await;
-        view = api.read(&GetVpnConnection { connection_id }, "").await?;
+        view = read_connection(api, connection_id, interval).await?;
     }
 }
 
@@ -1237,6 +1452,338 @@ mod tests {
         assert!(error.to_string().contains("--force"), "{error:#}");
         assert!(request_lines(&received).is_empty());
         assert_eq!(fs::read_to_string(&out).unwrap(), config);
+    }
+
+    /// The arguments of a parsed `ghost vpn create`.
+    fn create_args(cli: &Cli) -> &CreateArgs {
+        let crate::Command::Vpn {
+            command: VpnCommand::Create(args),
+        } = &cli.command
+        else {
+            panic!("not `ghost vpn create`");
+        };
+        args
+    }
+
+    /// The arguments of a parsed `ghost vpn new-config`.
+    fn new_config_args(cli: &Cli) -> &NewConfigArgs {
+        let crate::Command::Vpn {
+            command: VpnCommand::NewConfig(args),
+        } = &cli.command
+        else {
+            panic!("not `ghost vpn new-config`");
+        };
+        args
+    }
+
+    /// The temporary files left in `directory`.
+    fn temporaries(directory: &Path) -> Vec<PathBuf> {
+        fs::read_dir(directory)
+            .unwrap()
+            .map(|entry| entry.unwrap().path())
+            .filter(|path| path.extension().is_some_and(|extension| extension == "tmp"))
+            .collect()
+    }
+
+    fn create_line<'a>(out: &'a str, poll_seconds: &'a str) -> Vec<&'a str> {
+        vec![
+            "vpn",
+            "create",
+            "--location",
+            "de-frankfurt",
+            "--tier",
+            "shared-bandwidth",
+            "--out",
+            out,
+            "--poll-seconds",
+            poll_seconds,
+        ]
+    }
+
+    /// An --out directory that does not exist is refused before anything
+    /// is sent: no connection is made, and no setup fee charged, for a key
+    /// that could not be written.
+    #[tokio::test]
+    async fn create_refuses_an_out_directory_that_takes_no_file_before_sending() {
+        let directory = tempfile::tempdir().unwrap();
+        let seed = directory.path().join("account.seed");
+        keys::generate_seed(&seed).unwrap();
+        let out = directory.path().join("missing").join("home.conf");
+        let (url, received) = canned_server(vec![(
+            200,
+            view(Uuid::now_v7(), GATEWAY_KEY, "provisioning").to_string(),
+        )])
+        .await;
+        let cli = command(&url, &seed, &create_line(out.to_str().unwrap(), "1"));
+        let error = crate::execute(&cli).await.unwrap_err();
+        assert!(
+            format!("{error:#}").contains("create temporary VPN configuration file"),
+            "{error:#}"
+        );
+        assert!(request_lines(&received).is_empty());
+    }
+
+    /// A read that fails as a backend deploy makes it fail (503) is read
+    /// again, and the wait goes on to the configuration.
+    #[tokio::test]
+    async fn a_failing_read_does_not_end_the_wait() {
+        let directory = tempfile::tempdir().unwrap();
+        let seed = directory.path().join("account.seed");
+        keys::generate_seed(&seed).unwrap();
+        let out = directory.path().join("home.conf");
+        let id = Uuid::now_v7();
+        let (url, received) = canned_server(vec![
+            (200, view(id, GATEWAY_KEY, "provisioning").to_string()),
+            (
+                503,
+                json!({"code": "unavailable", "message": "restarting"}).to_string(),
+            ),
+            (200, view(id, GATEWAY_KEY, "ready").to_string()),
+        ])
+        .await;
+        let cli = command(&url, &seed, &create_line(out.to_str().unwrap(), "1"));
+        let output = crate::execute(&cli).await.unwrap();
+        assert_eq!(output["config_file"], json!(out));
+        assert_eq!(request_lines(&received).len(), 3);
+        let config = fs::read_to_string(&out).unwrap();
+        assert_eq!(config, expected_config(&written_private_key(&config)));
+        assert!(temporaries(directory.path()).is_empty());
+    }
+
+    /// A wait stopped after the connection was created (here by Ctrl-C)
+    /// keeps the key ghost sent alone in the --out file, `0600`, as `wg
+    /// genkey` writes one, and `ghost vpn config` makes the configuration
+    /// from it.
+    #[tokio::test]
+    async fn an_interrupted_wait_keeps_the_key_it_sent() {
+        let directory = tempfile::tempdir().unwrap();
+        let seed = directory.path().join("account.seed");
+        keys::generate_seed(&seed).unwrap();
+        let out = directory.path().join("home.conf");
+        let out_text = out.to_str().unwrap();
+        let id = Uuid::now_v7();
+        let (url, received) = canned_server(vec![(
+            200,
+            view(id, GATEWAY_KEY, "provisioning").to_string(),
+        )])
+        .await;
+        let cli = command(&url, &seed, &create_line(out_text, "5"));
+        let api = crate::api_client(&cli).unwrap();
+        let interrupt = tokio::time::sleep(Duration::from_millis(200));
+        let error = create(&cli, &api, create_args(&cli), false, interrupt)
+            .await
+            .unwrap_err();
+        let text = format!("{error:#}");
+        assert!(text.contains("interrupted"), "{text}");
+        assert!(
+            text.contains(&format!(
+                "ghost vpn config {id} --private-key-file {out_text} --out {out_text} --force"
+            )),
+            "{text}"
+        );
+        let key = DeviceKey::read(&out).unwrap();
+        let private = key.private_base64();
+        assert_eq!(
+            fs::read_to_string(&out).unwrap(),
+            format!("{}\n", private.as_str())
+        );
+        assert_eq!(
+            bodies(&received)[0]["device_public_key"],
+            key.public_base64()
+        );
+        assert!(!text.contains(private.as_str()));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt as _;
+            assert_eq!(
+                fs::metadata(&out).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+        }
+        assert!(temporaries(directory.path()).is_empty());
+        // The line it gives writes the configuration from the kept key.
+        let (url, _) = canned_server(vec![(
+            200,
+            view(id, &key.public_base64(), "ready").to_string(),
+        )])
+        .await;
+        let id_text = id.to_string();
+        let config = command(
+            &url,
+            &seed,
+            &[
+                "vpn",
+                "config",
+                &id_text,
+                "--private-key-file",
+                out_text,
+                "--out",
+                out_text,
+                "--force",
+            ],
+        );
+        crate::execute(&config).await.unwrap();
+        assert_eq!(
+            fs::read_to_string(&out).unwrap(),
+            expected_config(private.as_str())
+        );
+    }
+
+    /// A creation the backend may have made without its answer reaching
+    /// ghost (a 502 from the proxy in front) keeps the key it sent.
+    #[tokio::test]
+    async fn an_unanswered_creation_keeps_the_key_it_sent() {
+        let directory = tempfile::tempdir().unwrap();
+        let seed = directory.path().join("account.seed");
+        keys::generate_seed(&seed).unwrap();
+        let out = directory.path().join("home.conf");
+        let (url, received) = canned_server(vec![(502, "Bad Gateway".to_owned())]).await;
+        let cli = command(&url, &seed, &create_line(out.to_str().unwrap(), "1"));
+        let error = crate::execute(&cli).await.unwrap_err();
+        let text = format!("{error:#}");
+        assert!(text.contains("may have been created"), "{text}");
+        let key = DeviceKey::read(&out).unwrap();
+        assert_eq!(
+            bodies(&received)[0]["device_public_key"],
+            key.public_base64()
+        );
+        assert!(temporaries(directory.path()).is_empty());
+    }
+
+    /// A connection that fails will never use its key: nothing is kept,
+    /// and the error says the charges came back, not to give it a new key.
+    #[tokio::test]
+    async fn a_failed_connection_keeps_no_key() {
+        let directory = tempfile::tempdir().unwrap();
+        let seed = directory.path().join("account.seed");
+        keys::generate_seed(&seed).unwrap();
+        let out = directory.path().join("home.conf");
+        let id = Uuid::now_v7();
+        let mut failed = view(id, GATEWAY_KEY, "failed");
+        failed["last_error"] = json!("no gateway had room.");
+        let (url, _) = canned_server(vec![
+            (200, view(id, GATEWAY_KEY, "provisioning").to_string()),
+            (200, failed.to_string()),
+        ])
+        .await;
+        let cli = command(&url, &seed, &create_line(out.to_str().unwrap(), "1"));
+        let error = crate::execute(&cli).await.unwrap_err();
+        let text = format!("{error:#}");
+        assert_eq!(
+            text,
+            format!(
+                "VPN connection {id} failed: no gateway had room. Its charges were given back; to try again, create a new one."
+            )
+        );
+        assert!(!out.exists());
+        assert!(temporaries(directory.path()).is_empty());
+    }
+
+    /// `new-config --out` whose wait stops short (here by Ctrl-C) still
+    /// writes the new configuration from the rotation's answer; a key the
+    /// gateway refuses writes nothing, and the file that was there stays.
+    #[tokio::test]
+    async fn new_config_writes_the_config_when_the_wait_stops_and_none_when_refused() {
+        let directory = tempfile::tempdir().unwrap();
+        let seed = directory.path().join("account.seed");
+        keys::generate_seed(&seed).unwrap();
+        let id = Uuid::now_v7();
+        let id_text = id.to_string();
+        let mut pending = view(id, GATEWAY_KEY, "ready");
+        pending["key_revision"] = json!(2);
+        let (url, received) = canned_server(vec![(200, pending.to_string())]).await;
+        let out = directory.path().join("new.conf");
+        let cli = command(
+            &url,
+            &seed,
+            &[
+                "vpn",
+                "new-config",
+                &id_text,
+                "--out",
+                out.to_str().unwrap(),
+                "--poll-seconds",
+                "5",
+            ],
+        );
+        let api = crate::api_client(&cli).unwrap();
+        let interrupt = tokio::time::sleep(Duration::from_millis(200));
+        let error = new_config(&cli, &api, new_config_args(&cli), false, interrupt)
+            .await
+            .unwrap_err();
+        let text = format!("{error:#}");
+        assert!(text.contains("The new configuration is in"), "{text}");
+        assert!(text.contains(&format!("ghost vpn get {id}")), "{text}");
+        let config = fs::read_to_string(&out).unwrap();
+        let private = written_private_key(&config);
+        assert_eq!(config, expected_config(&private));
+        let decoded: [u8; 32] = STANDARD.decode(&private).unwrap().try_into().unwrap();
+        let key = DeviceKey::from_private(Zeroizing::new(decoded));
+        assert_eq!(
+            bodies(&received)[0],
+            json!({"public_key": key.public_base64()})
+        );
+
+        let kept = directory.path().join("home.conf");
+        fs::write(&kept, "the config that works\n").unwrap();
+        let mut refused = pending.clone();
+        refused["refused_reason"] =
+            json!("the gateway refused the device key: another peer has it");
+        let (url, _) =
+            canned_server(vec![(200, pending.to_string()), (200, refused.to_string())]).await;
+        let cli = command(
+            &url,
+            &seed,
+            &[
+                "vpn",
+                "new-config",
+                &id_text,
+                "--out",
+                kept.to_str().unwrap(),
+                "--force",
+                "--poll-seconds",
+                "1",
+            ],
+        );
+        let error = crate::execute(&cli).await.unwrap_err();
+        assert_eq!(
+            format!("{error:#}"),
+            format!(
+                "the gateway refused the new key of VPN connection {id}: the gateway refused the device key: another peer has it"
+            )
+        );
+        assert_eq!(
+            fs::read_to_string(&kept).unwrap(),
+            "the config that works\n"
+        );
+        assert!(temporaries(directory.path()).is_empty());
+    }
+
+    /// The wait for a new key ends at its limit as a wait that may still
+    /// end well, so the new configuration is written.
+    #[tokio::test]
+    async fn a_new_key_wait_ends_at_its_limit() {
+        let directory = tempfile::tempdir().unwrap();
+        let seed = directory.path().join("account.seed");
+        keys::generate_seed(&seed).unwrap();
+        let cli = command("http://127.0.0.1:9/", &seed, &["vpn", "list"]);
+        let api = crate::api_client(&cli).unwrap();
+        let mut pending = view(Uuid::now_v7(), GATEWAY_KEY, "ready");
+        pending["key_revision"] = json!(2);
+        let error = wait_until_applied(
+            &api,
+            serde_json::from_value(pending).unwrap(),
+            Duration::from_secs(1),
+            false,
+            Duration::ZERO,
+        )
+        .await
+        .unwrap_err();
+        assert!(!key_unused(&error));
+        assert!(
+            error.to_string().contains("has not taken the new key"),
+            "{error:#}"
+        );
     }
 
     /// `--public-key` sends that key and writes no file; `dedicated-ip`

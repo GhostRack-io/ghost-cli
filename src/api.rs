@@ -611,7 +611,7 @@ pub fn got_no_response(error: &anyhow::Error) -> bool {
 /// ([`got_no_response`]: a transport error or a timeout), or a server
 /// error or a 408 came instead, which the same read sent again may get
 /// past.
-fn unanswered(error: &anyhow::Error) -> bool {
+pub(crate) fn unanswered(error: &anyhow::Error) -> bool {
     error.downcast_ref::<StatusError>().map_or_else(
         || got_no_response(error),
         |error| error.status.is_server_error() || error.status == StatusCode::REQUEST_TIMEOUT,
