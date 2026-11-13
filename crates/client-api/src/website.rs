@@ -7214,6 +7214,12 @@ pub struct ProviderHostDetailView {
     /// and each accepted increase adds one.
     #[serde(default)]
     pub capacity_revisions: Vec<HostCapacityRevisionView>,
+    /// The host's live capacity profiles, the primary first and then by
+    /// ordinal (item 257d); empty from a backend of before. The scalars
+    /// above (`root_storage_bytes_per_cpu_core`, the sizes below the
+    /// minimums) stay the primary's.
+    #[serde(default)]
+    pub capacity_profiles: Vec<ProviderCapacityProfileView>,
     pub agent_version: String,
     pub heartbeat_interval_seconds: u32,
     pub inventory_revision: Option<Uuid>,
@@ -7296,6 +7302,40 @@ pub struct HostCapacityRevisionView {
     pub reason: Option<String>,
     pub cpu_core_limit_per_numa_node: u32,
     pub allowed_numa_nodes: Vec<u32>,
+    /// The revision's capacity profiles, the primary first (item 257d);
+    /// empty for a revision of before the profiles, and from a backend of
+    /// before.
+    #[serde(default)]
+    pub profiles: Vec<HostCapacityRevisionProfileView>,
+}
+
+/// One live capacity profile of a host in its detail view (item 257d): its
+/// root pool, the disk it gives a VM per logical CPU, the sizes it leaves
+/// out and what it earns.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct ProviderCapacityProfileView {
+    /// The root pool's external ID.
+    pub root_pool: String,
+    pub primary: bool,
+    pub root_storage_bytes_per_cpu_core: u64,
+    /// As the detail's `sizes_below_minimum_memory` and
+    /// `sizes_below_minimum_disk`, with this profile's disk.
+    #[serde(default)]
+    pub sizes_below_minimum_memory: Vec<HostSizeView>,
+    #[serde(default)]
+    pub sizes_below_minimum_disk: Vec<HostSizeView>,
+    /// As [`CapacityProfilePricingView`]; none while the profile is unpriced.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compute_earnings: Option<ComputeEarnings>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub base_host_earnings_microusd_per_month: Option<u64>,
+}
+
+/// A capacity profile's disk in a revision of the host's capacity.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct HostCapacityRevisionProfileView {
+    pub root_pool: String,
+    pub root_storage_bytes_per_cpu_core: u64,
 }
 
 /// A size of VM a host's capacity profile yields.
