@@ -8799,9 +8799,6 @@ pub struct VpnConnectionView {
     /// The device's tunnel address, a /32 in its configuration.
     #[serde(default)]
     pub tunnel_address: Option<String>,
-    /// The connection's address in the account's mesh.
-    #[serde(default)]
-    pub mesh_address: Option<String>,
     /// The public address traffic leaves from: the connection's own, or
     /// its gateway's for a Shared IP slice.
     #[serde(default)]
