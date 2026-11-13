@@ -224,6 +224,7 @@ pub struct AccountSuspensionView {
 /// Who sent a request: the account, its role and provider profile, the key
 /// behind the request, and the website session it came with.
 #[derive(Clone, Debug, Deserialize, Serialize)]
+#[allow(clippy::struct_excessive_bools)] // A wire format of flags.
 pub struct AccountSessionView {
     pub account_alias: String,
     /// Whether the account holds the operator role, which the operator
