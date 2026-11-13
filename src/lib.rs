@@ -8052,6 +8052,7 @@ async fn approve_browser_operation(
                         idempotency_key: &key.key,
                         poll_seconds: 2,
                         timeout_seconds: 300,
+                        progress: !cli.globals.compact,
                     },
                 )
                 .await
@@ -8227,7 +8228,7 @@ async fn quote_operation(
                 .await?;
             // The destination's name is for reading: an instance that
             // cannot be read now is shown by its ID.
-            let instance = api
+            let instance: Option<InstanceView> = api
                 .read(
                     &GetInstance {
                         instance_id: *instance_id,
@@ -8235,16 +8236,21 @@ async fn quote_operation(
                     "",
                 )
                 .await
-                .ok()
-                .map(|instance: InstanceView| instance.display_name().to_owned());
+                .ok();
             for line in restore_screen(
                 intent_id,
                 *backup_id,
                 &backup,
                 *instance_id,
-                instance.as_deref(),
+                instance.as_ref().map(InstanceView::display_name),
                 colors,
             ) {
+                notice(&line);
+            }
+            // Over an older instance, the backup kept first (item 267).
+            if let Some(line) =
+                forced_backup_of(api, instance.as_ref(), Some(backup.created_at)).await
+            {
                 notice(&line);
             }
         }
@@ -8547,6 +8553,7 @@ async fn execute_instance(
                         idempotency_key: &key.key,
                         poll_seconds: args.mutation.poll_seconds,
                         timeout_seconds: args.authorization_timeout_seconds,
+                        progress: show_progress,
                     },
                 )
                 .await
@@ -8584,8 +8591,21 @@ async fn execute_instance(
         }
         InstanceCommand::Reinstall(args) => {
             if !args.yes {
+                // An older instance's reinstall keeps a backup of it first
+                // (item 267), which the refusal names with its most and its
+                // lock: the instance and the prices are read, nothing is
+                // sent.
+                let instance_id =
+                    resolve_instance(api, &args.instance_id, InstanceUse::Change).await?;
+                let instance: Option<InstanceView> =
+                    api.read(&GetInstance { instance_id }, "").await.ok();
+                let forced = forced_backup_of(api, instance.as_ref(), None).await;
                 bail!(
-                    "reinstall destroys the current root filesystem and starts the instance if it is stopped; repeat with --yes"
+                    "{}",
+                    unconfirmed(
+                        "reinstall destroys the current root filesystem and starts the instance if it is stopped",
+                        forced.as_deref(),
+                    )
                 );
             }
             let instance_id = resolve_instance(api, &args.instance_id, InstanceUse::Change).await?;
@@ -8614,14 +8634,7 @@ async fn execute_instance(
             // An older instance's reinstall keeps a backup of it first
             // (item 267): said with its most and its lock, and accepted with
             // --yes, as a restore's charge is.
-            let forced = match instance.as_ref() {
-                Some(instance) if instance.deletion_safety.is_some() => {
-                    let pricing: Option<BackupPricingView> =
-                        api.read(&GetBackupPricing, "").await.ok();
-                    forced_backup_line(instance, pricing.as_ref(), None, Utc::now())
-                }
-                _ => None,
-            };
+            let forced = forced_backup_of(api, instance.as_ref(), None).await;
             if let Some(line) = &forced {
                 notice(line);
             }
@@ -9048,6 +9061,11 @@ fn forced_backup_line(
     now: DateTime<Utc>,
 ) -> Option<String> {
     let safety = instance.deletion_safety?;
+    // A failed instance is reinstalled without one: a failed reinstall
+    // left it so, which took one first if it was old enough.
+    if instance.state == InstanceState::Failed {
+        return None;
+    }
     if restored.is_some_and(|taken| {
         now - taken <= chrono::Duration::days(i64::from(safety.restore_without_backup_days))
     }) {
@@ -9079,6 +9097,27 @@ fn forced_backup_line(
         ),
         None => format!("Keeps a backup first, locked until {until}."),
     })
+}
+
+/// [`forced_backup_line`] of `instance`, read with the backup prices
+/// when it has a tier; None when it could not be read.
+async fn forced_backup_of(
+    api: &ApiClient,
+    instance: Option<&InstanceView>,
+    restored: Option<DateTime<Utc>>,
+) -> Option<String> {
+    let instance = instance.filter(|instance| instance.deletion_safety.is_some())?;
+    let pricing: Option<BackupPricingView> = api.read(&GetBackupPricing, "").await.ok();
+    forced_backup_line(instance, pricing.as_ref(), restored, Utc::now())
+}
+
+/// The refusal of a reinstall or restore without --yes: what it does, and
+/// the backup it keeps first ([`forced_backup_line`]) when it keeps one.
+fn unconfirmed(what: &str, forced: Option<&str>) -> String {
+    match forced {
+        Some(line) => format!("{what}. {}; repeat with --yes", line.trim_end_matches('.')),
+        None => format!("{what}; repeat with --yes"),
+    }
 }
 
 /// A time in this machine's zone: the time of day alone on today's date.
@@ -9615,27 +9654,24 @@ fn decrypt_backup(cli: &Cli, args: &DecryptBackupArgs) -> Result<Value> {
 }
 
 async fn restore_backup(cli: &Cli, api: &ApiClient, args: &RestoreBackupArgs) -> Result<Value> {
-    if !args.yes {
-        bail!("restore replaces the current root filesystem; repeat with --yes");
-    }
     let backup = named_backup(api, args.first_id, args.legacy_backup_id).await?;
     ensure_backup_available(&backup, "restored")?;
     let instance_id = backup.instance_id;
     // A restore over an older instance from an older backup keeps a backup
-    // of it first (item 267): said with its most and its lock, and accepted
+    // of it first (item 267): named with its most and its lock in the
+    // refusal without --yes, which reads but sends nothing, and accepted
     // with --yes, as the restore's charge is.
-    let forced = match api.read(&GetInstance { instance_id }, "").await {
-        Ok(instance) if instance.deletion_safety.is_some() => {
-            let pricing: Option<BackupPricingView> = api.read(&GetBackupPricing, "").await.ok();
-            forced_backup_line(
-                &instance,
-                pricing.as_ref(),
-                Some(backup.created_at),
-                Utc::now(),
+    let instance: Option<InstanceView> = api.read(&GetInstance { instance_id }, "").await.ok();
+    let forced = forced_backup_of(api, instance.as_ref(), Some(backup.created_at)).await;
+    if !args.yes {
+        bail!(
+            "{}",
+            unconfirmed(
+                "restore replaces the current root filesystem",
+                forced.as_deref()
             )
-        }
-        _ => None,
-    };
+        );
+    }
     if let Some(line) = &forced {
         notice(line);
     }
@@ -9680,6 +9716,7 @@ async fn restore_backup(cli: &Cli, api: &ApiClient, args: &RestoreBackupArgs) ->
                 idempotency_key: &key.key,
                 poll_seconds: args.mutation.poll_seconds,
                 timeout_seconds: args.authorization_timeout_seconds,
+                progress: !cli.globals.compact,
             },
         )
         .await
@@ -10007,6 +10044,8 @@ struct HostedRestoreAuthorization<'a> {
     idempotency_key: &'a str,
     poll_seconds: u64,
     timeout_seconds: u64,
+    /// Say what the wait waits for (not with `--compact`).
+    progress: bool,
 }
 
 async fn authorize_hosted_restore(
@@ -10021,6 +10060,7 @@ async fn authorize_hosted_restore(
         idempotency_key,
         poll_seconds,
         timeout_seconds,
+        progress,
     } = context;
     let wrapped_data_key = backup
         .wrapped_data_key
@@ -10031,6 +10071,7 @@ async fn authorize_hosted_restore(
         accepted.job_id,
         Duration::from_secs(poll_seconds),
         Duration::from_secs(timeout_seconds),
+        progress,
     )
     .await?
     else {
@@ -11845,13 +11886,20 @@ fn restore_offer_notice(job_id: Uuid) -> String {
 /// An offer read after the deadline is refused, and waiting ends at the
 /// deadline rather than a poll interval later. `None` means an earlier run
 /// already authorized the restore.
+///
+/// A restore over an older instance backs it up first (item 267), which
+/// may take hours: the offer comes only after that, so the `timeout`
+/// counts from the backup's end, and the wait says so once when
+/// `progress`.
 async fn wait_for_restore_offer(
     api: &ApiClient,
     job_id: Uuid,
     interval: Duration,
     timeout: Duration,
+    progress: bool,
 ) -> Result<Option<RestoreKeyOffer>> {
-    let deadline = tokio::time::Instant::now() + timeout;
+    let mut deadline = tokio::time::Instant::now() + timeout;
+    let mut backing_up = false;
     loop {
         let job = read_job(api, job_id, interval).await?;
         let Some(awaiting) = job
@@ -11876,6 +11924,19 @@ async fn wait_for_restore_offer(
                     .as_deref()
                     .unwrap_or("the authorization step ended")
             );
+        }
+        if job.steps.iter().any(|step| {
+            step.step_key == "await_forced_backup" && step.state != JobStepState::Succeeded
+        }) {
+            if progress && !backing_up {
+                notice(&format!(
+                    "Job {job_id}: backing up first. The restore waits for it."
+                ));
+            }
+            backing_up = true;
+            tokio::time::sleep(interval).await;
+            deadline = tokio::time::Instant::now() + timeout;
+            continue;
         }
         // The deadline before the offer: one that came with a read ending
         // after it came too late.
@@ -15399,21 +15460,21 @@ mod tests {
         let timeout = Duration::from_secs(30);
         for _ in 0..2 {
             assert!(
-                wait_for_restore_offer(&api, Uuid::nil(), interval, timeout)
+                wait_for_restore_offer(&api, Uuid::nil(), interval, timeout, false)
                     .await
                     .unwrap()
                     .is_none()
             );
         }
-        let expired = wait_for_restore_offer(&api, Uuid::nil(), interval, timeout)
+        let expired = wait_for_restore_offer(&api, Uuid::nil(), interval, timeout, false)
             .await
             .unwrap_err();
         assert!(expired.to_string().contains("expired"), "{expired:#}");
-        let failed = wait_for_restore_offer(&api, Uuid::nil(), interval, timeout)
+        let failed = wait_for_restore_offer(&api, Uuid::nil(), interval, timeout, false)
             .await
             .unwrap_err();
         assert!(failed.to_string().contains("ended failed"), "{failed:#}");
-        let offered = wait_for_restore_offer(&api, Uuid::nil(), interval, timeout)
+        let offered = wait_for_restore_offer(&api, Uuid::nil(), interval, timeout, false)
             .await
             .unwrap()
             .unwrap();
@@ -15492,6 +15553,52 @@ mod tests {
         }
     }
 
+    /// A restore over an older instance backs it up first (item 267): the
+    /// wait for the offer counts from the backup's end, however long the
+    /// backup takes.
+    #[tokio::test]
+    async fn the_wait_for_the_offer_begins_after_the_backup_kept_first() {
+        let offer = json!({"prepare_restore_key": {
+            "destination_public_key": URL_SAFE_NO_PAD.encode([1_u8; 32]),
+            "destination_key_fingerprint": URL_SAFE_NO_PAD.encode([2_u8; 32]),
+            "offer_expires_at": Utc::now() + chrono::Duration::minutes(10),
+        }});
+        let backing_up = job_json(
+            JobState::Pending,
+            &[
+                ("await_forced_backup", JobStepState::Pending),
+                ("prepare_restore_key", JobStepState::Pending),
+                ("await_restore_authorization", JobStepState::Pending),
+            ],
+            json!({}),
+        );
+        let offered = job_json(
+            JobState::Running,
+            &[
+                ("await_forced_backup", JobStepState::Succeeded),
+                ("prepare_restore_key", JobStepState::Succeeded),
+                ("await_restore_authorization", JobStepState::Pending),
+            ],
+            offer,
+        );
+        let api = canned_api(vec![
+            (200, backing_up.clone()),
+            (200, backing_up),
+            (200, offered),
+        ])
+        .await;
+        let taken = wait_for_restore_offer(
+            &api,
+            Uuid::nil(),
+            Duration::from_millis(30),
+            Duration::from_millis(20),
+            false,
+        )
+        .await
+        .unwrap();
+        assert!(taken.is_some());
+    }
+
     /// `--authorization-timeout-seconds` is a hard limit: an offer read
     /// after it is not taken, not even one that a read begun before it
     /// brought, and the waiting ends at it, not a poll interval later.
@@ -15507,7 +15614,7 @@ mod tests {
         let offered = job_json(JobState::Running, &awaiting, offer);
         let timed_out = "timed out waiting for the destination hypervisor restore-key offer";
         let api = canned_api(vec![(200, offered.clone())]).await;
-        let late = wait_for_restore_offer(&api, Uuid::nil(), Duration::ZERO, Duration::ZERO)
+        let late = wait_for_restore_offer(&api, Uuid::nil(), Duration::ZERO, Duration::ZERO, false)
             .await
             .unwrap_err();
         assert_eq!(late.to_string(), timed_out);
@@ -15520,6 +15627,7 @@ mod tests {
             Uuid::nil(),
             Duration::from_mins(1),
             Duration::from_millis(20),
+            false,
         )
         .await
         .unwrap_err();
@@ -15527,10 +15635,15 @@ mod tests {
         assert!(started.elapsed() < Duration::from_secs(30));
         // Within the timeout the offer is taken.
         let api = canned_api(vec![(200, offered)]).await;
-        let taken =
-            wait_for_restore_offer(&api, Uuid::nil(), Duration::ZERO, Duration::from_secs(30))
-                .await
-                .unwrap();
+        let taken = wait_for_restore_offer(
+            &api,
+            Uuid::nil(),
+            Duration::ZERO,
+            Duration::from_secs(30),
+            false,
+        )
+        .await
+        .unwrap();
         assert!(taken.is_some());
     }
 
@@ -20032,6 +20145,9 @@ mod tests {
                 json!({"code": "not_found", "message": "instance not found"}).to_string(),
             ),
             (202, accepted.to_string()),
+            // Without --yes the instance is read, for the backup an older
+            // one keeps first (item 267); this one is new.
+            (200, instance("stopped", "stopped").to_string()),
         ])
         .await;
         let (id, image) = (instance_id.to_string(), Uuid::now_v7().to_string());
@@ -20052,7 +20168,68 @@ mod tests {
         );
         let read = format!("GET /v1/instances/{id}");
         let post = format!("POST /api/mut/v1/instances/{id}/reinstall");
-        assert_eq!(request_lines(&received), [&*read, &post, &read, &post]);
+        assert_eq!(
+            request_lines(&received),
+            [&*read, &post, &read, &post, &read]
+        );
+    }
+
+    /// Without --yes, the reinstall of an older instance names the backup
+    /// it keeps first (item 267) in its refusal, with its most and its
+    /// lock, from the instance and the prices it reads; it sends nothing.
+    #[tokio::test]
+    async fn an_unconfirmed_reinstall_names_the_backup_kept_first() {
+        let directory = tempfile::tempdir().unwrap();
+        let seed = directory.path().join("account.seed");
+        keys::generate_seed(&seed).unwrap();
+        let instance_id = Uuid::now_v7();
+        let instance = json!({"instance_id": instance_id, "offering_id": "o", "hostname": "vm",
+            "root_disk_bytes": 40_u64 << 30, "state": "running", "desired_power_state": "running",
+            "holds_capacity": true, "network_microusd_per_tib": 0,
+            "created_at": "2026-09-01T00:00:00Z", "balance_reservation_microusd": 0,
+            "deletion_safety": {"delete_delay_minutes": 120, "backup_lock_days": 7,
+                                "restore_without_backup_days": 30}});
+        let pricing = json!({
+            "pricing_revision": 3,
+            "local": {"creation_charge_microusd_per_gib": 10_000,
+                      "restore_charge_microusd_per_gib": 10_000,
+                      "storage_charge_microusd_per_gib_month": 20_000},
+            "hosted": {"creation_charge_microusd_per_gib": 20_000,
+                       "restore_charge_microusd_per_gib": 10_000,
+                       "storage_charge_microusd_per_gib_month": 20_000},
+            "billing_unit_bytes": 1_048_576,
+            "balance_margin_microusd": 0
+        });
+        let (url, received) = canned_server(vec![
+            (200, instance.to_string()),
+            (200, pricing.to_string()),
+        ])
+        .await;
+        let (id, image) = (instance_id.to_string(), Uuid::now_v7().to_string());
+        let refused = execute(&account_command(
+            &url,
+            &seed,
+            &["instance", "reinstall", &id, "--image", &image],
+        ))
+        .await
+        .unwrap_err()
+        .to_string();
+        let until = (Utc::now() + chrono::Duration::days(7))
+            .with_timezone(&chrono::Local)
+            .format("%Y-%m-%d");
+        assert_eq!(
+            refused,
+            format!(
+                "reinstall destroys the current root filesystem and starts the instance if it is stopped. Keeps a backup first: up to $0.80, locked until {until}; repeat with --yes"
+            )
+        );
+        assert_eq!(
+            request_lines(&received),
+            [
+                format!("GET /v1/instances/{id}"),
+                "GET /v1/catalog/backup-pricing".to_owned(),
+            ]
+        );
     }
 
     /// `ghost instance get` says a limit or block in a line, a control byte
@@ -21062,6 +21239,9 @@ mod tests {
             ),
             None
         );
+        // A failed instance is reinstalled without one.
+        view.state = InstanceState::Failed;
+        assert_eq!(forced_backup_line(&view, Some(&pricing), None, now), None);
     }
 
     /// `ghost account pending list`'s second table names the instances
@@ -22468,7 +22648,9 @@ mod tests {
             (200, backup.clone()),
             (200, young_instance_json(instance_id)),
             (202, accepted.to_string()),
+            (200, backup.clone()),
             (200, backup),
+            (200, young_instance_json(instance_id)),
         ])
         .await;
         let backup = backup_id.to_string();
@@ -22515,6 +22697,10 @@ mod tests {
                 format!("GET /v1/instances/{instance_id}"),
                 format!("POST /api/mut/v1/instances/{instance_id}/backups/{backup_id}/restore"),
                 format!("GET /v1/backups/{backup_id}"),
+                // Unconfirmed: the backup and its instance are read, for
+                // the backup an older one keeps first (item 267).
+                format!("GET /v1/backups/{backup_id}"),
+                format!("GET /v1/instances/{instance_id}"),
             ]
         );
     }
