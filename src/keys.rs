@@ -420,12 +420,15 @@ impl PrivateFile {
             .with_context(|| format!("write {what} {}", self.temporary.display()))?;
         drop(file);
         // A hard link refuses a file made meanwhile; a rename replaces one.
-        if self.replace {
+        let placed = if self.replace {
             fs::rename(&self.temporary, &self.path)
         } else {
             fs::hard_link(&self.temporary, &self.path)
         }
-        .with_context(|| format!("write {what} {}", self.path.display()))?;
+        .with_context(|| format!("write {what} {}", self.path.display()));
+        // Gone before the directory is synced, which then keeps neither.
+        let _ = fs::remove_file(&self.temporary);
+        placed?;
         sync_directory(&self.parent);
         Ok(())
     }
