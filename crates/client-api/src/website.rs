@@ -4294,6 +4294,12 @@ pub struct InstanceView {
     pub vcpu_count: u32,
     #[serde(default)]
     pub memory_bytes: u64,
+    /// Whether `memory_bytes` grew with its host's RAM per vCPU (item 272)
+    /// while the instance ran: its guest has the RAM of before until it is
+    /// restarted from the platform. Absent (false) otherwise and from older
+    /// backends.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub memory_restart_pending: bool,
     pub root_disk_bytes: u64,
     #[serde(default)]
     pub firmware: Option<GuestFirmware>,
