@@ -251,6 +251,11 @@ pub struct AccountSessionView {
     /// older backends.
     #[serde(default)]
     pub totp_enabled: bool,
+    /// Whether VPN connections are offered (the platform's `vpn_enabled`),
+    /// so the website shows them in its navigation. Absent from older
+    /// backends.
+    #[serde(default)]
+    pub vpn_enabled: bool,
 }
 
 /// A website session of the account.
