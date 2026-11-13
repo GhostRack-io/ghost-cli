@@ -8052,7 +8052,6 @@ async fn approve_browser_operation(
                         idempotency_key: &key.key,
                         poll_seconds: 2,
                         timeout_seconds: 300,
-                        progress: !cli.globals.compact,
                     },
                 )
                 .await
@@ -8553,7 +8552,6 @@ async fn execute_instance(
                         idempotency_key: &key.key,
                         poll_seconds: args.mutation.poll_seconds,
                         timeout_seconds: args.authorization_timeout_seconds,
-                        progress: show_progress,
                     },
                 )
                 .await
@@ -9716,7 +9714,6 @@ async fn restore_backup(cli: &Cli, api: &ApiClient, args: &RestoreBackupArgs) ->
                 idempotency_key: &key.key,
                 poll_seconds: args.mutation.poll_seconds,
                 timeout_seconds: args.authorization_timeout_seconds,
-                progress: !cli.globals.compact,
             },
         )
         .await
@@ -10044,8 +10041,6 @@ struct HostedRestoreAuthorization<'a> {
     idempotency_key: &'a str,
     poll_seconds: u64,
     timeout_seconds: u64,
-    /// Say what the wait waits for (not with `--compact`).
-    progress: bool,
 }
 
 async fn authorize_hosted_restore(
@@ -10060,7 +10055,6 @@ async fn authorize_hosted_restore(
         idempotency_key,
         poll_seconds,
         timeout_seconds,
-        progress,
     } = context;
     let wrapped_data_key = backup
         .wrapped_data_key
@@ -10071,7 +10065,6 @@ async fn authorize_hosted_restore(
         accepted.job_id,
         Duration::from_secs(poll_seconds),
         Duration::from_secs(timeout_seconds),
-        progress,
     )
     .await?
     else {
@@ -11887,19 +11880,16 @@ fn restore_offer_notice(job_id: Uuid) -> String {
 /// deadline rather than a poll interval later. `None` means an earlier run
 /// already authorized the restore.
 ///
-/// A restore over an older instance backs it up first (item 267), which
-/// may take hours: the offer comes only after that, so the `timeout`
-/// counts from the backup's end, and the wait says so once when
-/// `progress`.
+/// A restore over an older instance backs it up first (item 267), and its
+/// key is offered before that backup (item 267c): the offer is taken as
+/// soon as it is there, and the restore begins once the backup is made.
 async fn wait_for_restore_offer(
     api: &ApiClient,
     job_id: Uuid,
     interval: Duration,
     timeout: Duration,
-    progress: bool,
 ) -> Result<Option<RestoreKeyOffer>> {
-    let mut deadline = tokio::time::Instant::now() + timeout;
-    let mut backing_up = false;
+    let deadline = tokio::time::Instant::now() + timeout;
     loop {
         let job = read_job(api, job_id, interval).await?;
         let Some(awaiting) = job
@@ -11924,19 +11914,6 @@ async fn wait_for_restore_offer(
                     .as_deref()
                     .unwrap_or("the authorization step ended")
             );
-        }
-        if job.steps.iter().any(|step| {
-            step.step_key == "await_forced_backup" && step.state != JobStepState::Succeeded
-        }) {
-            if progress && !backing_up {
-                notice(&format!(
-                    "Job {job_id}: backing up first. The restore waits for it."
-                ));
-            }
-            backing_up = true;
-            tokio::time::sleep(interval).await;
-            deadline = tokio::time::Instant::now() + timeout;
-            continue;
         }
         // The deadline before the offer: one that came with a read ending
         // after it came too late.
@@ -15460,21 +15437,21 @@ mod tests {
         let timeout = Duration::from_secs(30);
         for _ in 0..2 {
             assert!(
-                wait_for_restore_offer(&api, Uuid::nil(), interval, timeout, false)
+                wait_for_restore_offer(&api, Uuid::nil(), interval, timeout)
                     .await
                     .unwrap()
                     .is_none()
             );
         }
-        let expired = wait_for_restore_offer(&api, Uuid::nil(), interval, timeout, false)
+        let expired = wait_for_restore_offer(&api, Uuid::nil(), interval, timeout)
             .await
             .unwrap_err();
         assert!(expired.to_string().contains("expired"), "{expired:#}");
-        let failed = wait_for_restore_offer(&api, Uuid::nil(), interval, timeout, false)
+        let failed = wait_for_restore_offer(&api, Uuid::nil(), interval, timeout)
             .await
             .unwrap_err();
         assert!(failed.to_string().contains("ended failed"), "{failed:#}");
-        let offered = wait_for_restore_offer(&api, Uuid::nil(), interval, timeout, false)
+        let offered = wait_for_restore_offer(&api, Uuid::nil(), interval, timeout)
             .await
             .unwrap()
             .unwrap();
@@ -15553,46 +15530,31 @@ mod tests {
         }
     }
 
-    /// A restore over an older instance backs it up first (item 267): the
-    /// wait for the offer counts from the backup's end, however long the
-    /// backup takes.
+    /// A restore over an older instance backs it up first (item 267), and
+    /// its key is offered before that backup (item 267c): an offer there
+    /// while the backup is still made is taken at once.
     #[tokio::test]
-    async fn the_wait_for_the_offer_begins_after_the_backup_kept_first() {
+    async fn the_offer_is_taken_while_the_backup_kept_first_is_made() {
         let offer = json!({"prepare_restore_key": {
             "destination_public_key": URL_SAFE_NO_PAD.encode([1_u8; 32]),
             "destination_key_fingerprint": URL_SAFE_NO_PAD.encode([2_u8; 32]),
             "offer_expires_at": Utc::now() + chrono::Duration::minutes(10),
         }});
         let backing_up = job_json(
-            JobState::Pending,
-            &[
-                ("await_forced_backup", JobStepState::Pending),
-                ("prepare_restore_key", JobStepState::Pending),
-                ("await_restore_authorization", JobStepState::Pending),
-            ],
-            json!({}),
-        );
-        let offered = job_json(
             JobState::Running,
             &[
-                ("await_forced_backup", JobStepState::Succeeded),
                 ("prepare_restore_key", JobStepState::Succeeded),
+                ("await_forced_backup", JobStepState::Pending),
                 ("await_restore_authorization", JobStepState::Pending),
             ],
             offer,
         );
-        let api = canned_api(vec![
-            (200, backing_up.clone()),
-            (200, backing_up),
-            (200, offered),
-        ])
-        .await;
+        let api = canned_api(vec![(200, backing_up)]).await;
         let taken = wait_for_restore_offer(
             &api,
             Uuid::nil(),
-            Duration::from_millis(30),
-            Duration::from_millis(20),
-            false,
+            Duration::from_secs(30),
+            Duration::from_secs(30),
         )
         .await
         .unwrap();
@@ -15614,7 +15576,7 @@ mod tests {
         let offered = job_json(JobState::Running, &awaiting, offer);
         let timed_out = "timed out waiting for the destination hypervisor restore-key offer";
         let api = canned_api(vec![(200, offered.clone())]).await;
-        let late = wait_for_restore_offer(&api, Uuid::nil(), Duration::ZERO, Duration::ZERO, false)
+        let late = wait_for_restore_offer(&api, Uuid::nil(), Duration::ZERO, Duration::ZERO)
             .await
             .unwrap_err();
         assert_eq!(late.to_string(), timed_out);
@@ -15627,7 +15589,6 @@ mod tests {
             Uuid::nil(),
             Duration::from_mins(1),
             Duration::from_millis(20),
-            false,
         )
         .await
         .unwrap_err();
@@ -15635,15 +15596,10 @@ mod tests {
         assert!(started.elapsed() < Duration::from_secs(30));
         // Within the timeout the offer is taken.
         let api = canned_api(vec![(200, offered)]).await;
-        let taken = wait_for_restore_offer(
-            &api,
-            Uuid::nil(),
-            Duration::ZERO,
-            Duration::from_secs(30),
-            false,
-        )
-        .await
-        .unwrap();
+        let taken =
+            wait_for_restore_offer(&api, Uuid::nil(), Duration::ZERO, Duration::from_secs(30))
+                .await
+                .unwrap();
         assert!(taken.is_some());
     }
 
