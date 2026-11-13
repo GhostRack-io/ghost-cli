@@ -8583,27 +8583,12 @@ async fn execute_instance(
             mutation_result(api, accepted, &args.mutation, show_progress).await
         }
         InstanceCommand::Reinstall(args) => {
-            let instance_id = resolve_instance(api, &args.instance_id, InstanceUse::Change).await?;
-            // An older instance's reinstall keeps a backup of it first
-            // (item 267), which --yes accepts with the reinstall.
-            let instance: Option<InstanceView> =
-                api.read(&GetInstance { instance_id }, "").await.ok();
-            let forced = match instance.as_ref() {
-                Some(instance) if instance.deletion_safety.is_some() => {
-                    let pricing: Option<BackupPricingView> =
-                        api.read(&GetBackupPricing, "").await.ok();
-                    forced_backup_line(instance, pricing.as_ref(), None, Utc::now())
-                }
-                _ => None,
-            };
-            if let Some(line) = &forced {
-                notice(line);
-            }
             if !args.yes {
                 bail!(
                     "reinstall destroys the current root filesystem and starts the instance if it is stopped; repeat with --yes"
                 );
             }
+            let instance_id = resolve_instance(api, &args.instance_id, InstanceUse::Change).await?;
             let ssh_public_keys = load_ssh_keys(&args.ssh_keys, &args.ssh_key_files)?;
             let cloud_init = args
                 .cloud_init_file
@@ -8624,6 +8609,22 @@ async fn execute_instance(
             let image_id = resolve_image(api, &args.image).await?;
             // Only a note: an instance that cannot be read here is still
             // reinstalled, and the backend refuses what it must.
+            let instance: Option<InstanceView> =
+                api.read(&GetInstance { instance_id }, "").await.ok();
+            // An older instance's reinstall keeps a backup of it first
+            // (item 267): said with its most and its lock, and accepted with
+            // --yes, as a restore's charge is.
+            let forced = match instance.as_ref() {
+                Some(instance) if instance.deletion_safety.is_some() => {
+                    let pricing: Option<BackupPricingView> =
+                        api.read(&GetBackupPricing, "").await.ok();
+                    forced_backup_line(instance, pricing.as_ref(), None, Utc::now())
+                }
+                _ => None,
+            };
+            if let Some(line) = &forced {
+                notice(line);
+            }
             if let Some(note) = instance.as_ref().and_then(reinstall_start_note) {
                 notice(&note);
             }
@@ -9614,11 +9615,15 @@ fn decrypt_backup(cli: &Cli, args: &DecryptBackupArgs) -> Result<Value> {
 }
 
 async fn restore_backup(cli: &Cli, api: &ApiClient, args: &RestoreBackupArgs) -> Result<Value> {
+    if !args.yes {
+        bail!("restore replaces the current root filesystem; repeat with --yes");
+    }
     let backup = named_backup(api, args.first_id, args.legacy_backup_id).await?;
     ensure_backup_available(&backup, "restored")?;
     let instance_id = backup.instance_id;
     // A restore over an older instance from an older backup keeps a backup
-    // of it first (item 267), which --yes accepts with the restore.
+    // of it first (item 267): said with its most and its lock, and accepted
+    // with --yes, as the restore's charge is.
     let forced = match api.read(&GetInstance { instance_id }, "").await {
         Ok(instance) if instance.deletion_safety.is_some() => {
             let pricing: Option<BackupPricingView> = api.read(&GetBackupPricing, "").await.ok();
@@ -9633,9 +9638,6 @@ async fn restore_backup(cli: &Cli, api: &ApiClient, args: &RestoreBackupArgs) ->
     };
     if let Some(line) = &forced {
         notice(line);
-    }
-    if !args.yes {
-        bail!("restore replaces the current root filesystem; repeat with --yes");
     }
     let key = args.mutation.key();
     let (billing_authorization, hosted_recovery) =
@@ -15460,13 +15462,17 @@ mod tests {
             (&create[..], "resume this backup-based creation with"),
             (&restore[..], "resume this restore with"),
         ] {
-            let (url, _) = canned_server(vec![
-                (200, backup.to_string()),
+            // A restore reads the instance it restores over (item 267).
+            let mut responses = vec![(200, backup.to_string())];
+            if command == &restore[..] {
+                responses.push((200, young_instance_json(source)));
+            }
+            responses.extend([
                 (202, accepted.to_string()),
                 (200, waiting.clone()),
                 (200, waiting.clone()),
-            ])
-            .await;
+            ]);
+            let (url, _) = canned_server(responses).await;
             let mut arguments = vec!["--compact"];
             arguments.extend_from_slice(command);
             arguments.extend_from_slice(&["--authorization-timeout-seconds", "1"]);
@@ -21677,6 +21683,24 @@ mod tests {
     }
 
     /// A backup as the API lists it.
+    /// An instance young enough that a restore over it keeps no backup
+    /// first (item 267), as `backup restore` reads it before restoring.
+    fn young_instance_json(instance_id: Uuid) -> String {
+        json!({
+            "instance_id": instance_id,
+            "offering_id": "of2_x",
+            "hostname": "web-1",
+            "root_disk_bytes": 10_737_418_240_u64,
+            "state": "running",
+            "desired_power_state": "running",
+            "holds_capacity": true,
+            "network_microusd_per_tib": 0,
+            "created_at": "2026-09-01T00:00:00Z",
+            "balance_reservation_microusd": 0
+        })
+        .to_string()
+    }
+
     fn backup_json(backup_id: Uuid, instance_id: Uuid, destination: &str, status: &str) -> Value {
         json!({"backup_id": backup_id, "instance_id": instance_id,
             "destination": destination, "status": status, "purpose": "regular",
@@ -22442,6 +22466,7 @@ mod tests {
             "status_url": format!("/v1/jobs/{job_id}")});
         let (url, received) = canned_server(vec![
             (200, backup.clone()),
+            (200, young_instance_json(instance_id)),
             (202, accepted.to_string()),
             (200, backup),
         ])
@@ -22487,6 +22512,7 @@ mod tests {
             request_lines(&received),
             [
                 format!("GET /v1/backups/{backup_id}"),
+                format!("GET /v1/instances/{instance_id}"),
                 format!("POST /api/mut/v1/instances/{instance_id}/backups/{backup_id}/restore"),
                 format!("GET /v1/backups/{backup_id}"),
             ]
