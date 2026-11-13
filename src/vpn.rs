@@ -335,7 +335,7 @@ impl DeviceKey {
 const PRIVATE_KEY_FILE_BYTES: usize = 256;
 
 /// The `WireGuard` configuration of `view`'s device with its private key
-/// `key`: a full tunnel, no DNS line (the device keeps its own resolver),
+/// `key`: a full tunnel through public resolvers (the owner, 2026-11-13),
 /// MTU 1420 and a keepalive every 25 seconds. The gateway's values are
 /// checked first, so none of them can add a line to it.
 ///
@@ -367,7 +367,7 @@ pub(crate) fn config_text(key: &DeviceKey, view: &VpnConnectionView) -> Result<Z
         .context("the gateway's public key is not a WireGuard key")?;
     let private = key.private_base64();
     Ok(Zeroizing::new(format!(
-        "[Interface]\nPrivateKey = {}\nAddress = {address}\nMTU = 1420\n\n[Peer]\nPublicKey = {gateway_key}\nEndpoint = {endpoint}\nAllowedIPs = 0.0.0.0/0, ::/0\nPersistentKeepalive = 25\n",
+        "[Interface]\nPrivateKey = {}\nAddress = {address}\nDNS = 1.1.1.1, 9.9.9.9\nMTU = 1420\n\n[Peer]\nPublicKey = {gateway_key}\nEndpoint = {endpoint}\nAllowedIPs = 0.0.0.0/0, ::/0\nPersistentKeepalive = 25\n",
         private.as_str()
     )))
 }
@@ -1347,7 +1347,7 @@ mod tests {
 
     fn expected_config(private: &str) -> String {
         format!(
-            "[Interface]\nPrivateKey = {private}\nAddress = 10.200.0.2/32\nMTU = 1420\n\n[Peer]\nPublicKey = {GATEWAY_KEY}\nEndpoint = 203.0.113.7:51820\nAllowedIPs = 0.0.0.0/0, ::/0\nPersistentKeepalive = 25\n"
+            "[Interface]\nPrivateKey = {private}\nAddress = 10.200.0.2/32\nDNS = 1.1.1.1, 9.9.9.9\nMTU = 1420\n\n[Peer]\nPublicKey = {GATEWAY_KEY}\nEndpoint = 203.0.113.7:51820\nAllowedIPs = 0.0.0.0/0, ::/0\nPersistentKeepalive = 25\n"
         )
     }
 
@@ -2073,7 +2073,9 @@ mod tests {
         );
         assert_eq!(tunnel_address("10.0.0.2").as_deref(), Some("10.0.0.2/32"));
         let config = config_text(&key, &parsed(view(id, GATEWAY_KEY, "ready"))).unwrap();
-        assert!(!config.contains("DNS"));
+        // The one DNS line is the platform's own; no gateway value adds one.
+        assert_eq!(config.matches("DNS").count(), 1);
+        assert!(config.contains("\nDNS = 1.1.1.1, 9.9.9.9\n"));
     }
 
     /// A configuration renders as a QR code of half blocks, and --qr is
