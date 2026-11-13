@@ -14,6 +14,7 @@ mod console;
 mod ghostd;
 mod keys;
 mod pretty;
+mod vpn;
 
 #[cfg(unix)]
 pub use console::run_console;
@@ -225,6 +226,12 @@ enum Command {
     Backup {
         #[command(subcommand)]
         command: BackupCommand,
+    },
+    /// Create and manage VPN connections: one device each, on a gateway's
+    /// `WireGuard` tunnel.
+    Vpn {
+        #[command(subcommand)]
+        command: vpn::VpnCommand,
     },
     /// Inspect or follow asynchronous jobs.
     Job {
@@ -3329,6 +3336,10 @@ pub async fn execute(cli: &Cli) -> Result<Value> {
             let api = api_client(cli)?;
             execute_backup(cli, &api, command).await
         }
+        Command::Vpn { command } => {
+            let api = api_client(cli)?;
+            vpn::execute(cli, &api, command, !cli.globals.compact).await
+        }
         Command::Job { command } => {
             let api = api_client(cli)?;
             execute_job(&api, command, !cli.globals.compact).await
@@ -3911,6 +3922,14 @@ pub fn render_result(cli: &Cli, output: &Value, terminal: Terminal) -> String {
         return password.to_owned();
     }
     let format = cli.output_format();
+    // `vpn config` without --out prints the configuration, or its QR
+    // code, as it is.
+    if format == OutputFormat::Readable
+        && let Command::Vpn { command } = &cli.command
+        && let Some(text) = vpn::raw_output(command, output)
+    {
+        return text;
+    }
     // A console's output is shown as the lines the guest wrote.
     if format == OutputFormat::Readable
         && let Command::Instance {
@@ -5284,6 +5303,9 @@ fn days_text(days: u32) -> String {
 /// than as [`pretty::render`] shows its JSON, or `None` for a command whose
 /// result has none, or one not in the shape it knows.
 fn readable_sections(command: &Command, output: &Value, terminal: Terminal) -> Option<String> {
+    if let Command::Vpn { command } = command {
+        return vpn::readable(command, output, terminal);
+    }
     // Results whose hints are shown apart: a hint is not a row of the
     // table. The hints go to standard error ([`result_hint_notes`]), or are
     // already said by a notice; `--json` keeps every key.
@@ -14885,11 +14907,11 @@ mod tests {
     }
 
     /// Requests a canned server received: the request line and the body.
-    type Received = std::sync::Arc<std::sync::Mutex<Vec<(String, Vec<u8>)>>>;
+    pub(super) type Received = std::sync::Arc<std::sync::Mutex<Vec<(String, Vec<u8>)>>>;
 
     /// Serve one canned `(status, body)` response per connection, in order,
     /// and record each request.
-    async fn canned_server(responses: Vec<(u16, String)>) -> (String, Received) {
+    pub(super) async fn canned_server(responses: Vec<(u16, String)>) -> (String, Received) {
         canned_server_with_headers(
             responses
                 .into_iter()
@@ -22127,7 +22149,7 @@ mod tests {
     }
 
     /// The method and path of each request the canned server received.
-    fn request_lines(received: &Received) -> Vec<String> {
+    pub(super) fn request_lines(received: &Received) -> Vec<String> {
         received
             .lock()
             .unwrap()

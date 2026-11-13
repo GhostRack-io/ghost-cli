@@ -297,6 +297,23 @@ fn seed_location(path: &Path) -> Result<(PathBuf, std::ffi::OsString)> {
 /// write leaves no temporary file.
 fn write_temporary(parent: &Path, file_name: &std::ffi::OsStr, seed: &[u8; 32]) -> Result<PathBuf> {
     let encoded = Zeroizing::new(URL_SAFE_NO_PAD.encode(seed));
+    let mut text = Zeroizing::new(Vec::with_capacity(SEED_PREFIX.len() + encoded.len() + 1));
+    text.extend_from_slice(SEED_PREFIX);
+    text.extend_from_slice(encoded.as_bytes());
+    text.push(b'\n');
+    write_private_temporary(parent, file_name, &text, "account key file")
+}
+
+/// Write `contents` to a new temporary file `.<name>.<uuid>.tmp` in
+/// `parent` that only its owner may read (`0600`), synced, and return its
+/// path; `what` names the file in errors. A failed write leaves no
+/// temporary file.
+fn write_private_temporary(
+    parent: &Path,
+    file_name: &std::ffi::OsStr,
+    contents: &[u8],
+    what: &str,
+) -> Result<PathBuf> {
     let mut temporary_name = std::ffi::OsString::from(".");
     temporary_name.push(file_name);
     temporary_name.push(format!(".{}.tmp", Uuid::now_v7()));
@@ -310,19 +327,55 @@ fn write_temporary(parent: &Path, file_name: &std::ffi::OsStr, seed: &[u8; 32]) 
     }
     let mut file = options
         .open(&temporary)
-        .with_context(|| format!("create temporary account key file {}", temporary.display()))?;
+        .with_context(|| format!("create temporary {what} {}", temporary.display()))?;
     let written = file
-        .write_all(SEED_PREFIX)
-        .and_then(|()| file.write_all(encoded.as_bytes()))
-        .and_then(|()| file.write_all(b"\n"))
+        .write_all(contents)
         .and_then(|()| file.sync_all())
-        .with_context(|| format!("write account key file {}", temporary.display()));
+        .with_context(|| format!("write {what} {}", temporary.display()));
     drop(file);
     if let Err(error) = written {
         let _ = fs::remove_file(&temporary);
         return Err(error);
     }
     Ok(temporary)
+}
+
+/// Write `contents`, a secret such as a VPN configuration with its private
+/// key, to the file at `path`, `0600`, through a private temporary file
+/// beside it: a failed or interrupted write never leaves part of it. An
+/// existing file is refused unless `replace`, which replaces it whole; the
+/// directory must exist. `what` names the file in errors.
+///
+/// # Errors
+///
+/// An existing file without `replace`, a path that names no file, and the
+/// file system's failures.
+pub fn write_private_file(path: &Path, contents: &[u8], replace: bool, what: &str) -> Result<()> {
+    let file_name = path
+        .file_name()
+        .with_context(|| format!("the {what} path must name a file"))?;
+    let parent = match path.parent() {
+        Some(parent) if !parent.as_os_str().is_empty() => parent,
+        _ => Path::new("."),
+    };
+    if !replace && fs::symlink_metadata(path).is_ok() {
+        bail!(
+            "{} already exists: give another file, or --force to replace it",
+            path.display()
+        );
+    }
+    let temporary = write_private_temporary(parent, file_name, contents, what)?;
+    // A hard link refuses a file made meanwhile; a rename replaces one.
+    let placed = if replace {
+        fs::rename(&temporary, path)
+    } else {
+        fs::hard_link(&temporary, path)
+    }
+    .with_context(|| format!("write {what} {}", path.display()));
+    let _ = fs::remove_file(&temporary);
+    placed?;
+    sync_directory(parent);
+    Ok(())
 }
 
 /// Make a new directory entry in `directory` durable; not every platform
