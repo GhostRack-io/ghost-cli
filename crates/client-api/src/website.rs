@@ -3868,6 +3868,13 @@ pub struct ReinstallInstanceRequest {
     /// As [`CreateInstanceRequest::ssh_key_ids`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ssh_key_ids: Option<Vec<Uuid>>,
+    /// Consent to the backup of the instance's disk that a reinstall of an
+    /// older instance takes first ([`InstanceView::deletion_safety`], item
+    /// 267): charged at its destination's prices and kept from the renter's
+    /// deletion for the tier's lock. Without it such a reinstall answers
+    /// 409 `forced_backup_required`, naming the backup and its cost.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub accept_forced_backup: bool,
 }
 
 /// Reset an instance's SSH access through cloud-init (`ResetInstanceAccess`): at the guest's next
@@ -7549,6 +7556,13 @@ pub struct RestoreBackupRequest {
     pub billing_authorization: Option<BillingAuthorization>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub accepted_charge: Option<AcceptedCharge>,
+    /// Consent to the backup of the instance's disk that an in-place
+    /// restore over an older instance takes first, as
+    /// [`ReinstallInstanceRequest::accept_forced_backup`]. A restore from a
+    /// backup of the instance taken within
+    /// [`DeletionSafetyView::restore_without_backup_days`] takes none.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub accept_forced_backup: bool,
 }
 
 /// A download of a hosted backup, which costs what its restore costs and
@@ -8091,6 +8105,13 @@ pub struct BackupView {
     /// backends.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub schedule: Option<BackupScheduleOriginView>,
+    /// Until when the renter cannot delete the backup: one taken before a
+    /// reinstall or an in-place restore of an older instance (item 267).
+    /// The platform's deletions (an exhausted balance, the account's
+    /// closing, a host's retirement) do not wait. Absent once the lock has
+    /// ended, for every other backup, and from older backends.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub locked_until: Option<DateTime<Utc>>,
 }
 
 /// The rule of an instance's schedule a backup was made by.

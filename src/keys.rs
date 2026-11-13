@@ -1678,6 +1678,7 @@ mod tests {
         let restore_body = serde_json::to_string(&RestoreBackupRequest {
             billing_authorization: Some(authorization.clone()),
             accepted_charge: None,
+            accept_forced_backup: false,
         })
         .unwrap();
         // As `ghost account approve` makes it from a `create_from_backup`

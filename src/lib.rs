@@ -4276,6 +4276,11 @@ impl Summary {
         if backups.iter().any(|backup| backup.schedule.is_some()) {
             columns.push("schedule");
         }
+        // Until when a backup taken before a reinstall or restore cannot be
+        // deleted (item 267).
+        if backups.iter().any(|backup| backup.locked_until.is_some()) {
+            columns.push("locked_until");
+        }
         Self {
             columns,
             rows: backups
@@ -4337,6 +4342,7 @@ impl Summary {
                             })
                         },
                         "created_at": backup.created_at,
+                        "locked_until": backup.locked_until,
                     })
                 })
                 .collect(),
@@ -8577,12 +8583,27 @@ async fn execute_instance(
             mutation_result(api, accepted, &args.mutation, show_progress).await
         }
         InstanceCommand::Reinstall(args) => {
+            let instance_id = resolve_instance(api, &args.instance_id, InstanceUse::Change).await?;
+            // An older instance's reinstall keeps a backup of it first
+            // (item 267), which --yes accepts with the reinstall.
+            let instance: Option<InstanceView> =
+                api.read(&GetInstance { instance_id }, "").await.ok();
+            let forced = match instance.as_ref() {
+                Some(instance) if instance.deletion_safety.is_some() => {
+                    let pricing: Option<BackupPricingView> =
+                        api.read(&GetBackupPricing, "").await.ok();
+                    forced_backup_line(instance, pricing.as_ref(), None, Utc::now())
+                }
+                _ => None,
+            };
+            if let Some(line) = &forced {
+                notice(line);
+            }
             if !args.yes {
                 bail!(
                     "reinstall destroys the current root filesystem and starts the instance if it is stopped; repeat with --yes"
                 );
             }
-            let instance_id = resolve_instance(api, &args.instance_id, InstanceUse::Change).await?;
             let ssh_public_keys = load_ssh_keys(&args.ssh_keys, &args.ssh_key_files)?;
             let cloud_init = args
                 .cloud_init_file
@@ -8603,8 +8624,6 @@ async fn execute_instance(
             let image_id = resolve_image(api, &args.image).await?;
             // Only a note: an instance that cannot be read here is still
             // reinstalled, and the backend refuses what it must.
-            let instance: Option<InstanceView> =
-                api.read(&GetInstance { instance_id }, "").await.ok();
             if let Some(note) = instance.as_ref().and_then(reinstall_start_note) {
                 notice(&note);
             }
@@ -8618,6 +8637,7 @@ async fn execute_instance(
                         cloud_init,
                         hostname: args.hostname.clone(),
                         startup_command,
+                        accept_forced_backup: forced.is_some(),
                     },
                     &retried_by_id(args.mutation.key(), &args.instance_id, instance_id),
                 )
@@ -9012,6 +9032,52 @@ async fn execute_instance(
             to_value(instance)
         }
     }
+}
+
+/// The line `instance reinstall` and `backup restore` print when the
+/// instance's age keeps a backup of it first (item 267): the most either
+/// destination charges for a backup as large as its disk, and the day its
+/// lock ends. None when it keeps none: an instance younger than the first
+/// age, or a restore from a backup requested (`restored`) within
+/// `restore_without_backup_days`.
+fn forced_backup_line(
+    instance: &InstanceView,
+    pricing: Option<&BackupPricingView>,
+    restored: Option<DateTime<Utc>>,
+    now: DateTime<Utc>,
+) -> Option<String> {
+    let safety = instance.deletion_safety?;
+    if restored.is_some_and(|taken| {
+        now - taken <= chrono::Duration::days(i64::from(safety.restore_without_backup_days))
+    }) {
+        return None;
+    }
+    let most = pricing.and_then(|pricing| {
+        [
+            BackupDestinationKind::Local,
+            BackupDestinationKind::GigahostS3,
+        ]
+        .into_iter()
+        .filter_map(|destination| pricing.prices(destination))
+        .filter_map(|prices| {
+            backup_byte_charge(
+                instance.root_disk_bytes,
+                prices.creation_charge_microusd_per_gib,
+            )
+            .map(|(_, charge)| charge)
+        })
+        .max()
+    });
+    let until = (now + chrono::Duration::days(i64::from(safety.backup_lock_days)))
+        .with_timezone(&chrono::Local)
+        .format("%Y-%m-%d");
+    Some(match most {
+        Some(most) => format!(
+            "Keeps a backup first: up to {}, locked until {until}.",
+            pretty::dollars(most)
+        ),
+        None => format!("Keeps a backup first, locked until {until}."),
+    })
 }
 
 /// A time in this machine's zone: the time of day alone on today's date.
@@ -9548,12 +9614,29 @@ fn decrypt_backup(cli: &Cli, args: &DecryptBackupArgs) -> Result<Value> {
 }
 
 async fn restore_backup(cli: &Cli, api: &ApiClient, args: &RestoreBackupArgs) -> Result<Value> {
-    if !args.yes {
-        bail!("restore replaces the current root filesystem; repeat with --yes");
-    }
     let backup = named_backup(api, args.first_id, args.legacy_backup_id).await?;
     ensure_backup_available(&backup, "restored")?;
     let instance_id = backup.instance_id;
+    // A restore over an older instance from an older backup keeps a backup
+    // of it first (item 267), which --yes accepts with the restore.
+    let forced = match api.read(&GetInstance { instance_id }, "").await {
+        Ok(instance) if instance.deletion_safety.is_some() => {
+            let pricing: Option<BackupPricingView> = api.read(&GetBackupPricing, "").await.ok();
+            forced_backup_line(
+                &instance,
+                pricing.as_ref(),
+                Some(backup.created_at),
+                Utc::now(),
+            )
+        }
+        _ => None,
+    };
+    if let Some(line) = &forced {
+        notice(line);
+    }
+    if !args.yes {
+        bail!("restore replaces the current root filesystem; repeat with --yes");
+    }
     let key = args.mutation.key();
     let (billing_authorization, hosted_recovery) =
         backup_restore_credentials(cli, &backup, &key.key)?;
@@ -9571,6 +9654,7 @@ async fn restore_backup(cli: &Cli, api: &ApiClient, args: &RestoreBackupArgs) ->
             &RestoreBackupRequest {
                 billing_authorization: Some(billing_authorization),
                 accepted_charge: None,
+                accept_forced_backup: forced.is_some(),
             },
             &key,
         )
@@ -10479,6 +10563,7 @@ fn job_step_words(key: &str) -> String {
         "restore_backup" => "restoring the backup",
         "download_backup" => "downloading the backup",
         "await_restore_authorization" => "waiting for the restore to be authorized",
+        "await_forced_backup" => "backing up first",
         "prepare_restore_key" => "preparing the restore key",
         "discard_restore_key" => "discarding the restore key",
         "start_restored_instance" => "starting the restored instance",
@@ -16997,6 +17082,7 @@ mod tests {
                 kind: InstanceKind::Vm,
                 container: None,
                 schedule: None,
+                locked_until: None,
             })
             .unwrap()
         };
@@ -17251,6 +17337,7 @@ mod tests {
             kind: InstanceKind::Vm,
             container: None,
             schedule: None,
+            locked_until: None,
         })
         .unwrap();
         let accepted = json!({
@@ -20909,6 +20996,66 @@ mod tests {
         };
         assert!(prefers(&heads[4]) && prefers(&heads[5]), "{}", heads[4]);
         assert!(!prefers(&heads[0]) && !prefers(&heads[3]));
+    }
+
+    /// `ghost instance reinstall` and `ghost backup restore` say when an
+    /// older instance keeps a backup first (item 267): the most either
+    /// destination charges for a backup as large as its disk, and the day
+    /// its lock ends; nothing for a younger instance or a recent backup.
+    #[test]
+    fn the_backup_kept_first_names_its_most_and_its_lock() {
+        let now = Utc::now();
+        let mut view: InstanceView = serde_json::from_value(json!({
+            "instance_id": Uuid::now_v7(),
+            "offering_id": "of2_x",
+            "hostname": "web-1",
+            "root_disk_bytes": 42_949_672_960_u64,
+            "state": "running",
+            "desired_power_state": "running",
+            "holds_capacity": true,
+            "network_microusd_per_tib": 0,
+            "created_at": "2026-09-01T00:00:00Z",
+            "balance_reservation_microusd": 0
+        }))
+        .unwrap();
+        let pricing: BackupPricingView = serde_json::from_value(json!({
+            "pricing_revision": 3,
+            "local": {"creation_charge_microusd_per_gib": 10_000,
+                      "restore_charge_microusd_per_gib": 10_000,
+                      "storage_charge_microusd_per_gib_month": 20_000},
+            "hosted": {"creation_charge_microusd_per_gib": 20_000,
+                       "restore_charge_microusd_per_gib": 10_000,
+                       "storage_charge_microusd_per_gib_month": 20_000},
+            "billing_unit_bytes": 1_048_576,
+            "balance_margin_microusd": 0
+        }))
+        .unwrap();
+        assert_eq!(forced_backup_line(&view, Some(&pricing), None, now), None);
+        view.deletion_safety = Some(ghostrack_client_api::website::DeletionSafetyView {
+            delete_delay_minutes: 120,
+            backup_lock_days: 7,
+            restore_without_backup_days: 30,
+        });
+        let until = (now + chrono::Duration::days(7))
+            .with_timezone(&chrono::Local)
+            .format("%Y-%m-%d");
+        assert_eq!(
+            forced_backup_line(&view, Some(&pricing), None, now).as_deref(),
+            Some(format!("Keeps a backup first: up to $0.80, locked until {until}.").as_str())
+        );
+        assert_eq!(
+            forced_backup_line(&view, None, Some(now - chrono::Duration::days(40)), now).as_deref(),
+            Some(format!("Keeps a backup first, locked until {until}.").as_str())
+        );
+        assert_eq!(
+            forced_backup_line(
+                &view,
+                Some(&pricing),
+                Some(now - chrono::Duration::days(5)),
+                now
+            ),
+            None
+        );
     }
 
     /// `ghost account pending list`'s second table names the instances
