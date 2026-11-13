@@ -141,8 +141,9 @@ pub(crate) struct CreateArgs {
     /// The location's code, from `ghost vpn catalog`.
     #[arg(long, value_name = "CODE")]
     location: String,
-    /// `shared-ip`, `shared-bandwidth`, or `dedicated-ip` for a gateway of
-    /// its own; a trial account takes `shared-ip` only.
+    /// `shared-ip`, `shared-bandwidth`, or `dedicated-ip` (also
+    /// `high-bandwidth`) for a gateway of its own; a trial account takes
+    /// `shared-ip` only.
     #[arg(long, value_enum)]
     tier: GatewayTierArg,
     /// Its name: lowercase letters, digits and `-`, at most 63. Without it,
@@ -260,20 +261,13 @@ fn parse_public_key(value: &str) -> Result<String, String> {
 }
 
 /// The wire tier of `--tier`: Dedicated IP is a gateway of the
-/// connection's own (`high_bandwidth`), which `high-bandwidth` names too.
+/// connection's own, the instances' high bandwidth tier
+/// (`high_bandwidth`), which `high-bandwidth` names too.
 const fn vpn_tier(tier: GatewayTierArg) -> GatewayTier {
     match tier {
         GatewayTierArg::SharedIp => GatewayTier::SharedIp,
         GatewayTierArg::SharedBandwidth => GatewayTier::SharedBandwidth,
         GatewayTierArg::HighBandwidth | GatewayTierArg::DedicatedIp => GatewayTier::HighBandwidth,
-    }
-}
-
-/// A VPN connection's tier as people say it.
-fn vpn_tier_words(tier: GatewayTier) -> String {
-    match tier {
-        GatewayTier::HighBandwidth => "dedicated IP".to_owned(),
-        other => gateway_tier_words(other),
     }
 }
 
@@ -864,7 +858,7 @@ fn catalog_text(catalog: &VpnCatalogView, terminal: Terminal) -> String {
                 json!({
                     "location": location.location,
                     "name": location.display_name,
-                    "tier": vpn_tier_words(offer.tier),
+                    "tier": gateway_tier_words(offer.tier),
                     "room": if offer.room { "yes" } else { "at capacity" },
                     "a_month": offer.base_microusd_per_month.map(pretty::dollars),
                     "a_tib": offer.traffic_microusd_per_tib.map(pretty::dollars),
@@ -914,7 +908,7 @@ fn list_text(views: &[VpnConnectionView], terminal: Terminal) -> String {
                 "id": view.id,
                 "name": view.name,
                 "state": view.state,
-                "tier": vpn_tier_words(view.tier),
+                "tier": gateway_tier_words(view.tier),
                 "location": view.location,
                 "public_ipv4": view.public_ipv4,
                 "incoming": if view.incoming_allowed { "allowed" } else { "blocked" },
@@ -953,7 +947,7 @@ fn record(view: &VpnConnectionView) -> Map<String, Value> {
     put("name", json!(view.name));
     put("state", json!(view.state));
     put("last_error", json!(view.last_error));
-    put("tier", json!(vpn_tier_words(view.tier)));
+    put("tier", json!(gateway_tier_words(view.tier)));
     put(
         "location",
         json!(format!("{} ({})", view.location, view.location_name)),
