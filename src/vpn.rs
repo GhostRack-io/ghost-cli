@@ -47,7 +47,7 @@ use crate::{
 pub(crate) enum VpnCommand {
     /// List where VPN connections can be created: each location's tiers,
     /// whether it has room, and their prices; and the prices of more
-    /// tracked connections.
+    /// connections.
     Catalog,
     /// List this account's VPN connections, newest first, and those that
     /// failed lately.
@@ -91,7 +91,8 @@ pub(crate) enum VpnCommand {
     /// Change how many connections the device may hold open at once:
     /// 4096 (included), 16384, 65536 or 262144. More is possible while the
     /// gateway has room; fewer always.
-    TrackedConnections {
+    #[command(alias = "tracked-connections")]
+    MaxConnections {
         /// VPN connection ID or name, from `ghost vpn list`.
         #[arg(value_name = "CONNECTION", value_parser = parse_vpn_reference)]
         connection: InstanceReference,
@@ -153,7 +154,7 @@ pub(crate) struct CreateArgs {
     name: Option<String>,
     /// How many connections the device may hold open at once: 4096
     /// (included, the default), 16384, 65536 or 262144.
-    #[arg(long, value_name = "N", value_parser = parse_tracked_connections)]
+    #[arg(long = "max-connections", alias = "tracked-connections", value_name = "N", value_parser = parse_tracked_connections)]
     tracked_connections: Option<u32>,
     #[command(flatten)]
     key: KeySource,
@@ -596,7 +597,7 @@ pub(crate) async fn execute(
                 .await?;
             to_value(view)
         }
-        VpnCommand::TrackedConnections {
+        VpnCommand::MaxConnections {
             connection,
             tracked_connections,
             idempotency,
@@ -1262,7 +1263,7 @@ fn price_component_words(component: &str) -> String {
     match component {
         "gateway_base" => "a month".to_owned(),
         "gateway_traffic" => "a TiB".to_owned(),
-        "tracked" => "tracked connections a month".to_owned(),
+        "tracked" => "connections a month".to_owned(),
         other => escape_control(other).into_owned(),
     }
 }
@@ -1812,7 +1813,7 @@ mod tests {
                 "dedicated-ip",
                 "--name",
                 "laptop",
-                "--tracked-connections",
+                "--max-connections",
                 "16384",
                 "--public-key",
                 GATEWAY_KEY,
@@ -1843,7 +1844,7 @@ mod tests {
             vec!["--public-key", GATEWAY_KEY, "--out", "x.conf"],
             vec![],
             vec!["--public-key", GATEWAY_KEY, "--qr"],
-            vec!["--public-key", GATEWAY_KEY, "--tracked-connections", "1000"],
+            vec!["--public-key", GATEWAY_KEY, "--max-connections", "1000"],
         ] {
             let mut line = vec![
                 "ghost",
