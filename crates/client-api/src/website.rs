@@ -8981,8 +8981,9 @@ pub struct VpnTierOffer {
     #[serde(default)]
     pub incoming_ports: Option<u32>,
     /// The setup fee a connection of this tier is charged at creation;
-    /// none from a backend of before 280.
-    #[serde(default)]
+    /// none from a backend of before 280 (and then not written, so the
+    /// CLI's JSON is what that backend answered).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub setup_microusd: Option<u64>,
 }
 
