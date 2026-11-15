@@ -625,6 +625,19 @@ endpoints! {
     /// One of the account's VPN connections, deleted ones too.
     GetVpnConnection { connection_id: Uuid } = user GET
         "/v1/vpn/connections/{connection_id}" => crate::website::VpnConnectionView;
+    /// A VPN connection's traffic over a range, sized for a graph: query
+    /// `range` (`1h`, `24h` by default, `7d`, `30d`, `90d`, `1y`) and
+    /// `metric` (`traffic`, the only one), in [`crate::website::SeriesQuery`].
+    GetVpnConnectionSeries { connection_id: Uuid } = user GET
+        "/v1/vpn/connections/{connection_id}/series" => crate::website::SeriesView;
+    /// What a VPN connection's gateway counted over the last hour and day.
+    GetVpnConnectionTraffic { connection_id: Uuid } = user GET
+        "/v1/vpn/connections/{connection_id}/traffic" => crate::website::VpnTrafficView;
+    /// A VPN connection's traffic and its charge each UTC day (the
+    /// default), each UTC month or every 15 minutes, newest first, paged
+    /// with [`crate::website::UsageQuery`]'s `cursor` and `limit`.
+    GetVpnConnectionUsage { connection_id: Uuid } = user GET
+        "/v1/vpn/connections/{connection_id}/usage" => HistoryPage;
     /// Create a VPN connection for one device, by its `WireGuard` public key
     /// (201).
     CreateVpnConnection = user POST "/api/mut/v1/vpn/connections"

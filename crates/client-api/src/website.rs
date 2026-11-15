@@ -8902,6 +8902,71 @@ pub struct VpnConnectionView {
     pub traffic_month_microusd: Option<u64>,
 }
 
+/// What a VPN connection's gateway counted over the last hour and the last
+/// day (`GetVpnConnectionTraffic`, item 278): its meter's counters paired
+/// as billing pairs them, so a counter reset is no spike.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct VpnTrafficView {
+    /// The newest reading of the connection's counters; none before the
+    /// first.
+    #[serde(default)]
+    pub observed_until: Option<DateTime<Utc>>,
+    pub last_hour: VpnTrafficWindowView,
+    pub last_day: VpnTrafficWindowView,
+}
+
+/// The readings that ended within one window, summed.
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct VpnTrafficWindowView {
+    pub window_started_at: DateTime<Utc>,
+    pub window_ended_at: DateTime<Utc>,
+    /// From the gateway to the device.
+    pub in_bytes: u64,
+    /// From the device to the gateway.
+    pub out_bytes: u64,
+}
+
+/// The query of a series read (`GetVpnConnectionSeries`, and the
+/// website's layer reads of an instance's, a host's and a machine's
+/// series, which have no API route).
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+pub struct SeriesQuery {
+    /// A range, `1h`, `24h` (the default), `7d`, `30d`, `90d` or `1y`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub range: Option<String>,
+    /// One graph (`cpu`, `memory`, `traffic` or `disk`); every graph the
+    /// subject has by default.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub metric: Option<String>,
+}
+
+/// The series of one subject over a range, sized for a graph: one time per
+/// step, whether or not anything was read then, and each series one value
+/// per time.
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
+pub struct SeriesView {
+    /// The range read, as its query names it.
+    pub range: String,
+    pub step_seconds: i64,
+    /// Each point's start, oldest first.
+    pub times: Vec<DateTime<Utc>>,
+    /// The series that are reported; one that is not has no entry.
+    pub series: Vec<SeriesValuesView>,
+}
+
+/// One series: `values[i]` is the point at `times[i]` of its
+/// [`SeriesView`], null for time nothing covered.
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq)]
+pub struct SeriesValuesView {
+    /// `cpu_percent` (of the vCPUs), `memory_used_bytes`, or a rate:
+    /// `network_ingress_bytes_per_second` and
+    /// `network_egress_bytes_per_second` from the meter that bills the
+    /// traffic, `disk_read_bytes_per_second` and
+    /// `disk_written_bytes_per_second`.
+    pub metric: String,
+    pub values: Vec<Option<f64>>,
+}
+
 /// What a VPN connection of `tier` costs at a location, and whether one
 /// can be created there now.
 #[derive(Clone, Debug, Deserialize, Serialize)]
