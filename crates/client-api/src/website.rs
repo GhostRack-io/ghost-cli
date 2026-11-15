@@ -8900,6 +8900,11 @@ pub struct VpnConnectionView {
     /// none from a backend of before 275.
     #[serde(default)]
     pub traffic_month_microusd: Option<u64>,
+    /// This UTC month's traffic so far, in and out, of the same settled
+    /// intervals as [`Self::traffic_month_microusd`]; none from an older
+    /// backend.
+    #[serde(default)]
+    pub traffic_month_bytes: Option<u64>,
 }
 
 /// What a VPN connection's gateway counted over the last hour and the last
