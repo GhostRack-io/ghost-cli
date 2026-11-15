@@ -7711,6 +7711,11 @@ pub struct BackupKeyFile {
 /// The format of a [`BackupKeyFile`].
 pub const BACKUP_KEY_FILE_FORMAT: &str = "ghostrack-backup-key-v1";
 
+/// While a backup's newest download link works this long or more, the
+/// backend sells no other (`download_link_active`); once less is left, a
+/// new one may be bought, which works 24 hours (item 285).
+pub const BACKUP_DOWNLOAD_RENEWAL: std::time::Duration = std::time::Duration::from_hours(12);
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct BillingAuthorization {
@@ -8195,6 +8200,12 @@ pub struct BackupView {
     /// ended, for every other backup, and from older backends.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub locked_until: Option<DateTime<Utc>>,
+    /// A hosted backup's newest download link while it works, as its
+    /// purchase answered it: the same URL, expiry, charge and key file
+    /// (item 285). Only the backup's own read (`GetBackup`) answers it;
+    /// absent from lists, for a deleted backup, and from older backends.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub download: Option<BackupDownloadView>,
 }
 
 /// The rule of an instance's schedule a backup was made by.

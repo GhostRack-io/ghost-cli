@@ -83,21 +83,21 @@ use ghostrack_client_api::{
         AddPrivateRenterRequest, AddSupportTicketMessageRequest, AgentUpdateAttemptRequest,
         AgentUpdateAttemptView, AgentUpdatePolicy, AgentUpdateSequenceHostPhase,
         AgentUpdateSequenceView, AgentUpdateState, AgentUpdateWindow, ApproveAgentUpdateRequest,
-        AuthorizeBackupRestoreRequest, BackupDestinationFilter, BackupDestinationKind,
-        BackupPricingView, BackupScheduleFrequency, BackupScheduleRuleInput,
-        BackupScheduleRuleView, BackupScheduleView, BackupSort, BackupStateFilter, BackupView,
-        BillingAuthorization, ChangeGatewayRequest, CloudIpAddressInput, CloudIpPoolScope,
-        CloudIpPoolView, ContainerEnvVar, ContainerImageView, ContainerLogView,
-        CreateBackupRequest, CreateCloudIpPoolRequest, CreateContainerRequest,
-        CreateHostEnrollmentTokenRequest, CreateInstanceRequest, CreateProviderPayoutRequest,
-        CreateSupportTicketRequest, DeclareHostEmergencyRequest, DepositLookupView, DiskChoice,
-        DownloadBackupRequest, GatewayTier, GatewayTrafficView, GithubUnlinked,
-        HandOverCloudIpPoolRequest, HostAgentUpdateView, HostEnrollmentToken, HostModeFilter,
-        HostPrivacyView, ImageView, InstanceConsoleLogView, InstanceEgressLevel, InstanceKind,
-        InstanceListQuery, InstanceMeshView, InstanceProjectionView, InstanceSort, InstanceSource,
-        InstanceState, InstanceStateFilter, InstanceTagView, InstanceUpgradeView, InstanceView,
-        IpChoice, JobAccepted, JobEventView, JobKind, JobPage, JobState, JobStateFilter,
-        JobStepState, JobView, KindChoice, LedgerKind, LocationView, LoginGrant,
+        AuthorizeBackupRestoreRequest, BACKUP_DOWNLOAD_RENEWAL, BackupDestinationFilter,
+        BackupDestinationKind, BackupDownloadView, BackupPricingView, BackupScheduleFrequency,
+        BackupScheduleRuleInput, BackupScheduleRuleView, BackupScheduleView, BackupSort,
+        BackupStateFilter, BackupView, BillingAuthorization, ChangeGatewayRequest,
+        CloudIpAddressInput, CloudIpPoolScope, CloudIpPoolView, ContainerEnvVar,
+        ContainerImageView, ContainerLogView, CreateBackupRequest, CreateCloudIpPoolRequest,
+        CreateContainerRequest, CreateHostEnrollmentTokenRequest, CreateInstanceRequest,
+        CreateProviderPayoutRequest, CreateSupportTicketRequest, DeclareHostEmergencyRequest,
+        DepositLookupView, DiskChoice, DownloadBackupRequest, GatewayTier, GatewayTrafficView,
+        GithubUnlinked, HandOverCloudIpPoolRequest, HostAgentUpdateView, HostEnrollmentToken,
+        HostModeFilter, HostPrivacyView, ImageView, InstanceConsoleLogView, InstanceEgressLevel,
+        InstanceKind, InstanceListQuery, InstanceMeshView, InstanceProjectionView, InstanceSort,
+        InstanceSource, InstanceState, InstanceStateFilter, InstanceTagView, InstanceUpgradeView,
+        InstanceView, IpChoice, JobAccepted, JobEventView, JobKind, JobPage, JobState,
+        JobStateFilter, JobStepState, JobView, KindChoice, LedgerKind, LocationView, LoginGrant,
         MAX_SSH_PUBLIC_KEYS, MemoryChoice, MigrateAccountSeedRequest, MoveGatewayLocationRequest,
         OfferingView, PortForwardChange, PrivateRenterView, ProviderAgentsView,
         ProviderBalanceView, ProviderConversionView, ProviderDisplayNameView,
@@ -2514,9 +2514,10 @@ enum BackupCommand {
     Delete(DeleteBackupArgs),
     /// Download a hosted backup as it is stored, encrypted, with its key
     /// file beside it (FILE.key.json), which `ghost backup decrypt` reads.
-    /// It costs what restoring the backup costs, shown before it starts; a
-    /// backup can be downloaded 5 times a day. Run it again to resume: the
-    /// link it was charged for works for 24 hours.
+    /// It costs what restoring the backup costs, shown before it starts;
+    /// while the backup's link works for 12 hours or more, that link is
+    /// used and nothing is charged. Run it again to resume: the link it was
+    /// charged for works for 24 hours.
     Download(DownloadBackupArgs),
     /// Decrypt a downloaded backup into a raw disk image, offline, with the
     /// account key the backup was made with. Every part is checked before
@@ -9380,7 +9381,19 @@ async fn execute_backup(cli: &Cli, api: &ApiClient, command: &BackupCommand) -> 
                     "",
                 )
                 .await?;
-            to_value(backup)
+            // A hosted backup's working download link (item 285): its URL
+            // and until when it works, one line each; its key file comes
+            // with `ghost backup download`.
+            let link = backup.download.clone();
+            let mut value = to_value(backup)?;
+            if let Some(map) = value.as_object_mut() {
+                map.remove("download");
+                if let Some(link) = link {
+                    map.insert("download_url".to_owned(), json!(link.url));
+                    map.insert("download_expires_at".to_owned(), json!(link.expires_at));
+                }
+            }
+            Ok(value)
         }
         BackupCommand::Create(args) => {
             let instance_id = resolve_instance(api, &args.instance_id, InstanceUse::Change).await?;
@@ -9560,8 +9573,6 @@ async fn named_backup(
 /// file, fetched with a link the backend charges for once; a rerun resumes
 /// with the link it kept while that works ([`backup_file`]).
 async fn download_backup(cli: &Cli, api: &ApiClient, args: &DownloadBackupArgs) -> Result<Value> {
-    use std::io::IsTerminal as _;
-
     let backup_id = args.backup_id;
     let output = args
         .output
@@ -9575,14 +9586,16 @@ async fn download_backup(cli: &Cli, api: &ApiClient, args: &DownloadBackupArgs) 
         );
     }
     let part = backup_file::beside(&output, ".part");
-    let link = if let Some(link) = backup_file::saved_link(&output, backup_id, Utc::now()) {
+    let (link, charged) = if let Some(link) =
+        backup_file::saved_link(&output, backup_id, Utc::now())
+    {
         if !cli.globals.compact {
             notice(&format!(
                 "Resuming with the link of the earlier download, which works until {}; nothing new is charged.",
                 link.expires_at.format("%Y-%m-%d %H:%M UTC")
             ));
         }
-        link
+        (link, false)
     } else {
         let backup: BackupView = api.read(&GetBackup { backup_id }, "").await?;
         if backup.destination != BackupDestinationKind::GigahostS3 {
@@ -9599,57 +9612,20 @@ async fn download_backup(cli: &Cli, api: &ApiClient, args: &DownloadBackupArgs) 
         if backup.status != ghostrack_client_api::website::BackupState::Restoring {
             ensure_backup_available(&backup, "downloaded")?;
         }
-        let size = backup
-            .size_bytes
-            .context("backup is missing its immutable artifact size")?;
-        let (_, charge) = backup_byte_charge(size, backup.restore_charge_microusd_per_gib)
-            .context("backup download charge overflow")?;
-        let question = format!(
-            "Downloading backup {backup_id} ({}) costs {}, as restoring it does.",
-            pretty::binary_size(size),
-            pretty::dollars(charge)
-        );
-        if !backup_file::consent(
-            &question,
-            args.yes,
-            std::io::stdin().is_terminal(),
-            &mut std::io::stdin().lock(),
-            &mut std::io::stderr(),
-        )? {
-            bail!("Nothing was downloaded or charged.");
-        }
-        let key = args.idempotency.key();
-        let seed = load_account_seed(cli)?;
-        let billing_authorization = backup_billing_authorization(
-            &seed,
-            &BackupBillingAuthorizationInput {
-                operation: "download_backup",
-                instance_id: backup.instance_id,
-                backup_id: Some(backup_id),
-                destination: "gigahost_s3",
-                pricing_revision: backup.restore_pricing_revision,
-                maximum_charge_microusd: charge,
-                idempotency_key: &key.key,
-            },
-        )?;
-        let view = api
-            .write_retryable(
-                &DownloadBackup { backup_id },
-                &DownloadBackupRequest {
-                    billing_authorization: Some(billing_authorization),
-                    accepted_charge: None,
-                },
-                &key,
-            )
-            .await?;
-        let link = backup_file::SavedLink {
-            url: view.url,
-            expires_at: view.expires_at,
-            etag: view.etag,
-            key: view.key,
+        let (link, charged) = match working_download_link(&backup, Utc::now()) {
+            // The backup's link works for 12 hours or more: the backend
+            // sells no other, and this one was paid for (item 285).
+            Some(working) => (working, false),
+            None => buy_download_link(cli, api, args, &backup).await?,
         };
+        if !charged && !cli.globals.compact {
+            notice(&format!(
+                "Using the backup's download link, which works until {}; nothing new is charged.",
+                link.expires_at.format("%Y-%m-%d %H:%M UTC")
+            ));
+        }
         backup_file::save_link(&output, &link)?;
-        link
+        (link, charged)
     };
     let show = !cli.globals.compact;
     let mut shown = std::time::Instant::now();
@@ -9684,7 +9660,110 @@ async fn download_backup(cli: &Cli, api: &ApiClient, args: &DownloadBackupArgs) 
         "key_file": key_file,
         "size_bytes": link.key.size_bytes,
         "sha256": link.key.sha256,
+        "link_expires_at": link.expires_at,
+        "charged": charged,
     }))
+}
+
+/// `backup`'s download link while it works for
+/// [`BACKUP_DOWNLOAD_RENEWAL`] or more at `now`: the one its renter
+/// bought, which the backend sells no other beside (item 285).
+fn working_download_link(
+    backup: &BackupView,
+    now: DateTime<Utc>,
+) -> Option<backup_file::SavedLink> {
+    let renewal = chrono::TimeDelta::from_std(BACKUP_DOWNLOAD_RENEWAL).ok()?;
+    backup
+        .download
+        .as_ref()
+        .filter(|link| link.expires_at - now >= renewal)
+        .map(saved_download_link)
+}
+
+fn saved_download_link(link: &BackupDownloadView) -> backup_file::SavedLink {
+    backup_file::SavedLink {
+        url: link.url.clone(),
+        expires_at: link.expires_at,
+        etag: link.etag.clone(),
+        key: link.key.clone(),
+    }
+}
+
+/// A new download link of `backup`, bought with the renter's consent to
+/// its charge and signed with the billing key, and whether it was charged:
+/// a link bought meanwhile (`download_link_active`) is read from the
+/// backup and used instead.
+async fn buy_download_link(
+    cli: &Cli,
+    api: &ApiClient,
+    args: &DownloadBackupArgs,
+    backup: &BackupView,
+) -> Result<(backup_file::SavedLink, bool)> {
+    use std::io::IsTerminal as _;
+
+    let backup_id = backup.backup_id;
+    let size = backup
+        .size_bytes
+        .context("backup is missing its immutable artifact size")?;
+    let (_, charge) = backup_byte_charge(size, backup.restore_charge_microusd_per_gib)
+        .context("backup download charge overflow")?;
+    let current = backup.download.as_ref().map_or_else(String::new, |link| {
+        format!(
+            " Its current link works until {}.",
+            link.expires_at.format("%Y-%m-%d %H:%M UTC")
+        )
+    });
+    let question = format!(
+        "Downloading backup {backup_id} ({}) costs {}, as restoring it does.{current}",
+        pretty::binary_size(size),
+        pretty::dollars(charge)
+    );
+    if !backup_file::consent(
+        &question,
+        args.yes,
+        std::io::stdin().is_terminal(),
+        &mut std::io::stdin().lock(),
+        &mut std::io::stderr(),
+    )? {
+        bail!("Nothing was downloaded or charged.");
+    }
+    let key = args.idempotency.key();
+    let seed = load_account_seed(cli)?;
+    let billing_authorization = backup_billing_authorization(
+        &seed,
+        &BackupBillingAuthorizationInput {
+            operation: "download_backup",
+            instance_id: backup.instance_id,
+            backup_id: Some(backup_id),
+            destination: "gigahost_s3",
+            pricing_revision: backup.restore_pricing_revision,
+            maximum_charge_microusd: charge,
+            idempotency_key: &key.key,
+        },
+    )?;
+    let bought = api
+        .write_retryable(
+            &DownloadBackup { backup_id },
+            &DownloadBackupRequest {
+                billing_authorization: Some(billing_authorization),
+                accepted_charge: None,
+            },
+            &key,
+        )
+        .await;
+    match bought {
+        Ok(view) => Ok((saved_download_link(&view), true)),
+        // A link bought meanwhile, elsewhere: the backup's read answers it.
+        Err(error) if api::rejection_code(&error) == Some("download_link_active") => {
+            let again: BackupView = api.read(&GetBackup { backup_id }, "").await?;
+            again
+                .download
+                .as_ref()
+                .map(|link| (saved_download_link(link), false))
+                .ok_or(error)
+        }
+        Err(error) => Err(error),
+    }
 }
 
 /// `ghost backup decrypt`, offline: the account key (or one kept beside
@@ -17217,6 +17296,7 @@ mod tests {
                 container: None,
                 schedule: None,
                 locked_until: None,
+                download: None,
             })
             .unwrap()
         };
@@ -17472,6 +17552,7 @@ mod tests {
             container: None,
             schedule: None,
             locked_until: None,
+            download: None,
         })
         .unwrap();
         let accepted = json!({
@@ -22085,6 +22166,195 @@ mod tests {
         let heads = heads.lock().unwrap().clone();
         assert_eq!(heads.len(), 1);
         assert!(heads[0].contains("range: bytes=1000-"), "{}", heads[0]);
+    }
+
+    /// The backup's working link, as its read answers it, `left` from now.
+    fn download_link_json(
+        object: &str,
+        key: &ghostrack_client_api::website::BackupKeyFile,
+        left: chrono::TimeDelta,
+    ) -> Value {
+        json!({
+            "download_id": Uuid::now_v7(), "url": object,
+            "expires_at": Utc::now() + left, "etag": "etag-1",
+            "charged_microusd": 10, "key": key,
+        })
+    }
+
+    /// While the backup's link works for 12 hours or more, the download
+    /// uses it: no consent asked, nothing bought (item 285).
+    #[tokio::test]
+    async fn a_working_link_is_used_without_a_charge() {
+        let directory = tempfile::tempdir().unwrap();
+        let seed = directory.path().join("account.seed");
+        fixture_seed(&seed);
+        let (_, container, _) = backup_file::tests::fixture();
+        let key = backup_file::tests::fixture_key(&container);
+        let (object, _) = backup_file::object_server(container.clone(), "etag-1", false).await;
+        let mut backup = backup_json(key.backup_id, key.instance_id, "gigahost_s3", "available");
+        backup["size_bytes"] = json!(container.len());
+        backup["download"] = download_link_json(&object, &key, chrono::TimeDelta::hours(20));
+        let (url, received) = canned_server(vec![(200, backup.to_string())]).await;
+        let file = directory.path().join("web.ghb");
+        let backup_id = key.backup_id.to_string();
+        // No --yes, off a terminal: nothing is asked, nothing charged.
+        let output = execute(&account_command(
+            &url,
+            &seed,
+            &[
+                "backup",
+                "download",
+                &backup_id,
+                "-o",
+                file.to_str().unwrap(),
+            ],
+        ))
+        .await
+        .unwrap();
+        assert_eq!(
+            request_lines(&received),
+            [format!("GET /v1/backups/{backup_id}")]
+        );
+        assert_eq!(fs::read(&file).unwrap(), container);
+        assert_eq!(output["charged"], false);
+        assert_eq!(output["link_expires_at"], backup["download"]["expires_at"]);
+    }
+
+    /// Under 12 hours left, a new link is bought, the question naming the
+    /// current one's end; a link bought meanwhile elsewhere is refused by
+    /// the backend, and the download reads and uses it (item 285).
+    #[tokio::test]
+    async fn a_link_running_out_is_bought_again_and_one_bought_meanwhile_is_used() {
+        let directory = tempfile::tempdir().unwrap();
+        let seed = directory.path().join("account.seed");
+        fixture_seed(&seed);
+        let (_, container, _) = backup_file::tests::fixture();
+        let key = backup_file::tests::fixture_key(&container);
+        let (object, _) = backup_file::object_server(container.clone(), "etag-1", false).await;
+        let mut backup = backup_json(key.backup_id, key.instance_id, "gigahost_s3", "available");
+        backup["size_bytes"] = json!(container.len());
+        backup["download"] = download_link_json(&object, &key, chrono::TimeDelta::hours(3));
+        let backup_id = key.backup_id.to_string();
+        let file = directory.path().join("web.ghb");
+        // Off a terminal without --yes: the question says until when the
+        // current link works.
+        let (url, received) = canned_server(vec![(200, backup.to_string())]).await;
+        let error = execute(&account_command(
+            &url,
+            &seed,
+            &[
+                "backup",
+                "download",
+                &backup_id,
+                "-o",
+                file.to_str().unwrap(),
+            ],
+        ))
+        .await
+        .unwrap_err();
+        let text = error.to_string();
+        assert!(text.contains(". Its current link works until "), "{text}");
+        assert_eq!(request_lines(&received).len(), 1);
+        // With --yes: bought, a fresh 24 hours.
+        let bought = download_link_json(&object, &key, chrono::TimeDelta::hours(24));
+        let (url, received) =
+            canned_server(vec![(200, backup.to_string()), (200, bought.to_string())]).await;
+        let output = execute(&account_command(
+            &url,
+            &seed,
+            &[
+                "backup",
+                "download",
+                &backup_id,
+                "-o",
+                file.to_str().unwrap(),
+                "--yes",
+            ],
+        ))
+        .await
+        .unwrap();
+        assert_eq!(
+            request_lines(&received),
+            [
+                format!("GET /v1/backups/{backup_id}"),
+                format!("POST /api/mut/v1/backups/{backup_id}/download"),
+            ]
+        );
+        assert_eq!(output["charged"], true);
+        assert_eq!(output["link_expires_at"], bought["expires_at"]);
+        assert_eq!(fs::read(&file).unwrap(), container);
+
+        // Bought meanwhile: refused, then read and used.
+        let file = directory.path().join("other.ghb");
+        let mut without = backup.clone();
+        without.as_object_mut().unwrap().remove("download");
+        let mut meanwhile = backup.clone();
+        meanwhile["download"] = download_link_json(&object, &key, chrono::TimeDelta::hours(23));
+        let refusal = json!({
+            "code": "download_link_active",
+            "message": "This backup's download link works until 2026-11-17 08:30 UTC; a new one can be bought from 2026-11-16 20:30 UTC."
+        });
+        let (url, received) = canned_server(vec![
+            (200, without.to_string()),
+            (409, refusal.to_string()),
+            (200, meanwhile.to_string()),
+        ])
+        .await;
+        let output = execute(&account_command(
+            &url,
+            &seed,
+            &[
+                "backup",
+                "download",
+                &backup_id,
+                "-o",
+                file.to_str().unwrap(),
+                "--yes",
+            ],
+        ))
+        .await
+        .unwrap();
+        assert_eq!(
+            request_lines(&received),
+            [
+                format!("GET /v1/backups/{backup_id}"),
+                format!("POST /api/mut/v1/backups/{backup_id}/download"),
+                format!("GET /v1/backups/{backup_id}"),
+            ]
+        );
+        assert_eq!(output["charged"], false);
+        assert_eq!(
+            output["link_expires_at"],
+            meanwhile["download"]["expires_at"]
+        );
+        assert_eq!(fs::read(&file).unwrap(), container);
+        // Without a link to read, the backend's words are the error.
+        let file = directory.path().join("third.ghb");
+        let (url, _) = canned_server(vec![
+            (200, without.to_string()),
+            (409, refusal.to_string()),
+            (200, without.to_string()),
+        ])
+        .await;
+        let error = execute(&account_command(
+            &url,
+            &seed,
+            &[
+                "backup",
+                "download",
+                &backup_id,
+                "-o",
+                file.to_str().unwrap(),
+                "--yes",
+            ],
+        ))
+        .await
+        .unwrap_err();
+        assert_eq!(api::rejection_code(&error), Some("download_link_active"));
+        assert!(
+            format!("{error:#}").contains("works until 2026-11-17 08:30 UTC"),
+            "{error:#}"
+        );
     }
 
     /// Without --yes and off a terminal, the download asks nothing of the
