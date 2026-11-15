@@ -4448,6 +4448,34 @@ pub struct InstanceView {
     /// first age, and from older backends.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub deletion_safety: Option<DeletionSafetyView>,
+    /// The instance's bandwidth limit without its renter's, and the renter's
+    /// own (item 284). `bandwidth` stays the limit in force. Absent from
+    /// older backends.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bandwidth_limits: Option<InstanceBandwidthLimitsView>,
+}
+
+/// An instance's bandwidth limit as its offering gives it, and the lower one
+/// its renter set (item 284), in Mbit/s, each direction. The limit in force
+/// is the lower of the two ([`InstanceView::bandwidth`]).
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct InstanceBandwidthLimitsView {
+    /// The limit without the renter's; `None` when the instance has none.
+    /// A renter's limit is accepted up to it.
+    pub normal_mbit: Option<u32>,
+    /// The limit the renter set; `None` when none is set.
+    pub renter_mbit: Option<u32>,
+}
+
+/// `SetInstanceBandwidthLimit`: lower or restore an instance's bandwidth
+/// limit (item 284).
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct SetInstanceBandwidthLimitRequest {
+    /// The new limit in Mbit/s, from 1 up to the instance's normal limit
+    /// ([`InstanceBandwidthLimitsView::normal_mbit`]; 100,000 where it has
+    /// none). `None` clears the renter's limit.
+    pub limit_mbit: Option<u32>,
 }
 
 /// What an instance's age asks of a deletion, a reinstall and an in-place

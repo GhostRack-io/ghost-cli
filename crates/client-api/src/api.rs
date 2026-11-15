@@ -29,13 +29,13 @@ use crate::website::{
     RestoreBackupRequest, RotateGatewayKeysRequest, ScheduleHostRetirementRequest,
     ScheduleInstanceRetirementRequest, SessionCodeRequest, SessionCodeView, SessionRevocationView,
     SetAgentUpdatePolicyRequest, SetBackupScheduleRequest, SetHostPrivateRequest,
-    SetHostRentalPauseRequest, SetNotificationReadRequest, SetPortForwardsRequest,
-    SetPowerStateRequest, SetProtectedBalanceRequest, SetProviderIncidentStateRequest,
-    SetProviderPayoutAddressRequest, SetSupportTicketStateRequest, SetTagRedundantRequest,
-    SetWebsitePasswordRequest, StartAgentUpdateSequenceRequest, SupportTicketSummaryView,
-    SupportTicketView, TagInstanceRequest, TotpDisabled, TotpView, TrialClaimStatusView,
-    TrialClaimView, UpdateHostPricingRequest, UpdateInstanceRequest, UpgradeInstanceRequest,
-    UserNotificationView, WebsitePasswordRemoved, WebsitePasswordView,
+    SetHostRentalPauseRequest, SetInstanceBandwidthLimitRequest, SetNotificationReadRequest,
+    SetPortForwardsRequest, SetPowerStateRequest, SetProtectedBalanceRequest,
+    SetProviderIncidentStateRequest, SetProviderPayoutAddressRequest, SetSupportTicketStateRequest,
+    SetTagRedundantRequest, SetWebsitePasswordRequest, StartAgentUpdateSequenceRequest,
+    SupportTicketSummaryView, SupportTicketView, TagInstanceRequest, TotpDisabled, TotpView,
+    TrialClaimStatusView, TrialClaimView, UpdateHostPricingRequest, UpdateInstanceRequest,
+    UpgradeInstanceRequest, UserNotificationView, WebsitePasswordRemoved, WebsitePasswordView,
     WithdrawProviderSecurityDepositRequest, WriteProviderReviewRequest,
 };
 use serde::{Serialize, de::DeserializeOwned};
@@ -508,6 +508,11 @@ endpoints! {
     /// instance as it is now.
     RenameInstance { instance_id: Uuid } = user POST
         "/api/mut/v1/instances/{instance_id}/rename" (RenameInstanceRequest) => InstanceView;
+    /// Lower the instance's bandwidth limit below its offering's, or restore
+    /// it with a null limit (item 284). No job: the instance as it is now.
+    SetInstanceBandwidthLimit { instance_id: Uuid } = user POST
+        "/api/mut/v1/instances/{instance_id}/bandwidth-limit"
+        (SetInstanceBandwidthLimitRequest) => InstanceView;
     /// Add tags to the instance and remove others, which only its renter
     /// and the operators see. No job: the instance as it is now.
     TagInstance { instance_id: Uuid } = user POST

@@ -70,10 +70,10 @@ use ghostrack_client_api::{
         RetryHostAgentUpdate, RevokeSession, RevokeSessions, RotateGatewayKeys,
         ScheduleHostRetirement, ScheduleInstanceRetirement, SetBackupSchedule,
         SetHostAgentUpdatePolicy, SetHostPrivate, SetHostRentalAdmission, SetIncidentState,
-        SetInstancePower, SetPayoutAddress, SetPortForwards, SetTagRedundant, SetTicketState,
-        SetWebsitePassword, StartAgentUpdateSequence, StopAgentUpdateSequence, TagInstance,
-        UnlinkGithub, UpdateHostPricing, UpdateInstance, UpgradeInstance,
-        WithdrawProviderDisplayName, WriteProviderReview,
+        SetInstanceBandwidthLimit, SetInstancePower, SetPayoutAddress, SetPortForwards,
+        SetTagRedundant, SetTicketState, SetWebsitePassword, StartAgentUpdateSequence,
+        StopAgentUpdateSequence, TagInstance, UnlinkGithub, UpdateHostPricing, UpdateInstance,
+        UpgradeInstance, WithdrawProviderDisplayName, WriteProviderReview,
     },
     hypervisor::{GuestInitializationStatus, HostMode, PowerState, RestartPolicy},
     website::{
@@ -109,8 +109,8 @@ use ghostrack_client_api::{
         RestoreBackupRequest, RotateGatewayKeysRequest, SSH_PUBLIC_KEY_TYPES,
         ScheduleHostRetirementRequest, ScheduleInstanceRetirementRequest, SessionRevocationView,
         SetAgentUpdatePolicyRequest, SetBackupScheduleRequest, SetHostPrivateRequest,
-        SetHostRentalPauseRequest, SetPortForwardsRequest, SetPowerStateRequest,
-        SetProviderIncidentStateRequest, SetProviderPayoutAddressRequest,
+        SetHostRentalPauseRequest, SetInstanceBandwidthLimitRequest, SetPortForwardsRequest,
+        SetPowerStateRequest, SetProviderIncidentStateRequest, SetProviderPayoutAddressRequest,
         SetSupportTicketStateRequest, SetTagRedundantRequest, SetWebsitePasswordRequest, SortOrder,
         StartAgentUpdateSequenceRequest, SupportTicketCategory, SupportTicketPriority,
         SupportTicketResourceInput, SupportTicketState, SupportTicketSummaryView,
@@ -1712,6 +1712,13 @@ enum InstanceCommand {
     /// The name follows the rules of a hostname. Only the platform shows it:
     /// the guest and its hostname stay as they are, so no job runs.
     Rename(RenameArgs),
+    /// Lower an instance's bandwidth limit below its size's, or restore it.
+    ///
+    /// The limit applies while the instance runs. It never raises the
+    /// instance's own limit, which `ghost instance show` lists as
+    /// `bandwidth`; a number above it is refused. `--clear` restores the
+    /// instance's own limit.
+    Bandwidth(BandwidthArgs),
     /// Add tags to an instance, or remove some: your own labels to group
     /// and filter instances by (`ghost instance list --tag`).
     ///
@@ -2157,6 +2164,21 @@ struct RenameArgs {
     /// The new name: a lowercase RFC 1123 hostname.
     #[arg(value_parser = parse_hostname)]
     name: String,
+    #[command(flatten)]
+    idempotency: IdempotencyArgs,
+}
+
+#[derive(Args)]
+struct BandwidthArgs {
+    /// Instance ID or name, from `ghost instance list`.
+    #[arg(value_name = "INSTANCE", value_parser = parse_instance_reference)]
+    instance_id: InstanceReference,
+    /// The limit in Mbit/s, each direction, from 1 up to the instance's own limit.
+    #[arg(value_name = "MBIT", value_parser = clap::value_parser!(u32).range(1..=100_000), required_unless_present = "clear", conflicts_with = "clear")]
+    limit_mbit: Option<u32>,
+    /// Restore the instance's own limit.
+    #[arg(long)]
+    clear: bool,
     #[command(flatten)]
     idempotency: IdempotencyArgs,
 }
@@ -8890,6 +8912,19 @@ async fn execute_instance(
                 ghostd::forget_instance(instance_id);
                 ghostd::forget_name(&args.name);
             }
+            to_value(instance)
+        }
+        InstanceCommand::Bandwidth(args) => {
+            let instance_id = resolve_instance(api, &args.instance_id, InstanceUse::Change).await?;
+            let instance: InstanceView = api
+                .write_retryable(
+                    &SetInstanceBandwidthLimit { instance_id },
+                    &SetInstanceBandwidthLimitRequest {
+                        limit_mbit: args.limit_mbit,
+                    },
+                    &retried_by_id(args.idempotency.key(), &args.instance_id, instance_id),
+                )
+                .await?;
             to_value(instance)
         }
         InstanceCommand::Ports(args) => {
@@ -16987,6 +17022,7 @@ mod tests {
         let instance = InstanceView {
             delete_at: None,
             deletion_safety: None,
+            bandwidth_limits: None,
             kind: ghostrack_client_api::website::InstanceKind::Vm,
             container: None,
             instance_id,
@@ -19836,6 +19872,61 @@ mod tests {
         );
         let body: Value = serde_json::from_slice(&received.lock().unwrap()[0].1).unwrap();
         assert_eq!(body, json!({"name": "shop"}));
+    }
+
+    /// `ghost instance bandwidth` takes a limit or `--clear`, never both or
+    /// neither, and sends the limit or null.
+    #[tokio::test]
+    async fn an_instances_bandwidth_limit_is_set_or_cleared() {
+        let instance = "01900000-0000-7000-8000-000000000101".to_owned();
+        for (args, valid) in [
+            (vec!["40"], true),
+            (vec!["--clear"], true),
+            (vec![], false),
+            (vec!["40", "--clear"], false),
+            (vec!["0"], false),
+            (vec!["100001"], false),
+            (vec!["fast"], false),
+        ] {
+            let mut line = vec!["ghost", "instance", "bandwidth", &instance];
+            line.extend(&args);
+            assert_eq!(Cli::try_parse_from(&line).is_ok(), valid, "{args:?}");
+        }
+        let directory = tempfile::tempdir().unwrap();
+        let seed = directory.path().join("account.seed");
+        keys::generate_seed(&seed).unwrap();
+        let answer = json!({"instance_id": instance, "offering_id": "o", "hostname": "web-1",
+            "root_disk_bytes": 12_u64 << 30, "state": "running",
+            "desired_power_state": "running", "holds_capacity": true, "public_ipv4": null,
+            "network_microusd_per_tib": 0, "created_at": Utc::now(),
+            "balance_reservation_microusd": 0,
+            "bandwidth": {"limit_mbit": 40},
+            "bandwidth_limits": {"normal_mbit": 100, "renter_mbit": 40}});
+        let (url, received) =
+            canned_server(vec![(200, answer.to_string()), (200, answer.to_string())]).await;
+        for (args, sent) in [
+            (
+                vec!["instance", "bandwidth", &instance, "40"],
+                json!({"limit_mbit": 40}),
+            ),
+            (
+                vec!["instance", "bandwidth", &instance, "--clear"],
+                json!({"limit_mbit": null}),
+            ),
+        ] {
+            let result = execute(&account_command(&url, &seed, &args)).await.unwrap();
+            assert_eq!(result["bandwidth_limits"]["renter_mbit"], 40);
+            let at = received.lock().unwrap().len() - 1;
+            let body: Value = serde_json::from_slice(&received.lock().unwrap()[at].1).unwrap();
+            assert_eq!(body, sent);
+        }
+        assert_eq!(
+            request_lines(&received),
+            [
+                format!("POST /api/mut/v1/instances/{instance}/bandwidth-limit"),
+                format!("POST /api/mut/v1/instances/{instance}/bandwidth-limit")
+            ]
+        );
     }
 
     /// `ghost instance tag` adds and removes tags by the rule the API

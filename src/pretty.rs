@@ -578,19 +578,33 @@ fn name_size_cpus(value: &mut Value) {
 
 /// Writes every bandwidth limit in `value`, a `bandwidth` record of its
 /// `limit_mbit` alone, as `ghost` says it: `200 Mbit/s`, or `no limit`
-/// for none, as an instance's and a network price's.
+/// for none, as an instance's and a network price's. Where an instance's
+/// renter lowered it (`bandwidth_limits`, item 284), it says so: `40
+/// Mbit/s, lowered from 100 Mbit/s`, or `40 Mbit/s, set by you` where the
+/// instance has no limit of its own.
 fn name_bandwidths(value: &mut Value) {
     match value {
         Value::Object(map) => {
+            let lowered = map.remove("bandwidth_limits").and_then(|limits| {
+                let renter = limits.get("renter_mbit")?.as_u64()?;
+                let normal = limits.get("normal_mbit").and_then(Value::as_u64);
+                normal.is_none_or(|normal| renter < normal).then(|| {
+                    normal.map_or_else(
+                        || "set by you".to_owned(),
+                        |normal| format!("lowered from {normal} Mbit/s"),
+                    )
+                })
+            });
             if let Some(bandwidth) = map.get_mut("bandwidth")
                 && let Some(limit) = bandwidth
                     .as_object()
                     .filter(|record| record.len() == 1)
                     .and_then(|record| record.get("limit_mbit"))
             {
-                *bandwidth = match limit.as_u64() {
-                    Some(mbit) => Value::from(format!("{mbit} Mbit/s")),
-                    None => Value::from("no limit"),
+                *bandwidth = match (limit.as_u64(), lowered) {
+                    (Some(mbit), Some(note)) => Value::from(format!("{mbit} Mbit/s, {note}")),
+                    (Some(mbit), None) => Value::from(format!("{mbit} Mbit/s")),
+                    (None, _) => Value::from("no limit"),
                 };
             }
             map.values_mut().for_each(name_bandwidths);
@@ -1484,6 +1498,38 @@ mod tests {
         );
         assert!(shown.contains("no limit"), "{shown}");
         assert!(!shown.contains("limit_mbit"), "{shown}");
+    }
+
+    /// An instance whose renter lowered its limit says where from; one
+    /// without a renter's limit, or at its own, says nothing of it.
+    #[test]
+    fn a_lowered_bandwidth_limit_says_what_it_was_lowered_from() {
+        let instance = |limit: u64, normal: Option<u64>, renter: Option<u64>| {
+            json!({
+                "hostname": "web",
+                "bandwidth": {"limit_mbit": limit},
+                "bandwidth_limits": {"normal_mbit": normal, "renter_mbit": renter},
+            })
+        };
+        let shown = render(&instance(40, Some(100), Some(40)), PLAIN);
+        assert!(
+            shown.contains("40 Mbit/s, lowered from 100 Mbit/s"),
+            "{shown}"
+        );
+        assert!(!shown.contains("bandwidth_limits"), "{shown}");
+        let shown = render(&instance(40, None, Some(40)), PLAIN);
+        assert!(shown.contains("40 Mbit/s, set by you"), "{shown}");
+        for plain in [
+            instance(100, Some(100), None),
+            instance(100, Some(100), Some(100)),
+        ] {
+            let shown = render(&plain, PLAIN);
+            assert!(
+                !shown.contains("lowered") && !shown.contains("set by you"),
+                "{shown}"
+            );
+            assert!(shown.contains("100 Mbit/s"), "{shown}");
+        }
     }
 
     #[test]

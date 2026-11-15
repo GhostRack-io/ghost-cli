@@ -305,6 +305,7 @@ fn instance_fixture() -> InstanceView {
     InstanceView {
         delete_at: None,
         deletion_safety: None,
+        bandwidth_limits: None,
         kind: ghostrack_client_api::website::InstanceKind::Vm,
         container: None,
         instance_id: Uuid::now_v7(),
