@@ -8905,6 +8905,10 @@ pub struct VpnConnectionView {
     /// backend.
     #[serde(default)]
     pub traffic_month_bytes: Option<u64>,
+    /// The tier's bandwidth limit, as the gateway applies it; none from
+    /// a backend of before 282.
+    #[serde(default)]
+    pub bandwidth: Option<BandwidthView>,
 }
 
 /// What a VPN connection's gateway counted over the last hour and the last
@@ -8990,6 +8994,10 @@ pub struct VpnTierOffer {
     /// CLI's JSON is what that backend answered).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub setup_microusd: Option<u64>,
+    /// The tier's bandwidth limit, as the gateway applies it; none from
+    /// a backend of before 282.
+    #[serde(default)]
+    pub bandwidth: Option<BandwidthView>,
 }
 
 /// A location where VPN connections are sold.
