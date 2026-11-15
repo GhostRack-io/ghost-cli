@@ -23,12 +23,12 @@ use clap::{Args, Subcommand, ValueEnum};
 use ghostrack_client_api::{
     api::{
         CreateVpnConnection, DeleteVpnConnection, GetVpnCatalog, GetVpnConnection,
-        ListVpnConnections, RotateVpnKey, SetVpnIncoming, SetVpnTrackedConnections,
+        ListVpnConnections, RotateVpnKey, SetVpnIncoming, SetVpnOutgoing, SetVpnTrackedConnections,
     },
     website::{
         CreateVpnConnectionRequest, GatewayTier, RotateVpnKeyRequest, SetVpnIncomingRequest,
-        SetVpnTrackedConnectionsRequest, VPN_TRACKED_CONNECTION_TIERS, VpnCatalogView,
-        VpnConnectionState, VpnConnectionView, valid_hostname,
+        SetVpnOutgoingRequest, SetVpnTrackedConnectionsRequest, VPN_TRACKED_CONNECTION_TIERS,
+        VpnCatalogView, VpnConnectionState, VpnConnectionView, valid_hostname,
     },
 };
 use rand_core::{OsRng, RngCore as _};
@@ -88,6 +88,19 @@ pub(crate) enum VpnCommand {
         #[command(flatten)]
         idempotency: IdempotencyArgs,
     },
+    /// Allow or block the new connections the device opens through the
+    /// gateway. With them blocked, the connection serves incoming
+    /// connections only; its configuration changes, so write it again.
+    Outgoing {
+        /// VPN connection ID or name, from `ghost vpn list`.
+        #[arg(value_name = "CONNECTION", value_parser = parse_vpn_reference)]
+        connection: InstanceReference,
+        /// Allow or block them.
+        #[arg(value_enum)]
+        setting: IncomingSetting,
+        #[command(flatten)]
+        idempotency: IdempotencyArgs,
+    },
     /// Change how many connections the device may hold open at once:
     /// 4096 (included), 16384, 65536 or 262144. More is possible while the
     /// gateway has room; fewer always.
@@ -116,7 +129,7 @@ pub(crate) enum VpnCommand {
     },
 }
 
-/// `ghost vpn incoming`'s setting.
+/// `ghost vpn incoming`'s and `ghost vpn outgoing`'s setting.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
 pub(crate) enum IncomingSetting {
     Allow,
@@ -156,6 +169,10 @@ pub(crate) struct CreateArgs {
     /// (included, the default), 16384, 65536 or 262144.
     #[arg(long = "max-connections", alias = "tracked-connections", value_name = "N", value_parser = parse_tracked_connections)]
     tracked_connections: Option<u32>,
+    /// Block the new connections the device opens through the gateway:
+    /// the connection serves incoming connections only.
+    #[arg(long)]
+    no_outgoing: bool,
     #[command(flatten)]
     key: KeySource,
     /// Replace the --out file when it exists.
@@ -337,7 +354,10 @@ const PRIVATE_KEY_FILE_BYTES: usize = 256;
 
 /// The `WireGuard` configuration of `view`'s device with its private key
 /// `key`: a full tunnel through public resolvers (the owner, 2026-11-13),
-/// MTU 1420 and a keepalive every 25 seconds. The gateway's values are
+/// MTU 1420 and a keepalive every 25 seconds. With outgoing blocked
+/// (backlog item 161h) it routes only the replies from the tunnel address
+/// through the tunnel, by a rule of its own (wg-quick on Linux), and keeps
+/// the device's own resolver and default route. The gateway's values are
 /// checked first, so none of them can add a line to it.
 ///
 /// # Errors
@@ -355,12 +375,8 @@ pub(crate) fn config_text(key: &DeviceKey, view: &VpnConnectionView) -> Result<Z
     let address = view.tunnel_address.as_deref().ok_or_else(not_ready)?;
     let endpoint = view.endpoint.as_deref().ok_or_else(not_ready)?;
     let gateway_key = view.gateway_public_key.as_deref().ok_or_else(not_ready)?;
-    let mut address = tunnel_address(address)
+    let (ip, prefix) = tunnel_address(address)
         .with_context(|| format!("the tunnel address {} is invalid", escape_control(address)))?;
-    if !address.contains(':') {
-        address.push_str(", ");
-        address.push_str(TUNNEL_IPV6);
-    }
     if endpoint.parse::<SocketAddr>().is_err() {
         bail!(
             "the gateway's endpoint {} is not an address and port",
@@ -371,11 +387,29 @@ pub(crate) fn config_text(key: &DeviceKey, view: &VpnConnectionView) -> Result<Z
         .map(|key| STANDARD.encode(key))
         .context("the gateway's public key is not a WireGuard key")?;
     let private = key.private_base64();
+    if !view.outgoing_allowed {
+        let IpAddr::V4(ip) = ip else {
+            bail!("the tunnel address {ip} is not an IPv4 address");
+        };
+        return Ok(Zeroizing::new(format!(
+            "[Interface]\nPrivateKey = {}\nAddress = {ip}/{prefix}\nMTU = 1420\nTable = off\nPostUp = ip -4 rule add from {ip} table {INCOMING_ONLY_TABLE}; ip -4 route add default dev %i table {INCOMING_ONLY_TABLE}\nPreDown = ip -4 rule del from {ip} table {INCOMING_ONLY_TABLE}; ip -4 route del default dev %i table {INCOMING_ONLY_TABLE}\n\n[Peer]\nPublicKey = {gateway_key}\nEndpoint = {endpoint}\nAllowedIPs = 0.0.0.0/0\nPersistentKeepalive = 25\n",
+            private.as_str()
+        )));
+    }
+    let mut address = format!("{ip}/{prefix}");
+    if ip.is_ipv4() {
+        address.push_str(", ");
+        address.push_str(TUNNEL_IPV6);
+    }
     Ok(Zeroizing::new(format!(
         "[Interface]\nPrivateKey = {}\nAddress = {address}\nDNS = 1.1.1.1, 9.9.9.9\nMTU = 1420\n\n[Peer]\nPublicKey = {gateway_key}\nEndpoint = {endpoint}\nAllowedIPs = 0.0.0.0/0, ::/0\nPersistentKeepalive = 25\n",
         private.as_str()
     )))
 }
+
+/// The routing table an incoming-only configuration routes its replies by:
+/// wg-quick's conventional number.
+const INCOMING_ONLY_TABLE: u32 = 51_820;
 
 /// A private IPv6 address (RFC 4193), fixed and never routed, added to an
 /// IPv4 tunnel address. Clients that set IPv6 up only for a tunnel with an
@@ -383,9 +417,9 @@ pub(crate) fn config_text(key: &DeviceKey, view: &VpnConnectionView) -> Result<Z
 /// it, instead of leaving it beside the tunnel.
 const TUNNEL_IPV6: &str = "fde6:93a2:eac5::2/128";
 
-/// The device's tunnel address with its prefix: `/32` when it has none
+/// The device's tunnel address and its prefix: `/32` when it has none
 /// (`/128` for an IPv6 one).
-fn tunnel_address(address: &str) -> Option<String> {
+fn tunnel_address(address: &str) -> Option<(IpAddr, u8)> {
     let (ip, prefix) = match address.split_once('/') {
         Some((ip, prefix)) => (ip, Some(prefix)),
         None => (address, None),
@@ -396,7 +430,7 @@ fn tunnel_address(address: &str) -> Option<String> {
         Some(prefix) => prefix.parse::<u8>().ok().filter(|prefix| *prefix <= most)?,
         None => most,
     };
-    Some(format!("{ip}/{prefix}"))
+    Some((ip, prefix))
 }
 
 /// `config` as a QR code of Unicode half blocks, light modules drawn, for
@@ -607,6 +641,23 @@ pub(crate) async fn execute(
                 .await?;
             to_value(view)
         }
+        VpnCommand::Outgoing {
+            connection,
+            setting,
+            idempotency,
+        } => {
+            let connection_id = resolve(api, connection, true).await?;
+            let view = api
+                .write_retryable(
+                    &SetVpnOutgoing { connection_id },
+                    &SetVpnOutgoingRequest {
+                        allowed: *setting == IncomingSetting::Allow,
+                    },
+                    &retried_by_id(idempotency.key(), connection, connection_id),
+                )
+                .await?;
+            to_value(view)
+        }
         VpnCommand::MaxConnections {
             connection,
             tracked_connections,
@@ -653,6 +704,7 @@ fn creation(args: &CreateArgs, device_public_key: String) -> CreateVpnConnection
         location: args.location.clone(),
         device_public_key,
         tracked_connections: args.tracked_connections,
+        outgoing_allowed: args.no_outgoing.then_some(false),
     }
 }
 
@@ -1202,6 +1254,14 @@ fn record(view: &VpnConnectionView) -> Map<String, Value> {
     put(
         "incoming",
         json!(if view.incoming_allowed {
+            "allowed"
+        } else {
+            "blocked"
+        }),
+    );
+    put(
+        "outgoing",
+        json!(if view.outgoing_allowed {
             "allowed"
         } else {
             "blocked"
@@ -2078,11 +2138,9 @@ mod tests {
         let mut provisioning = view(id, GATEWAY_KEY, "provisioning");
         provisioning["endpoint"] = Value::Null;
         assert!(config_text(&key, &parsed(provisioning)).is_err());
-        assert_eq!(
-            tunnel_address("10.0.0.2/30").as_deref(),
-            Some("10.0.0.2/30")
-        );
-        assert_eq!(tunnel_address("10.0.0.2").as_deref(), Some("10.0.0.2/32"));
+        let ip = |text: &str| -> IpAddr { text.parse().unwrap() };
+        assert_eq!(tunnel_address("10.0.0.2/30"), Some((ip("10.0.0.2"), 30)));
+        assert_eq!(tunnel_address("10.0.0.2"), Some((ip("10.0.0.2"), 32)));
         let config = config_text(&key, &parsed(view(id, GATEWAY_KEY, "ready"))).unwrap();
         // The one DNS line is the platform's own; no gateway value adds one.
         assert_eq!(config.matches("DNS").count(), 1);
@@ -2098,6 +2156,114 @@ mod tests {
         let config = config_text(&key, &parsed(v6)).unwrap();
         assert!(config.contains("\nAddress = fd00::5/128\n"));
         assert_eq!(config.matches("fde6:93a2").count(), 0);
+    }
+
+    /// With outgoing blocked the configuration routes by source address:
+    /// the device's own default route and resolver stay, only replies from
+    /// the tunnel address go through the tunnel, and no gateway value adds
+    /// a line to it.
+    #[test]
+    fn an_incoming_only_config_routes_replies_by_source() {
+        let key = DeviceKey::generate();
+        let id = Uuid::now_v7();
+        let parsed = |value: Value| -> VpnConnectionView { serde_json::from_value(value).unwrap() };
+        let mut blocked = view(id, GATEWAY_KEY, "ready");
+        blocked["outgoing_allowed"] = json!(false);
+        let config = config_text(&key, &parsed(blocked.clone())).unwrap();
+        assert_eq!(
+            config.as_str(),
+            format!(
+                "[Interface]\nPrivateKey = {}\nAddress = 10.200.0.2/32\nMTU = 1420\nTable = off\nPostUp = ip -4 rule add from 10.200.0.2 table 51820; ip -4 route add default dev %i table 51820\nPreDown = ip -4 rule del from 10.200.0.2 table 51820; ip -4 route del default dev %i table 51820\n\n[Peer]\nPublicKey = {GATEWAY_KEY}\nEndpoint = 203.0.113.7:51820\nAllowedIPs = 0.0.0.0/0\nPersistentKeepalive = 25\n",
+                key.private_base64().as_str()
+            )
+        );
+        // An older backend's view, without the field, is allowed: the full
+        // tunnel as before.
+        let config = config_text(&key, &parsed(view(id, GATEWAY_KEY, "ready"))).unwrap();
+        assert_eq!(config.as_str(), expected_config(&key.private_base64()));
+        for (field, value) in [
+            ("endpoint", "203.0.113.7:51820\nPostUp = touch /tmp/x"),
+            ("tunnel_address", "10.0.0.2; touch /tmp/x"),
+            ("tunnel_address", "10.0.0.2\nDNS = 1.1.1.1"),
+            ("tunnel_address", "fd00::5"),
+        ] {
+            let mut bad = blocked.clone();
+            bad[field] = json!(value);
+            assert!(config_text(&key, &parsed(bad)).is_err(), "{field} {value}");
+        }
+    }
+
+    /// `outgoing` sends the setting to its route; `create --no-outgoing`
+    /// asks for it blocked, and `get` shows it.
+    #[tokio::test]
+    async fn outgoing_is_set_and_shown() {
+        let directory = tempfile::tempdir().unwrap();
+        let seed = directory.path().join("account.seed");
+        keys::generate_seed(&seed).unwrap();
+        let id = Uuid::now_v7();
+        let mut blocked = view(id, GATEWAY_KEY, "ready");
+        blocked["outgoing_allowed"] = json!(false);
+        let (url, received) = canned_server(vec![
+            (200, blocked.to_string()),
+            (200, view(id, GATEWAY_KEY, "provisioning").to_string()),
+        ])
+        .await;
+        let id_text = id.to_string();
+        let cli = command(
+            &url,
+            &seed,
+            &["--json", "vpn", "outgoing", &id_text, "block"],
+        );
+        let output = crate::execute(&cli).await.unwrap();
+        assert_eq!(output["outgoing_allowed"], json!(false));
+        let lines = request_lines(&received);
+        assert_eq!(
+            lines[0],
+            format!("POST /api/mut/v1/vpn/connections/{id}/outgoing")
+        );
+        assert_eq!(bodies(&received)[0], json!({"allowed": false}));
+        let readable = readable(
+            &VpnCommand::Get {
+                connection: InstanceReference::Id(id),
+            },
+            &output,
+            Terminal::plain(),
+        )
+        .unwrap();
+        assert!(
+            readable.contains("outgoing") && readable.contains("blocked"),
+            "{readable}"
+        );
+        let cli = command(
+            &url,
+            &seed,
+            &[
+                "--json",
+                "vpn",
+                "create",
+                "--location",
+                "de-frankfurt",
+                "--tier",
+                "shared-ip",
+                "--no-outgoing",
+                "--public-key",
+                GATEWAY_KEY,
+            ],
+        );
+        crate::execute(&cli).await.unwrap();
+        assert_eq!(bodies(&received)[1]["outgoing_allowed"], json!(false));
+        for setting in ["allow", "block"] {
+            assert!(
+                <Cli as clap::Parser>::try_parse_from([
+                    "ghost", "vpn", "outgoing", "home", setting
+                ])
+                .is_ok()
+            );
+        }
+        assert!(
+            <Cli as clap::Parser>::try_parse_from(["ghost", "vpn", "outgoing", "home", "maybe"])
+                .is_err()
+        );
     }
 
     /// A configuration renders as a QR code of half blocks, and --qr is
