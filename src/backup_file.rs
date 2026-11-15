@@ -51,12 +51,18 @@ pub fn beside(file: &Path, suffix: &str) -> PathBuf {
     PathBuf::from(name)
 }
 
+/// Whether a link that expires at `expires_at` is still good at `now` for
+/// a download to start with it: more than [`LINK_MARGIN`] left.
+pub fn link_works(expires_at: DateTime<Utc>, now: DateTime<Utc>) -> bool {
+    expires_at - LINK_MARGIN > now
+}
+
 /// The link a previous run of the download of `backup_id` to `file` kept,
 /// if it is still good for a while.
 pub fn saved_link(file: &Path, backup_id: Uuid, now: DateTime<Utc>) -> Option<SavedLink> {
     let text = fs::read(beside(file, ".link.json")).ok()?;
     let link: SavedLink = serde_json::from_slice(&text).ok()?;
-    (link.key.backup_id == backup_id && link.expires_at - LINK_MARGIN > now).then_some(link)
+    (link.key.backup_id == backup_id && link_works(link.expires_at, now)).then_some(link)
 }
 
 /// Keep `link` beside `file` for a rerun, readable by its owner alone: it

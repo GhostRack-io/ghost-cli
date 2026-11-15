@@ -2515,9 +2515,9 @@ enum BackupCommand {
     /// Download a hosted backup as it is stored, encrypted, with its key
     /// file beside it (FILE.key.json), which `ghost backup decrypt` reads.
     /// It costs what restoring the backup costs, shown before it starts;
-    /// while the backup's link works for 12 hours or more, that link is
-    /// used and nothing is charged. Run it again to resume: the link it was
-    /// charged for works for 24 hours.
+    /// while the backup has a link that works, bought here or on the
+    /// website, that link is used and nothing is charged. Run it again to
+    /// resume: a link works for 24 hours.
     Download(DownloadBackupArgs),
     /// Decrypt a downloaded backup into a raw disk image, offline, with the
     /// account key the backup was made with. Every part is checked before
@@ -2991,6 +2991,10 @@ struct DownloadBackupArgs {
     /// Accept the charge without being asked.
     #[arg(long)]
     yes: bool,
+    /// Buy a new link, which works 24 hours, when the backup's link has
+    /// less than 12 hours left, instead of using it.
+    #[arg(long)]
+    new_link: bool,
     #[command(flatten)]
     idempotency: IdempotencyArgs,
 }
@@ -9586,9 +9590,13 @@ async fn download_backup(cli: &Cli, api: &ApiClient, args: &DownloadBackupArgs) 
         );
     }
     let part = backup_file::beside(&output, ".part");
-    let (link, charged) = if let Some(link) =
-        backup_file::saved_link(&output, backup_id, Utc::now())
-    {
+    // --new-link asks for a fresh link: the one an earlier run kept is
+    // not resumed with, and the backup's is used only while the backend
+    // sells no other.
+    let saved = (!args.new_link)
+        .then(|| backup_file::saved_link(&output, backup_id, Utc::now()))
+        .flatten();
+    let (link, charged) = if let Some(link) = saved {
         if !cli.globals.compact {
             notice(&format!(
                 "Resuming with the link of the earlier download, which works until {}; nothing new is charged.",
@@ -9612,9 +9620,9 @@ async fn download_backup(cli: &Cli, api: &ApiClient, args: &DownloadBackupArgs) 
         if backup.status != ghostrack_client_api::website::BackupState::Restoring {
             ensure_backup_available(&backup, "downloaded")?;
         }
-        let (link, charged) = match working_download_link(&backup, Utc::now()) {
-            // The backup's link works for 12 hours or more: the backend
-            // sells no other, and this one was paid for (item 285).
+        let (link, charged) = match working_download_link(&backup, Utc::now(), args.new_link) {
+            // The renter paid for the backup's link, here or on the
+            // website: it is used while it works (item 285).
             Some(working) => (working, false),
             None => buy_download_link(cli, api, args, &backup).await?,
         };
@@ -9665,18 +9673,21 @@ async fn download_backup(cli: &Cli, api: &ApiClient, args: &DownloadBackupArgs) 
     }))
 }
 
-/// `backup`'s download link while it works for
-/// [`BACKUP_DOWNLOAD_RENEWAL`] or more at `now`: the one its renter
-/// bought, which the backend sells no other beside (item 285).
+/// `backup`'s download link, the one its renter bought, while it works at
+/// `now` ([`backup_file::link_works`]); with `new_link`, only while it
+/// works for [`BACKUP_DOWNLOAD_RENEWAL`] or more, when the backend sells
+/// no other beside it (item 285).
 fn working_download_link(
     backup: &BackupView,
     now: DateTime<Utc>,
+    new_link: bool,
 ) -> Option<backup_file::SavedLink> {
     let renewal = chrono::TimeDelta::from_std(BACKUP_DOWNLOAD_RENEWAL).ok()?;
     backup
         .download
         .as_ref()
-        .filter(|link| link.expires_at - now >= renewal)
+        .filter(|link| backup_file::link_works(link.expires_at, now))
+        .filter(|link| !new_link || link.expires_at - now >= renewal)
         .map(saved_download_link)
 }
 
@@ -22220,11 +22231,80 @@ mod tests {
         assert_eq!(output["link_expires_at"], backup["download"]["expires_at"]);
     }
 
-    /// Under 12 hours left, a new link is bought, the question naming the
-    /// current one's end; a link bought meanwhile elsewhere is refused by
-    /// the backend, and the download reads and uses it (item 285).
+    /// The backup's link is the one its renter paid for, here or on the
+    /// website: under 12 hours left too, the download uses it while it
+    /// works, asking nothing and charging nothing, with --yes as well; one
+    /// in its last minutes is bought again, the question naming its end
+    /// (item 285).
     #[tokio::test]
-    async fn a_link_running_out_is_bought_again_and_one_bought_meanwhile_is_used() {
+    async fn a_link_running_out_is_used_while_it_works() {
+        let directory = tempfile::tempdir().unwrap();
+        let seed = directory.path().join("account.seed");
+        fixture_seed(&seed);
+        let (_, container, _) = backup_file::tests::fixture();
+        let key = backup_file::tests::fixture_key(&container);
+        let (object, _) = backup_file::object_server(container.clone(), "etag-1", false).await;
+        let mut backup = backup_json(key.backup_id, key.instance_id, "gigahost_s3", "available");
+        backup["size_bytes"] = json!(container.len());
+        backup["download"] = download_link_json(&object, &key, chrono::TimeDelta::hours(11));
+        let backup_id = key.backup_id.to_string();
+        for yes in [false, true] {
+            let file = directory.path().join(format!("web-{yes}.ghb"));
+            let (url, received) = canned_server(vec![(200, backup.to_string())]).await;
+            let mut words = vec![
+                "backup",
+                "download",
+                &backup_id,
+                "-o",
+                file.to_str().unwrap(),
+            ];
+            if yes {
+                words.push("--yes");
+            }
+            let output = execute(&account_command(&url, &seed, &words))
+                .await
+                .unwrap();
+            assert_eq!(
+                request_lines(&received),
+                [format!("GET /v1/backups/{backup_id}")],
+                "--yes {yes}"
+            );
+            assert_eq!(output["charged"], false);
+            assert_eq!(output["link_expires_at"], backup["download"]["expires_at"]);
+            assert_eq!(fs::read(&file).unwrap(), container);
+        }
+        // In its last minutes the link could not carry a download: a new
+        // one is bought, asking first.
+        let mut ending = backup.clone();
+        ending["download"] = download_link_json(&object, &key, chrono::TimeDelta::minutes(5));
+        let file = directory.path().join("ending.ghb");
+        let (url, received) = canned_server(vec![(200, ending.to_string())]).await;
+        let error = execute(&account_command(
+            &url,
+            &seed,
+            &[
+                "backup",
+                "download",
+                &backup_id,
+                "-o",
+                file.to_str().unwrap(),
+            ],
+        ))
+        .await
+        .unwrap_err();
+        let text = error.to_string();
+        assert!(text.contains(". Its current link works until "), "{text}");
+        assert!(text.ends_with("Repeat with --yes to go ahead."), "{text}");
+        assert_eq!(request_lines(&received).len(), 1);
+    }
+
+    /// --new-link buys a fresh link once the backup's has less than 12
+    /// hours left, asking first and passing over the link an earlier run
+    /// kept; while it works for 12 hours or more, the backend sells none
+    /// and it is used. A link bought meanwhile elsewhere is refused by the
+    /// backend, and the download reads and uses it (item 285).
+    #[tokio::test]
+    async fn a_new_link_is_bought_on_request_and_one_bought_meanwhile_is_used() {
         let directory = tempfile::tempdir().unwrap();
         let seed = directory.path().join("account.seed");
         fixture_seed(&seed);
@@ -22236,6 +22316,16 @@ mod tests {
         backup["download"] = download_link_json(&object, &key, chrono::TimeDelta::hours(3));
         let backup_id = key.backup_id.to_string();
         let file = directory.path().join("web.ghb");
+        backup_file::save_link(
+            &file,
+            &backup_file::SavedLink {
+                url: object.clone(),
+                expires_at: Utc::now() + chrono::TimeDelta::hours(3),
+                etag: "etag-1".to_owned(),
+                key: key.clone(),
+            },
+        )
+        .unwrap();
         // Off a terminal without --yes: the question says until when the
         // current link works.
         let (url, received) = canned_server(vec![(200, backup.to_string())]).await;
@@ -22248,6 +22338,7 @@ mod tests {
                 &backup_id,
                 "-o",
                 file.to_str().unwrap(),
+                "--new-link",
             ],
         ))
         .await
@@ -22268,6 +22359,7 @@ mod tests {
                 &backup_id,
                 "-o",
                 file.to_str().unwrap(),
+                "--new-link",
                 "--yes",
             ],
         ))
@@ -22283,6 +22375,32 @@ mod tests {
         assert_eq!(output["charged"], true);
         assert_eq!(output["link_expires_at"], bought["expires_at"]);
         assert_eq!(fs::read(&file).unwrap(), container);
+        // A link that works for 12 hours or more is used: none is sold.
+        let mut working = backup.clone();
+        working["download"] = download_link_json(&object, &key, chrono::TimeDelta::hours(20));
+        let file = directory.path().join("working.ghb");
+        let (url, received) = canned_server(vec![(200, working.to_string())]).await;
+        let output = execute(&account_command(
+            &url,
+            &seed,
+            &[
+                "backup",
+                "download",
+                &backup_id,
+                "-o",
+                file.to_str().unwrap(),
+                "--new-link",
+                "--yes",
+            ],
+        ))
+        .await
+        .unwrap();
+        assert_eq!(
+            request_lines(&received),
+            [format!("GET /v1/backups/{backup_id}")]
+        );
+        assert_eq!(output["charged"], false);
+        assert_eq!(output["link_expires_at"], working["download"]["expires_at"]);
 
         // Bought meanwhile: refused, then read and used.
         let file = directory.path().join("other.ghb");
