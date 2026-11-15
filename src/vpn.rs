@@ -88,16 +88,17 @@ pub(crate) enum VpnCommand {
         #[command(flatten)]
         idempotency: IdempotencyArgs,
     },
-    /// Allow or block the new connections the device opens through the
-    /// gateway. With them blocked, the connection serves incoming
-    /// connections only; its configuration changes, so write it again.
+    /// Send the device's own outgoing traffic through the VPN, or let it
+    /// bypass the VPN and use the device's own internet connection, while
+    /// incoming connections still arrive through the VPN. Its configuration
+    /// changes, so write it again.
     Outgoing {
         /// VPN connection ID or name, from `ghost vpn list`.
         #[arg(value_name = "CONNECTION", value_parser = parse_vpn_reference)]
         connection: InstanceReference,
-        /// Allow or block them.
+        /// `vpn` or `bypass`.
         #[arg(value_enum)]
-        setting: IncomingSetting,
+        setting: OutgoingSetting,
         #[command(flatten)]
         idempotency: IdempotencyArgs,
     },
@@ -129,11 +130,19 @@ pub(crate) enum VpnCommand {
     },
 }
 
-/// `ghost vpn incoming`'s and `ghost vpn outgoing`'s setting.
+/// `ghost vpn incoming`'s setting.
 #[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
 pub(crate) enum IncomingSetting {
     Allow,
     Block,
+}
+
+/// `ghost vpn outgoing`'s and `ghost vpn create --outgoing`'s setting: the
+/// device's outgoing traffic through the VPN, or bypassing it.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, ValueEnum)]
+pub(crate) enum OutgoingSetting {
+    Vpn,
+    Bypass,
 }
 
 /// Where the device's key comes from: ghost makes it and writes the
@@ -169,10 +178,11 @@ pub(crate) struct CreateArgs {
     /// (included, the default), 16384, 65536 or 262144.
     #[arg(long = "max-connections", alias = "tracked-connections", value_name = "N", value_parser = parse_tracked_connections)]
     tracked_connections: Option<u32>,
-    /// Block the new connections the device opens through the gateway:
-    /// the connection serves incoming connections only.
-    #[arg(long)]
-    no_outgoing: bool,
+    /// `vpn` (the default): the device's outgoing traffic goes through the
+    /// VPN. `bypass`: it uses the device's own internet connection, and
+    /// only incoming connections come through the VPN.
+    #[arg(long, value_enum, value_name = "SETTING")]
+    outgoing: Option<OutgoingSetting>,
     #[command(flatten)]
     key: KeySource,
     /// Replace the --out file when it exists.
@@ -354,7 +364,7 @@ const PRIVATE_KEY_FILE_BYTES: usize = 256;
 
 /// The `WireGuard` configuration of `view`'s device with its private key
 /// `key`: a full tunnel through public resolvers (the owner, 2026-11-13),
-/// MTU 1420 and a keepalive every 25 seconds. With outgoing blocked
+/// MTU 1420 and a keepalive every 25 seconds. With outgoing bypassing the VPN
 /// (backlog item 161h) it routes only the replies from the tunnel address
 /// through the tunnel, by a rule of its own (wg-quick on Linux), and keeps
 /// the device's own resolver and default route. The gateway's values are
@@ -661,7 +671,7 @@ pub(crate) async fn execute(
                 .write_retryable(
                     &SetVpnOutgoing { connection_id },
                     &SetVpnOutgoingRequest {
-                        allowed: *setting == IncomingSetting::Allow,
+                        allowed: *setting == OutgoingSetting::Vpn,
                     },
                     &retried_by_id(idempotency.key(), connection, connection_id),
                 )
@@ -714,7 +724,7 @@ fn creation(args: &CreateArgs, device_public_key: String) -> CreateVpnConnection
         location: args.location.clone(),
         device_public_key,
         tracked_connections: args.tracked_connections,
-        outgoing_allowed: args.no_outgoing.then_some(false),
+        outgoing_allowed: args.outgoing.map(|setting| setting == OutgoingSetting::Vpn),
     }
 }
 
@@ -1272,9 +1282,9 @@ fn record(view: &VpnConnectionView) -> Map<String, Value> {
     put(
         "outgoing",
         json!(if view.outgoing_allowed {
-            "allowed"
+            "via VPN"
         } else {
-            "blocked"
+            "bypass"
         }),
     );
     put(
@@ -2168,7 +2178,7 @@ mod tests {
         assert_eq!(config.matches("fde6:93a2").count(), 0);
     }
 
-    /// With outgoing blocked the configuration routes by source address:
+    /// With outgoing bypassing the VPN the configuration routes by source address:
     /// the device's own default route and resolver stay, only replies from
     /// the tunnel address go through the tunnel, and no gateway value adds
     /// a line to it.
@@ -2228,7 +2238,7 @@ mod tests {
         assert_eq!(tables, [1_681_919_010, 1_681_984_546, 1_681_919_014]);
     }
 
-    /// `outgoing` sends the setting to its route; `create --no-outgoing`
+    /// `outgoing` sends the setting to its route; `create --outgoing bypass`
     /// asks for it blocked, and `get` shows it.
     #[tokio::test]
     async fn outgoing_is_set_and_shown() {
@@ -2247,7 +2257,7 @@ mod tests {
         let cli = command(
             &url,
             &seed,
-            &["--json", "vpn", "outgoing", &id_text, "block"],
+            &["--json", "vpn", "outgoing", &id_text, "bypass"],
         );
         let output = crate::execute(&cli).await.unwrap();
         assert_eq!(output["outgoing_allowed"], json!(false));
@@ -2266,7 +2276,7 @@ mod tests {
         )
         .unwrap();
         assert!(
-            readable.contains("outgoing") && readable.contains("blocked"),
+            readable.contains("outgoing") && readable.contains("bypass"),
             "{readable}"
         );
         let cli = command(
@@ -2280,14 +2290,15 @@ mod tests {
                 "de-frankfurt",
                 "--tier",
                 "shared-ip",
-                "--no-outgoing",
+                "--outgoing",
+                "bypass",
                 "--public-key",
                 GATEWAY_KEY,
             ],
         );
         crate::execute(&cli).await.unwrap();
         assert_eq!(bodies(&received)[1]["outgoing_allowed"], json!(false));
-        for setting in ["allow", "block"] {
+        for setting in ["vpn", "bypass"] {
             assert!(
                 <Cli as clap::Parser>::try_parse_from([
                     "ghost", "vpn", "outgoing", "home", setting
@@ -2296,7 +2307,7 @@ mod tests {
             );
         }
         assert!(
-            <Cli as clap::Parser>::try_parse_from(["ghost", "vpn", "outgoing", "home", "maybe"])
+            <Cli as clap::Parser>::try_parse_from(["ghost", "vpn", "outgoing", "home", "block"])
                 .is_err()
         );
     }
