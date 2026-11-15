@@ -8896,6 +8896,10 @@ pub struct VpnConnectionView {
     /// key was applied.
     #[serde(default)]
     pub last_handshake_at: Option<DateTime<Utc>>,
+    /// This UTC month's traffic charge so far, of its settled intervals;
+    /// none from a backend of before 275.
+    #[serde(default)]
+    pub traffic_month_microusd: Option<u64>,
 }
 
 /// What a VPN connection of `tier` costs at a location, and whether one
