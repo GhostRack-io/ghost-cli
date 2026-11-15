@@ -8808,6 +8808,26 @@ pub struct SetVpnTrackedConnectionsRequest {
     pub tracked_connections: u32,
 }
 
+/// Change where ports of a Shared IP VPN connection's slice are forwarded
+/// to: each named public port to the machine's port given; the others stay.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct SetVpnPortForwardsRequest {
+    /// At least one, each public port once, every one of the connection's
+    /// slice ([`VpnConnectionView::port_forwards`]).
+    pub forwards: Vec<VpnPortForwardChange>,
+}
+
+/// One change of a Shared IP VPN connection's ports, in a
+/// [`SetVpnPortForwardsRequest`].
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct VpnPortForwardChange {
+    pub public_port: u16,
+    /// 1 to 65535.
+    pub device_port: u16,
+}
+
 /// A price change of a VPN connection that takes effect later: a rise
 /// after its 90-day notice.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
@@ -8858,7 +8878,8 @@ pub struct VpnConnectionView {
     /// its gateway's for a Shared IP slice.
     #[serde(default)]
     pub public_ipv4: Option<String>,
-    /// A Shared IP connection's forwarded ports.
+    /// A Shared IP connection's forwarded ports, changed with
+    /// `SetVpnPortForwards`.
     #[serde(default)]
     pub port_forwards: Vec<VpnPortForwardView>,
     /// A Shared IP connection's source ports of `public_ipv4`.

@@ -658,6 +658,11 @@ endpoints! {
     SetVpnTrackedConnections { connection_id: Uuid } = user POST
         "/api/mut/v1/vpn/connections/{connection_id}/tracked-connections"
         (crate::website::SetVpnTrackedConnectionsRequest) => crate::website::VpnConnectionView;
+    /// Change where ports of a Shared IP VPN connection's slice are
+    /// forwarded to on the machine; the gateway follows within a minute.
+    SetVpnPortForwards { connection_id: Uuid } = user POST
+        "/api/mut/v1/vpn/connections/{connection_id}/port-forwards"
+        (crate::website::SetVpnPortForwardsRequest) => crate::website::VpnConnectionView;
 
     // Provider
     GetProviderBalance = user GET "/v1/provider/balance" => Option<ProviderBalanceView>;
