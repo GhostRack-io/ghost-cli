@@ -8837,6 +8837,9 @@ pub struct VpnConnectionView {
     pub tier: GatewayTier,
     pub location: String,
     pub location_name: String,
+    /// The location's ISO 3166-1 alpha-2 code; empty from an older API.
+    #[serde(default)]
+    pub country_code: String,
     pub state: VpnConnectionState,
     pub created_at: DateTime<Utc>,
     #[serde(default)]
