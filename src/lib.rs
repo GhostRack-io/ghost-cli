@@ -1715,7 +1715,7 @@ enum InstanceCommand {
     /// Lower an instance's bandwidth limit below its size's, or restore it.
     ///
     /// The limit applies while the instance runs. It never raises the
-    /// instance's own limit, which `ghost instance show` lists as
+    /// instance's own limit, which `ghost instance get` lists as
     /// `bandwidth`; a number above it is refused. `--clear` restores the
     /// instance's own limit.
     Bandwidth(BandwidthArgs),
