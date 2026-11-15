@@ -581,7 +581,8 @@ fn name_size_cpus(value: &mut Value) {
 /// for none, as an instance's and a network price's. Where an instance's
 /// renter lowered it (`bandwidth_limits`, item 284), it says so: `40
 /// Mbit/s, lowered from 100 Mbit/s`, or `40 Mbit/s, set by you` where the
-/// instance has no limit of its own.
+/// instance has no limit of its own; where a lower one is in force, such as
+/// its dedicated gateway's traffic stop (item 286), the figure alone.
 fn name_bandwidths(value: &mut Value) {
     match value {
         Value::Object(map) => {
@@ -589,10 +590,11 @@ fn name_bandwidths(value: &mut Value) {
                 let renter = limits.get("renter_mbit")?.as_u64()?;
                 let normal = limits.get("normal_mbit").and_then(Value::as_u64);
                 normal.is_none_or(|normal| renter < normal).then(|| {
-                    normal.map_or_else(
+                    let note = normal.map_or_else(
                         || "set by you".to_owned(),
                         |normal| format!("lowered from {normal} Mbit/s"),
-                    )
+                    );
+                    (renter, note)
                 })
             });
             if let Some(bandwidth) = map.get_mut("bandwidth")
@@ -602,8 +604,10 @@ fn name_bandwidths(value: &mut Value) {
                     .and_then(|record| record.get("limit_mbit"))
             {
                 *bandwidth = match (limit.as_u64(), lowered) {
-                    (Some(mbit), Some(note)) => Value::from(format!("{mbit} Mbit/s, {note}")),
-                    (Some(mbit), None) => Value::from(format!("{mbit} Mbit/s")),
+                    (Some(mbit), Some((renter, note))) if mbit == renter => {
+                        Value::from(format!("{mbit} Mbit/s, {note}"))
+                    }
+                    (Some(mbit), _) => Value::from(format!("{mbit} Mbit/s")),
                     (None, _) => Value::from("no limit"),
                 };
             }
@@ -1529,6 +1533,20 @@ mod tests {
                 "{shown}"
             );
             assert!(shown.contains("100 Mbit/s"), "{shown}");
+        }
+        // A lower limit than the renter's in force, its dedicated gateway's
+        // traffic stop (item 286): the figure alone, not the renter's.
+        for throttled in [
+            instance(25, None, Some(100)),
+            instance(25, Some(200), Some(100)),
+        ] {
+            let shown = render(&throttled, PLAIN);
+            assert!(
+                shown
+                    .lines()
+                    .any(|line| line.split_whitespace().eq(["bandwidth", "25", "Mbit/s"])),
+                "{shown}"
+            );
         }
     }
 
