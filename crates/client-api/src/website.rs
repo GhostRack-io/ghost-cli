@@ -8995,8 +8995,9 @@ pub struct VpnTierOffer {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub setup_microusd: Option<u64>,
     /// The tier's bandwidth limit, as the gateway applies it; none from
-    /// a backend of before 282.
-    #[serde(default)]
+    /// a backend of before 282 (and then not written, so the CLI's JSON is
+    /// what that backend answered).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bandwidth: Option<BandwidthView>,
 }
 
