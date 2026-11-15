@@ -11,7 +11,7 @@ use std::{
     fmt::Write as _,
     future::Future,
     io::{Read as _, Write as _},
-    net::{IpAddr, SocketAddr},
+    net::{IpAddr, Ipv4Addr, SocketAddr},
     path::{Path, PathBuf},
     time::Duration,
 };
@@ -391,8 +391,10 @@ pub(crate) fn config_text(key: &DeviceKey, view: &VpnConnectionView) -> Result<Z
         let IpAddr::V4(ip) = ip else {
             bail!("the tunnel address {ip} is not an IPv4 address");
         };
+        let table = incoming_only_table(ip)
+            .with_context(|| format!("the tunnel address {ip} is not one of 100.64.0.0/10"))?;
         return Ok(Zeroizing::new(format!(
-            "[Interface]\nPrivateKey = {}\nAddress = {ip}/{prefix}\nMTU = 1420\nTable = off\nPostUp = ip -4 rule add from {ip} table {INCOMING_ONLY_TABLE}; ip -4 route add default dev %i table {INCOMING_ONLY_TABLE}\nPreDown = ip -4 rule del from {ip} table {INCOMING_ONLY_TABLE}; ip -4 route del default dev %i table {INCOMING_ONLY_TABLE}\n\n[Peer]\nPublicKey = {gateway_key}\nEndpoint = {endpoint}\nAllowedIPs = 0.0.0.0/0\nPersistentKeepalive = 25\n",
+            "[Interface]\nPrivateKey = {}\nAddress = {ip}/{prefix}\nMTU = 1420\nTable = off\nPostUp = ip -4 route add default dev %i table {table}; ip -4 rule add from {ip} table {table}\nPreDown = ip -4 rule del from {ip} table {table}; ip -4 route del default dev %i table {table}\n\n[Peer]\nPublicKey = {gateway_key}\nEndpoint = {endpoint}\nAllowedIPs = 0.0.0.0/0\nPersistentKeepalive = 25\n",
             private.as_str()
         )));
     }
@@ -407,9 +409,17 @@ pub(crate) fn config_text(key: &DeviceKey, view: &VpnConnectionView) -> Result<Z
     )))
 }
 
-/// The routing table an incoming-only configuration routes its replies by:
-/// wg-quick's conventional number.
-const INCOMING_ONLY_TABLE: u32 = 51_820;
+/// The routing table an incoming-only configuration routes the replies
+/// from `ip`, its tunnel address, by: the address as a number, the
+/// connection's own. It is far above the 51820 that wg-quick's own full
+/// tunnels count up from, and apart from another connection's on the same
+/// device, so neither's route meets the other's table. None for an address
+/// outside the tunnels' 100.64.0.0/10. Same on the website. The route comes
+/// before the rule in `PostUp`, so a route that fails leaves no rule behind.
+fn incoming_only_table(ip: Ipv4Addr) -> Option<u32> {
+    let number = u32::from(ip);
+    (number & 0xffc0_0000 == u32::from(Ipv4Addr::new(100, 64, 0, 0))).then_some(number)
+}
 
 /// A private IPv6 address (RFC 4193), fixed and never routed, added to an
 /// IPv4 tunnel address. Clients that set IPv6 up only for a tunnel with an
@@ -2169,11 +2179,12 @@ mod tests {
         let parsed = |value: Value| -> VpnConnectionView { serde_json::from_value(value).unwrap() };
         let mut blocked = view(id, GATEWAY_KEY, "ready");
         blocked["outgoing_allowed"] = json!(false);
+        blocked["tunnel_address"] = json!("100.64.12.34");
         let config = config_text(&key, &parsed(blocked.clone())).unwrap();
         assert_eq!(
             config.as_str(),
             format!(
-                "[Interface]\nPrivateKey = {}\nAddress = 10.200.0.2/32\nMTU = 1420\nTable = off\nPostUp = ip -4 rule add from 10.200.0.2 table 51820; ip -4 route add default dev %i table 51820\nPreDown = ip -4 rule del from 10.200.0.2 table 51820; ip -4 route del default dev %i table 51820\n\n[Peer]\nPublicKey = {GATEWAY_KEY}\nEndpoint = 203.0.113.7:51820\nAllowedIPs = 0.0.0.0/0\nPersistentKeepalive = 25\n",
+                "[Interface]\nPrivateKey = {}\nAddress = 100.64.12.34/32\nMTU = 1420\nTable = off\nPostUp = ip -4 route add default dev %i table 1681919010; ip -4 rule add from 100.64.12.34 table 1681919010\nPreDown = ip -4 rule del from 100.64.12.34 table 1681919010; ip -4 route del default dev %i table 1681919010\n\n[Peer]\nPublicKey = {GATEWAY_KEY}\nEndpoint = 203.0.113.7:51820\nAllowedIPs = 0.0.0.0/0\nPersistentKeepalive = 25\n",
                 key.private_base64().as_str()
             )
         );
@@ -2186,11 +2197,35 @@ mod tests {
             ("tunnel_address", "10.0.0.2; touch /tmp/x"),
             ("tunnel_address", "10.0.0.2\nDNS = 1.1.1.1"),
             ("tunnel_address", "fd00::5"),
+            ("tunnel_address", "10.200.0.2"),
+            ("tunnel_address", "0.0.0.254"),
+            ("tunnel_address", "100.128.0.2"),
         ] {
             let mut bad = blocked.clone();
             bad[field] = json!(value);
             assert!(config_text(&key, &parsed(bad)).is_err(), "{field} {value}");
         }
+        // Each connection's table is its own, apart from wg-quick's, even
+        // for addresses that end alike.
+        let tables: Vec<u32> = ["100.64.12.34", "100.65.12.34", "100.64.12.38/32"]
+            .into_iter()
+            .map(|address| {
+                let mut other = blocked.clone();
+                other["tunnel_address"] = json!(address);
+                let config = config_text(&key, &parsed(other)).unwrap();
+                let table = config
+                    .lines()
+                    .find_map(|line| {
+                        line.strip_prefix("PostUp = ip -4 route add default dev %i table ")
+                    })
+                    .and_then(|rest| rest.split_once(';'))
+                    .map(|(table, _)| table.to_owned())
+                    .expect("the table");
+                assert_eq!(config.matches(&format!("table {table}")).count(), 4);
+                table.parse().unwrap()
+            })
+            .collect();
+        assert_eq!(tables, [1_681_919_010, 1_681_984_546, 1_681_919_014]);
     }
 
     /// `outgoing` sends the setting to its route; `create --no-outgoing`
