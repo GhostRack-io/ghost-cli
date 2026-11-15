@@ -355,8 +355,12 @@ pub(crate) fn config_text(key: &DeviceKey, view: &VpnConnectionView) -> Result<Z
     let address = view.tunnel_address.as_deref().ok_or_else(not_ready)?;
     let endpoint = view.endpoint.as_deref().ok_or_else(not_ready)?;
     let gateway_key = view.gateway_public_key.as_deref().ok_or_else(not_ready)?;
-    let address = tunnel_address(address)
+    let mut address = tunnel_address(address)
         .with_context(|| format!("the tunnel address {} is invalid", escape_control(address)))?;
+    if !address.contains(':') {
+        address.push_str(", ");
+        address.push_str(TUNNEL_IPV6);
+    }
     if endpoint.parse::<SocketAddr>().is_err() {
         bail!(
             "the gateway's endpoint {} is not an address and port",
@@ -372,6 +376,12 @@ pub(crate) fn config_text(key: &DeviceKey, view: &VpnConnectionView) -> Result<Z
         private.as_str()
     )))
 }
+
+/// A private IPv6 address (RFC 4193), fixed and never routed, added to an
+/// IPv4 tunnel address. Clients that set IPv6 up only for a tunnel with an
+/// IPv6 address then route all IPv6 into the tunnel, where the gateway drops
+/// it, instead of leaving it beside the tunnel.
+const TUNNEL_IPV6: &str = "fde6:93a2:eac5::2/128";
 
 /// The device's tunnel address with its prefix: `/32` when it has none
 /// (`/128` for an IPv6 one).
@@ -1348,7 +1358,7 @@ mod tests {
 
     fn expected_config(private: &str) -> String {
         format!(
-            "[Interface]\nPrivateKey = {private}\nAddress = 10.200.0.2/32\nDNS = 1.1.1.1, 9.9.9.9\nMTU = 1420\n\n[Peer]\nPublicKey = {GATEWAY_KEY}\nEndpoint = 203.0.113.7:51820\nAllowedIPs = 0.0.0.0/0, ::/0\nPersistentKeepalive = 25\n"
+            "[Interface]\nPrivateKey = {private}\nAddress = 10.200.0.2/32, fde6:93a2:eac5::2/128\nDNS = 1.1.1.1, 9.9.9.9\nMTU = 1420\n\n[Peer]\nPublicKey = {GATEWAY_KEY}\nEndpoint = 203.0.113.7:51820\nAllowedIPs = 0.0.0.0/0, ::/0\nPersistentKeepalive = 25\n"
         )
     }
 
@@ -2077,6 +2087,17 @@ mod tests {
         // The one DNS line is the platform's own; no gateway value adds one.
         assert_eq!(config.matches("DNS").count(), 1);
         assert!(config.contains("\nDNS = 1.1.1.1, 9.9.9.9\n"));
+        // An IPv4 tunnel address gets the private IPv6 one, once; an IPv6 one
+        // stays alone.
+        let mut prefixed = view(id, GATEWAY_KEY, "ready");
+        prefixed["tunnel_address"] = json!("100.64.12.34/30");
+        let config = config_text(&key, &parsed(prefixed)).unwrap();
+        assert!(config.contains("\nAddress = 100.64.12.34/30, fde6:93a2:eac5::2/128\n"));
+        let mut v6 = view(id, GATEWAY_KEY, "ready");
+        v6["tunnel_address"] = json!("fd00::5");
+        let config = config_text(&key, &parsed(v6)).unwrap();
+        assert!(config.contains("\nAddress = fd00::5/128\n"));
+        assert_eq!(config.matches("fde6:93a2").count(), 0);
     }
 
     /// A configuration renders as a QR code of half blocks, and --qr is
