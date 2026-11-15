@@ -8980,6 +8980,10 @@ pub struct VpnTierOffer {
     /// A Shared IP slice's forwarded ports.
     #[serde(default)]
     pub incoming_ports: Option<u32>,
+    /// The setup fee a connection of this tier is charged at creation;
+    /// none from a backend of before 280.
+    #[serde(default)]
+    pub setup_microusd: Option<u64>,
 }
 
 /// A location where VPN connections are sold.

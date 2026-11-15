@@ -462,6 +462,20 @@ mod tests {
         assert_eq!(MemoryChoice::Ecc.technology(), None);
     }
 
+    /// A VPN tier's setup fee is additive (item 280): an offer from an
+    /// older backend decodes without it, as none, and with it as given.
+    #[test]
+    fn a_vpn_tier_s_setup_fee_reads_from_older_backends() {
+        use crate::website::VpnTierOffer;
+        let offers: Vec<VpnTierOffer> = serde_json::from_str(
+            r#"[{"tier": "shared_ip", "room": true, "base_microusd_per_month": 1000000},
+                {"tier": "shared_bandwidth", "room": true, "setup_microusd": 2000000}]"#,
+        )
+        .unwrap();
+        assert_eq!(offers[0].setup_microusd, None);
+        assert_eq!(offers[1].setup_microusd, Some(2_000_000));
+    }
+
     /// A host's opening checks are additive (item 193d): a view without
     /// them reads as None, and a check or state of a newer release as
     /// Unknown.
