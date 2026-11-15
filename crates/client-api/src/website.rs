@@ -4474,7 +4474,10 @@ pub struct InstanceBandwidthLimitsView {
 pub struct SetInstanceBandwidthLimitRequest {
     /// The new limit in Mbit/s, from 1 up to the instance's normal limit
     /// ([`InstanceBandwidthLimitsView::normal_mbit`]; 100,000 where it has
-    /// none). `None` clears the renter's limit.
+    /// none). `None` clears the renter's limit. Required on the wire: a
+    /// missing field is refused, `null` clears, so a client that drops it
+    /// never lifts a limit its renter set.
+    #[serde(deserialize_with = "Option::deserialize")]
     pub limit_mbit: Option<u32>,
 }
 
