@@ -8779,12 +8779,24 @@ pub struct CreateVpnConnectionRequest {
     /// [`DEFAULT_VPN_TRACKED_CONNECTIONS`] when absent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub tracked_connections: Option<u32>,
+    /// Whether the device's new connections may leave through the
+    /// gateway; allowed when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub outgoing_allowed: Option<bool>,
 }
 
 /// Allow or block traffic from the internet to a VPN connection's device.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct SetVpnIncomingRequest {
+    pub allowed: bool,
+}
+
+/// Allow or block the new connections a VPN connection's device opens
+/// through its gateway. Replies to incoming connections pass either way.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct SetVpnOutgoingRequest {
     pub allowed: bool,
 }
 
@@ -8828,6 +8840,10 @@ pub struct VpnPortForwardView {
     pub device_port: u16,
 }
 
+const fn outgoing_allowed_default() -> bool {
+    true
+}
+
 /// One of the account's VPN connections. It never carries a private key or
 /// the device's own address.
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -8851,6 +8867,10 @@ pub struct VpnConnectionView {
     pub tracked_connections: u32,
     /// Whether traffic from the internet reaches the device.
     pub incoming_allowed: bool,
+    /// Whether the device's new connections leave through the gateway;
+    /// allowed from an older API.
+    #[serde(default = "outgoing_allowed_default")]
+    pub outgoing_allowed: bool,
     /// The device's tunnel address, a /32 in its configuration.
     #[serde(default)]
     pub tunnel_address: Option<String>,

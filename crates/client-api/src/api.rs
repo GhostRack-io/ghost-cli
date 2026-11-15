@@ -649,6 +649,11 @@ endpoints! {
     SetVpnIncoming { connection_id: Uuid } = user POST
         "/api/mut/v1/vpn/connections/{connection_id}/incoming"
         (crate::website::SetVpnIncomingRequest) => crate::website::VpnConnectionView;
+    /// Allow or block the new connections the connection's device opens
+    /// through its gateway.
+    SetVpnOutgoing { connection_id: Uuid } = user POST
+        "/api/mut/v1/vpn/connections/{connection_id}/outgoing"
+        (crate::website::SetVpnOutgoingRequest) => crate::website::VpnConnectionView;
     /// Replace a ready VPN connection's device key; its gateway takes the
     /// new key at its next poll.
     RotateVpnKey { connection_id: Uuid } = user POST
