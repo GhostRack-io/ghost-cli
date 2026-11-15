@@ -8942,6 +8942,13 @@ pub struct VpnTrafficView {
     pub observed_until: Option<DateTime<Utc>>,
     pub last_hour: VpnTrafficWindowView,
     pub last_day: VpnTrafficWindowView,
+    /// The last 7 days, from the connection's 15-minute usage rows; none
+    /// from an older backend.
+    #[serde(default)]
+    pub last_week: Option<VpnTrafficWindowView>,
+    /// The last 30 days, as `last_week`.
+    #[serde(default)]
+    pub last_month: Option<VpnTrafficWindowView>,
 }
 
 /// The readings that ended within one window, summed.
