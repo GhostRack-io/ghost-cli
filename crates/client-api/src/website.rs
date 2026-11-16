@@ -312,6 +312,9 @@ fn link_origin() -> String {
 pub struct ProviderRentalView {
     pub instance_id: Uuid,
     pub hostname: String,
+    /// What its renter calls it now; empty from an older backend.
+    #[serde(default)]
+    pub name: String,
     pub state: String,
     pub vcpu_count: u32,
     pub memory_bytes: u64,
