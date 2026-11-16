@@ -69,11 +69,12 @@ use ghostrack_client_api::{
         RequestProviderDisplayName, RescueInstance, ResetInstanceAccess, RestoreBackup, RetireHost,
         RetryHostAgentUpdate, RevokeSession, RevokeSessions, RotateGatewayKeys,
         ScheduleHostRetirement, ScheduleInstanceRetirement, SetBackupSchedule,
-        SetHostAgentUpdatePolicy, SetHostPrivate, SetHostRentalAdmission, SetIncidentState,
-        SetInstanceBandwidthLimit, SetInstancePower, SetPayoutAddress, SetPortForwards,
-        SetTagRedundant, SetTicketState, SetWebsitePassword, StartAgentUpdateSequence,
-        StopAgentUpdateSequence, TagInstance, UnlinkGithub, UpdateHostPricing, UpdateInstance,
-        UpgradeInstance, WithdrawProviderDisplayName, WriteProviderReview,
+        SetHostAgentUpdatePolicy, SetHostPrivate, SetHostRentalAdmission, SetHostUplink,
+        SetIncidentState, SetInstanceBandwidthLimit, SetInstancePower, SetPayoutAddress,
+        SetPortForwards, SetTagRedundant, SetTicketState, SetWebsitePassword,
+        StartAgentUpdateSequence, StopAgentUpdateSequence, TagInstance, UnlinkGithub,
+        UpdateHostPricing, UpdateInstance, UpgradeInstance, WithdrawProviderDisplayName,
+        WriteProviderReview,
     },
     hypervisor::{GuestInitializationStatus, HostMode, PowerState, RestartPolicy},
     website::{
@@ -109,16 +110,16 @@ use ghostrack_client_api::{
         RestoreBackupRequest, RotateGatewayKeysRequest, SSH_PUBLIC_KEY_TYPES,
         ScheduleHostRetirementRequest, ScheduleInstanceRetirementRequest, SessionRevocationView,
         SetAgentUpdatePolicyRequest, SetBackupScheduleRequest, SetHostPrivateRequest,
-        SetHostRentalPauseRequest, SetInstanceBandwidthLimitRequest, SetPortForwardsRequest,
-        SetPowerStateRequest, SetProviderIncidentStateRequest, SetProviderPayoutAddressRequest,
-        SetSupportTicketStateRequest, SetTagRedundantRequest, SetWebsitePasswordRequest, SortOrder,
-        StartAgentUpdateSequenceRequest, SupportTicketCategory, SupportTicketPriority,
-        SupportTicketResourceInput, SupportTicketState, SupportTicketSummaryView,
-        SupportTicketView, SupportWaitingOn, TAG_RULE, TagInstanceRequest, TrialClaimStatus,
-        TrialClaimStatusView, TrialClaimView, UpdateInstanceRequest, UpgradeInstanceRequest,
-        UserNotificationView, WebsitePasswordRemoved, WebsitePasswordView, backup_byte_charge,
-        readable_console_log, readable_console_output, valid_hostname, valid_ssh_public_key,
-        valid_tag,
+        SetHostRentalPauseRequest, SetHostUplinkRequest, SetInstanceBandwidthLimitRequest,
+        SetPortForwardsRequest, SetPowerStateRequest, SetProviderIncidentStateRequest,
+        SetProviderPayoutAddressRequest, SetSupportTicketStateRequest, SetTagRedundantRequest,
+        SetWebsitePasswordRequest, SortOrder, StartAgentUpdateSequenceRequest,
+        SupportTicketCategory, SupportTicketPriority, SupportTicketResourceInput,
+        SupportTicketState, SupportTicketSummaryView, SupportTicketView, SupportWaitingOn,
+        TAG_RULE, TagInstanceRequest, TrialClaimStatus, TrialClaimStatusView, TrialClaimView,
+        UpdateInstanceRequest, UpgradeInstanceRequest, UserNotificationView,
+        WebsitePasswordRemoved, WebsitePasswordView, backup_byte_charge, readable_console_log,
+        readable_console_output, valid_hostname, valid_ssh_public_key, valid_tag,
     },
     website_password,
 };
@@ -1253,6 +1254,20 @@ enum ProviderHostCommand {
         /// allow are on the host; they stay.
         #[arg(long)]
         yes: bool,
+        #[command(flatten)]
+        mutation: IdempotencyArgs,
+    },
+    /// Set the host's upload speed, or clear it: renters are shown no more
+    /// bandwidth than it on this host.
+    UploadSpeed {
+        /// Host ID, from `ghost provider hosts`.
+        host_id: Uuid,
+        /// The connection's upload speed in Mbit/s.
+        #[arg(value_name = "MBIT", value_parser = clap::value_parser!(u32).range(1..=100_000), required_unless_present = "clear", conflicts_with = "clear")]
+        mbit: Option<u32>,
+        /// Unset it.
+        #[arg(long)]
+        clear: bool,
         #[command(flatten)]
         mutation: IdempotencyArgs,
     },
@@ -7041,6 +7056,24 @@ async fn execute_provider(api: &ApiClient, command: &ProviderCommand) -> Result<
                     )
                     .await?;
                 to_value(privacy)
+            }
+            ProviderHostCommand::UploadSpeed {
+                host_id,
+                mbit,
+                mutation,
+                ..
+            } => {
+                let host: ProviderHostView = api
+                    .write_retryable(
+                        &SetHostUplink { host_id: *host_id },
+                        &SetHostUplinkRequest { uplink_mbit: *mbit },
+                        &mutation.key(),
+                    )
+                    .await?;
+                Ok(json!(host.uplink_mbit.map_or_else(
+                    || "upload speed not set".to_owned(),
+                    |mbit| format!("upload speed {mbit} Mbit/s"),
+                )))
             }
             ProviderHostCommand::Public { host_id, mutation } => {
                 let privacy: HostPrivacyView = api
@@ -20017,6 +20050,68 @@ mod tests {
             [
                 format!("POST /api/mut/v1/instances/{instance}/bandwidth-limit"),
                 format!("POST /api/mut/v1/instances/{instance}/bandwidth-limit")
+            ]
+        );
+    }
+
+    /// `ghost provider host upload-speed` takes a speed or `--clear`, never
+    /// both or neither, sends the speed or null, and says what is saved.
+    #[tokio::test]
+    async fn a_hosts_upload_speed_is_set_or_cleared() {
+        let host = "01900000-0000-7000-8000-000000000601".to_owned();
+        for (args, valid) in [
+            (vec!["500"], true),
+            (vec!["--clear"], true),
+            (vec![], false),
+            (vec!["500", "--clear"], false),
+            (vec!["0"], false),
+            (vec!["100001"], false),
+            (vec!["fast"], false),
+        ] {
+            let mut line = vec!["ghost", "provider", "host", "upload-speed", &host];
+            line.extend(&args);
+            assert_eq!(Cli::try_parse_from(&line).is_ok(), valid, "{args:?}");
+        }
+        let directory = tempfile::tempdir().unwrap();
+        let seed = directory.path().join("account.seed");
+        keys::generate_seed(&seed).unwrap();
+        let view = |uplink: Option<u32>| {
+            let mut view = json!({
+                "host_id": host, "label": "fra-a1", "mode": "cloud_routed", "status": "active",
+                "location": "eu-fra", "rentals_paused": false, "active_instance_count": 0,
+                "can_retire": false, "retired_at": null, "retirement_notice": null,
+                "public_path_verified_at": null, "public_path_error": null,
+                "public_path_checking": false,
+            });
+            if let Some(uplink) = uplink {
+                view["uplink_mbit"] = json!(uplink);
+            }
+            view.to_string()
+        };
+        let (url, received) = canned_server(vec![(200, view(Some(500))), (200, view(None))]).await;
+        for (args, sent, said) in [
+            (
+                vec!["provider", "host", "upload-speed", &host, "500"],
+                json!({"uplink_mbit": 500}),
+                "upload speed 500 Mbit/s",
+            ),
+            (
+                vec!["provider", "host", "upload-speed", &host, "--clear"],
+                json!({"uplink_mbit": null}),
+                "upload speed not set",
+            ),
+        ] {
+            let result = execute(&account_command(&url, &seed, &args)).await.unwrap();
+            assert_eq!(result, json!(said));
+            let at = received.lock().unwrap().len() - 1;
+            let body: Value = serde_json::from_slice(&received.lock().unwrap()[at].1).unwrap();
+            assert_eq!(body, sent);
+        }
+        assert_eq!(
+            request_lines(&received),
+            [
+                format!("POST /api/mut/v1/provider/hosts/{host}/uplink"),
+                format!("POST /api/mut/v1/provider/hosts/{host}/uplink")
             ]
         );
     }

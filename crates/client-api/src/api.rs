@@ -29,14 +29,15 @@ use crate::website::{
     RestoreBackupRequest, RotateGatewayKeysRequest, ScheduleHostRetirementRequest,
     ScheduleInstanceRetirementRequest, SessionCodeRequest, SessionCodeView, SessionRevocationView,
     SetAgentUpdatePolicyRequest, SetBackupScheduleRequest, SetHostPrivateRequest,
-    SetHostRentalPauseRequest, SetInstanceBandwidthLimitRequest, SetNotificationReadRequest,
-    SetPortForwardsRequest, SetPowerStateRequest, SetProtectedBalanceRequest,
-    SetProviderIncidentStateRequest, SetProviderPayoutAddressRequest, SetSupportTicketStateRequest,
-    SetTagRedundantRequest, SetWebsitePasswordRequest, StartAgentUpdateSequenceRequest,
-    SupportTicketSummaryView, SupportTicketView, TagInstanceRequest, TotpDisabled, TotpView,
-    TrialClaimStatusView, TrialClaimView, UpdateHostPricingRequest, UpdateInstanceRequest,
-    UpgradeInstanceRequest, UserNotificationView, WebsitePasswordRemoved, WebsitePasswordView,
-    WithdrawProviderSecurityDepositRequest, WriteProviderReviewRequest,
+    SetHostRentalPauseRequest, SetHostUplinkRequest, SetInstanceBandwidthLimitRequest,
+    SetNotificationReadRequest, SetPortForwardsRequest, SetPowerStateRequest,
+    SetProtectedBalanceRequest, SetProviderIncidentStateRequest, SetProviderPayoutAddressRequest,
+    SetSupportTicketStateRequest, SetTagRedundantRequest, SetWebsitePasswordRequest,
+    StartAgentUpdateSequenceRequest, SupportTicketSummaryView, SupportTicketView,
+    TagInstanceRequest, TotpDisabled, TotpView, TrialClaimStatusView, TrialClaimView,
+    UpdateHostPricingRequest, UpdateInstanceRequest, UpgradeInstanceRequest, UserNotificationView,
+    WebsitePasswordRemoved, WebsitePasswordView, WithdrawProviderSecurityDepositRequest,
+    WriteProviderReviewRequest,
 };
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::Value;
@@ -725,6 +726,11 @@ endpoints! {
     SetHostPrivate { host_id: Uuid } = user POST
         "/api/mut/v1/provider/hosts/{host_id}/private" (SetHostPrivateRequest)
         => HostPrivacyView;
+    /// Set the host's upload speed, the provider's known figure in Mbit/s, or clear it: renters
+    /// are shown no more bandwidth than it on the host.
+    SetHostUplink { host_id: Uuid } = user POST
+        "/api/mut/v1/provider/hosts/{host_id}/uplink" (SetHostUplinkRequest)
+        => ProviderHostView;
     /// The host's agent: its release, its update policy and its update
     /// attempts.
     GetHostAgentUpdate { host_id: Uuid } =

@@ -6195,6 +6195,10 @@ pub struct ProviderHostView {
     /// been, and from a backend of before.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub opening_checks: Option<Vec<HostOpeningCheckView>>,
+    /// The upload speed its provider set, in Mbit/s (item 281b); absent while none is, and from
+    /// a backend of before.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub uplink_mbit: Option<u32>,
 }
 
 /// One check a host's first opening for rentals waits for.
@@ -6960,6 +6964,17 @@ pub struct StartAgentUpdateSequenceRequest {
 #[serde(deny_unknown_fields)]
 pub struct SetHostPrivateRequest {
     pub private: bool,
+}
+
+/// Set or clear a host's upload speed (`SetHostUplink`, item 281b).
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct SetHostUplinkRequest {
+    /// The provider's known upload speed in Mbit/s, 1 to 100,000. `None` clears it. Required on
+    /// the wire: a missing field is refused, `null` clears, so a client that drops it never
+    /// clears a figure the provider set.
+    #[serde(deserialize_with = "Option::deserialize")]
+    pub uplink_mbit: Option<u32>,
 }
 
 /// Whether a host is private, and what of accounts its provider does not allow is on it: their live
