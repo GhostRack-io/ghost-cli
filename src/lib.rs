@@ -20116,6 +20116,37 @@ mod tests {
         );
     }
 
+    /// `ghost provider host <HOST_ID>` shows the upload speed its provider
+    /// set as a row of the host's record, and none for a host without one.
+    #[test]
+    fn a_hosts_view_shows_its_upload_speed() {
+        let host = Uuid::nil().to_string();
+        let cli = Cli::try_parse_from(["ghost", "provider", "host", &host]).unwrap();
+        let view = |uplink: Option<u32>| {
+            let mut host = json!({
+                "host_id": host, "label": "fra-a1", "mode": "cloud_routed", "status": "active",
+                "location": "eu-fra", "rentals_paused": false, "active_instance_count": 0,
+                "can_retire": false, "retired_at": null, "retirement_notice": null,
+                "public_path_verified_at": null, "public_path_error": null,
+                "public_path_checking": false,
+            });
+            if let Some(uplink) = uplink {
+                host["uplink_mbit"] = json!(uplink);
+            }
+            let view: ProviderHostView = serde_json::from_value(host).unwrap();
+            assert_eq!(view.uplink_mbit, uplink);
+            json!({"host": serde_json::to_value(view).unwrap()})
+        };
+        let text = render_result(&cli, &view(Some(500)), Terminal::plain());
+        assert!(
+            text.lines()
+                .any(|line| line.split_whitespace().eq(["uplink_mbit", "500"])),
+            "{text}"
+        );
+        let text = render_result(&cli, &view(None), Terminal::plain());
+        assert!(!text.contains("uplink"), "{text}");
+    }
+
     /// `ghost instance tag` adds and removes tags by the rule the API
     /// takes, `ghost instance tags` lists the account's, and a creation
     /// sends its tags, none without --tag, an empty list with --no-tags.
