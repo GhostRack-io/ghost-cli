@@ -7424,6 +7424,9 @@ pub struct ProviderHostHardwareView {
     /// The host's own CPU score; none until it has run the suite, and absent from older backends.
     #[serde(default)]
     pub cpu_score: Option<CpuBenchmarkView>,
+    /// The memory modules of the host's last inventory; absent from older backends.
+    #[serde(default)]
+    pub memory_devices: Vec<crate::hypervisor::MemoryDevice>,
 }
 
 /// One NUMA node's saleable capacity and what rentals hold of it. CPU is
