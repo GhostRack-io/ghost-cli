@@ -1091,6 +1091,9 @@ pub enum ProviderSort {
     /// The largest total CPU score first, then by provider ID: the order
     /// without a `sort`.
     CpuScore,
+    /// A variant of a newer release, which this one does not know.
+    #[serde(other)]
+    Unknown,
 }
 
 /// The query of `GET /v1/catalog/providers` (`ListProviders`): a page of
@@ -1110,7 +1113,11 @@ pub struct ProviderListQuery {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub after: Option<String>,
     /// The order: the CPU score order without it.
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        deserialize_with = "known_option",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub sort: Option<ProviderSort>,
 }
 
