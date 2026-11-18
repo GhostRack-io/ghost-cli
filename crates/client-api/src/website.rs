@@ -1081,20 +1081,37 @@ impl DiskChoice {
     }
 }
 
+/// The order of the providers `GET /v1/catalog/providers` lists.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum ProviderSort {
+    /// The largest security deposit first (none counting as 0), then the
+    /// largest total CPU score, then by provider ID.
+    SecurityDeposit,
+    /// The largest total CPU score first, then by provider ID: the order
+    /// without a `sort`.
+    CpuScore,
+}
+
 /// The query of `GET /v1/catalog/providers` (`ListProviders`): a page of
-/// the providers with a public offering, by their total CPU score.
-/// Unknown parameters are ignored; serialization omits absent fields.
+/// the providers with a public offering, by their security deposit or
+/// their total CPU score ([`ProviderSort`]). Unknown parameters are
+/// ignored; serialization omits absent fields.
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 pub struct ProviderListQuery {
     /// How many to list, 1 to [`ProviderListQuery::MAXIMUM_LIMIT`] (that
     /// many without it).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub limit: Option<usize>,
-    /// Where the page starts: after the provider of this total CPU score
-    /// and ID, the last one the page before listed, as `SCORE.ID`
-    /// ([`ProviderListQuery::after`]).
+    /// Where the page starts: after the last provider the page before
+    /// listed, as `SCORE.ID` for the CPU score order
+    /// ([`ProviderListQuery::after`]) and `DEPOSIT.SCORE.ID` for the
+    /// security deposit order ([`ProviderListQuery::after_deposit`]).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub after: Option<String>,
+    /// The order: the CPU score order without it.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub sort: Option<ProviderSort>,
 }
 
 impl ProviderListQuery {
@@ -1107,6 +1124,15 @@ impl ProviderListQuery {
     #[must_use]
     pub fn after(total: u64, id: Uuid) -> String {
         format!("{total}.{id}")
+    }
+
+    /// The `after` of the security deposit order's page that follows the
+    /// provider of `deposit` (its
+    /// [`ProviderSummaryView::provider_security_deposit_microusd`], 0 for
+    /// none), `total` and `id`.
+    #[must_use]
+    pub fn after_deposit(deposit: u64, total: u64, id: Uuid) -> String {
+        format!("{deposit}.{total}.{id}")
     }
 }
 
