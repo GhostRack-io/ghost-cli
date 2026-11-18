@@ -21506,6 +21506,7 @@ mod tests {
             delete_delay_minutes: 120,
             backup_lock_days: 7,
             restore_without_backup_days: 30,
+            older_than_days: 10,
         });
         let until = (now + chrono::Duration::days(7))
             .with_timezone(&chrono::Local)

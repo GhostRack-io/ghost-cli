@@ -4496,6 +4496,10 @@ pub struct DeletionSafetyView {
     /// An in-place restore from a backup of the instance taken within this
     /// many days takes no backup first.
     pub restore_without_backup_days: u32,
+    /// The age in days the instance is older than, which puts it in this
+    /// tier; 0 from older backends.
+    #[serde(default)]
+    pub older_than_days: u32,
 }
 
 /// The connection limits of an instance (item 229).
