@@ -6061,6 +6061,14 @@ pub struct NetworkTestSummaryView {
     pub best_upload_location_name: Option<String>,
     #[serde(default)]
     pub lowest_latency_location_name: Option<String>,
+    /// The country of each of those locations, ISO 3166-1 alpha-2. Absent
+    /// from older backends.
+    #[serde(default)]
+    pub best_download_country_code: Option<String>,
+    #[serde(default)]
+    pub best_upload_country_code: Option<String>,
+    #[serde(default)]
+    pub lowest_latency_country_code: Option<String>,
 }
 
 /// One host's latest result against one test server.
@@ -6070,6 +6078,9 @@ pub struct HostNetworkTestResultView {
     pub server_name: String,
     pub location: String,
     pub location_name: String,
+    /// The location's country, ISO 3166-1 alpha-2; absent from older backends.
+    #[serde(default)]
+    pub country_code: String,
     pub observed_at: DateTime<Utc>,
     pub latency_ms: Option<u32>,
     pub download_bits_per_second: Option<u64>,
