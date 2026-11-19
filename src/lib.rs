@@ -8860,20 +8860,24 @@ async fn quote_operation(
 }
 
 /// What an instance action's approval screen shows: its [`Preview`] (the
-/// title, the rows and what it does) and the instance's name where it
-/// could be read.
+/// title, the rows and what it does), the instance's name where it could
+/// be read, and the notice the screen prints below them.
 struct InstanceActionReview {
     preview: Preview,
     instance_name: Option<String>,
+    notice: &'static str,
 }
 
 impl InstanceActionReview {
     /// The review as JSON beside the request: `review` holds the screen's
     /// rows in order (a row of several lines carries an empty label on each
     /// line after its first, as the screen prints it), `review_effects` the
-    /// sentences of what approving does, and `instance_name` the instance's
-    /// name, control characters escaped, where it could be read.
-    fn json_fields(&self) -> [(&'static str, Value); 3] {
+    /// sentences of what approving does, `instance_name` the instance's
+    /// name, control characters escaped, where it could be read, and
+    /// `review_notice` the notice that points at the review above it (the
+    /// request's `notice` names what approving does itself, for a program
+    /// that shows no review).
+    fn json_fields(&self) -> [(&'static str, Value); 4] {
         [
             (
                 "review",
@@ -8887,6 +8891,7 @@ impl InstanceActionReview {
             ),
             ("review_effects", json!(self.preview.effects)),
             ("instance_name", json!(self.instance_name)),
+            ("review_notice", json!(self.notice)),
         ]
     }
 }
@@ -9017,6 +9022,7 @@ async fn instance_action_review(
         instance_name: instance
             .as_ref()
             .map(|instance| escape_control(instance.display_name()).into_owned()),
+        notice: approval_notice(operation, true),
     })
 }
 
@@ -18607,8 +18613,13 @@ mod tests {
         // request is the only thing read.
         let (compact, received) =
             approve(vec![(200, intent(10, None, None))], false, &["--compact"]).await;
-        let notice = compact.unwrap()["notice"].as_str().unwrap().to_owned();
+        let compact = compact.unwrap();
+        let notice = compact["notice"].as_str().unwrap().to_owned();
         assert!(!notice.contains("above"), "{notice}");
+        // A restore's JSON has no instance action's review.
+        for key in ["review", "review_effects", "instance_name", "review_notice"] {
+            assert!(compact.get(key).is_none(), "{key}: {compact}");
+        }
         assert!(
             notice.contains("Inspect the requested resources"),
             "{notice}"
@@ -18876,6 +18887,12 @@ mod tests {
         assert!(notice.contains("Inspect the request"), "{notice}");
         assert_eq!(rows(&json_shown), screen);
         assert_eq!(json_shown["review_effects"], shown["review_effects"]);
+        // Below the review, the notice the screen prints under its quote.
+        assert_eq!(json_shown["review_notice"], shown["notice"]);
+        assert_eq!(
+            json_shown["review_notice"],
+            "Approving reinstalls the instance as shown above."
+        );
 
         // Approved: the stored request, under the request's key, then the
         // completion.
