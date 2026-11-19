@@ -135,6 +135,65 @@ pub struct GithubUnlinked {
     pub ended_sessions: u32,
 }
 
+/// A credit link (backlog item 294 of the platform) as the sign-up page
+/// reads it (`GetCreditLink`, public):
+/// the credit it gives and whether it may be redeemed now.
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+pub struct CreditLinkOfferView {
+    pub amount_microusd: u64,
+    /// The days the credit is live after its redemption.
+    pub credit_days: u32,
+    /// Whether a redemption is left and the link may still be redeemed.
+    pub redeemable: bool,
+}
+
+/// Reserves one redemption of a credit link for a sign-up for 15 minutes
+/// (`ReserveCreditLink`): the website asks, with the reservation its
+/// visitor holds of the same link, if any, which is answered again.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ReserveCreditLinkRequest {
+    pub token: String,
+    #[serde(default)]
+    pub reservation_id: Option<Uuid>,
+}
+
+/// A sign-up's reservation of a credit link's redemption.
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+pub struct CreditLinkReservationView {
+    pub reservation_id: Uuid,
+    pub amount_microusd: u64,
+    pub credit_days: u32,
+    pub reserved_until: DateTime<Utc>,
+}
+
+/// Activates an account with a credit link's reservation
+/// (`ActivateWithCreditLink`): the three public keys of an activation,
+/// signed with the key it registers, as an activation is.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ActivateWithCreditLinkRequest {
+    pub reservation_id: Uuid,
+    pub authentication_public_key: String,
+    pub billing_public_key: String,
+    pub recovery_public_key: String,
+}
+
+/// Redeems a credit link for the account (`RedeemCreditLink`): the link
+/// as pasted, or its token.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct RedeemCreditLinkRequest {
+    pub token: String,
+}
+
+/// The trial credit a redemption added and the date it expires.
+#[derive(Clone, Debug, Deserialize, PartialEq, Eq, Serialize)]
+pub struct CreditLinkRedeemedView {
+    pub amount_microusd: u64,
+    pub expires_at: DateTime<Utc>,
+}
+
 /// A GitHub login's start (`StartGithubLogin`, public): GitHub's sign-in
 /// URL, valid until `expires_at` (10 minutes). The website keeps `nonce` in
 /// a cookie and sends it back with GitHub's return to prevent login CSRF.

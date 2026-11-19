@@ -1,16 +1,17 @@
 //! Customer and browser API contracts.
 use crate::website::{
     AccountActivationTerms, AccountAuthKeyView, AccountBalanceView, AccountSessionView,
-    AccountSshKeyView, AccountView, ActivateAccountRequest, ActiveSessionView,
-    AddAccountSshKeyRequest, AddCloudIpAddressesRequest, AddPrivateRenterRequest,
-    AddProviderSecurityDepositRequest, AddSupportTicketMessageRequest, AgentUpdateAttemptRequest,
-    AgentUpdateSequenceView, ApproveAgentUpdateRequest, AuthorizeBackupRestoreRequest,
-    BackupDownloadView, BackupInstanceView, BackupPricingView, BackupScheduleView, BackupView,
-    BrowserOperationInput, BrowserOperationView, CloudIpPoolView, CodeLoginRequest,
-    CompleteOperationIntentRequest, CompleteTrialClaimRequest, CompletedTrialClaimView,
-    ContainerLogView, CreateBackupRequest, CreateCloudIpPoolRequest,
+    AccountSshKeyView, AccountView, ActivateAccountRequest, ActivateWithCreditLinkRequest,
+    ActiveSessionView, AddAccountSshKeyRequest, AddCloudIpAddressesRequest,
+    AddPrivateRenterRequest, AddProviderSecurityDepositRequest, AddSupportTicketMessageRequest,
+    AgentUpdateAttemptRequest, AgentUpdateSequenceView, ApproveAgentUpdateRequest,
+    AuthorizeBackupRestoreRequest, BackupDownloadView, BackupInstanceView, BackupPricingView,
+    BackupScheduleView, BackupView, BrowserOperationInput, BrowserOperationView, CloudIpPoolView,
+    CodeLoginRequest, CompleteOperationIntentRequest, CompleteTrialClaimRequest,
+    CompletedTrialClaimView, ContainerLogView, CreateBackupRequest, CreateCloudIpPoolRequest,
     CreateHostEnrollmentTokenRequest, CreateInstanceRequest, CreateProviderPayoutRequest,
-    CreateSupportTicketRequest, DeclareHostEmergencyRequest, DownloadBackupRequest,
+    CreateSupportTicketRequest, CreditLinkOfferView, CreditLinkRedeemedView,
+    CreditLinkReservationView, DeclareHostEmergencyRequest, DownloadBackupRequest,
     EnableTotpRequest, GatewayTrafficView, GithubLoginRequest, GithubLoginStart, GithubUnlinked,
     HandOverCloudIpPoolRequest, HistoryPage, HostAgentUpdateView, HostEnrollmentToken,
     HostNetworkTestsView, HostPricingView, HostPrivacyView, ImageView, InstanceAddressChangeView,
@@ -23,21 +24,21 @@ use crate::website::{
     ProviderBalanceView, ProviderDisplayNameView, ProviderHostDetailView, ProviderHostView,
     ProviderIncidentView, ProviderOutageDetailView, ProviderOutagePage, ProviderPayoutAddressView,
     ProviderPayoutView, ProviderReliabilityView, ProviderRentalView, ProviderSecurityDepositView,
-    ProviderUptimeView, RedeemLoginGrantRequest, RedeemLoginGrantResponse, RedeployInstanceRequest,
-    ReinstallInstanceRequest, ReleaseChannelsView, RemoveAccountSshKeyRequest,
-    RenameInstanceRequest, RequestAccountCloseRequest, RequestProviderDisplayNameRequest,
-    RestoreBackupRequest, RotateGatewayKeysRequest, ScheduleHostRetirementRequest,
-    ScheduleInstanceRetirementRequest, SessionCodeRequest, SessionCodeView, SessionRevocationView,
-    SetAgentUpdatePolicyRequest, SetBackupScheduleRequest, SetHostPrivateRequest,
-    SetHostRentalPauseRequest, SetHostUplinkRequest, SetInstanceBandwidthLimitRequest,
-    SetNotificationReadRequest, SetPortForwardsRequest, SetPowerStateRequest,
-    SetProtectedBalanceRequest, SetProviderIncidentStateRequest, SetProviderPayoutAddressRequest,
-    SetSupportTicketStateRequest, SetTagRedundantRequest, SetWebsitePasswordRequest,
-    StartAgentUpdateSequenceRequest, SupportTicketSummaryView, SupportTicketView,
-    TagInstanceRequest, TotpDisabled, TotpView, TrialClaimStatusView, TrialClaimView,
-    UpdateHostPricingRequest, UpdateInstanceRequest, UpgradeInstanceRequest, UserNotificationView,
-    WebsitePasswordRemoved, WebsitePasswordView, WithdrawProviderSecurityDepositRequest,
-    WriteProviderReviewRequest,
+    ProviderUptimeView, RedeemCreditLinkRequest, RedeemLoginGrantRequest, RedeemLoginGrantResponse,
+    RedeployInstanceRequest, ReinstallInstanceRequest, ReleaseChannelsView,
+    RemoveAccountSshKeyRequest, RenameInstanceRequest, RequestAccountCloseRequest,
+    RequestProviderDisplayNameRequest, ReserveCreditLinkRequest, RestoreBackupRequest,
+    RotateGatewayKeysRequest, ScheduleHostRetirementRequest, ScheduleInstanceRetirementRequest,
+    SessionCodeRequest, SessionCodeView, SessionRevocationView, SetAgentUpdatePolicyRequest,
+    SetBackupScheduleRequest, SetHostPrivateRequest, SetHostRentalPauseRequest,
+    SetHostUplinkRequest, SetInstanceBandwidthLimitRequest, SetNotificationReadRequest,
+    SetPortForwardsRequest, SetPowerStateRequest, SetProtectedBalanceRequest,
+    SetProviderIncidentStateRequest, SetProviderPayoutAddressRequest, SetSupportTicketStateRequest,
+    SetTagRedundantRequest, SetWebsitePasswordRequest, StartAgentUpdateSequenceRequest,
+    SupportTicketSummaryView, SupportTicketView, TagInstanceRequest, TotpDisabled, TotpView,
+    TrialClaimStatusView, TrialClaimView, UpdateHostPricingRequest, UpdateInstanceRequest,
+    UpgradeInstanceRequest, UserNotificationView, WebsitePasswordRemoved, WebsitePasswordView,
+    WithdrawProviderSecurityDepositRequest, WriteProviderReviewRequest,
 };
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::Value;
@@ -360,6 +361,21 @@ endpoints! {
     /// current code. Every refusal of the code reads the same.
     CodeLogin = public POST "/api/mut/v1/account/login/code"
         (CodeLoginRequest) => RedeemLoginGrantResponse;
+    // Credit links (backlog item 294 of the platform)
+    /// What a credit link gives and whether it may be redeemed now.
+    GetCreditLink { token: String } =
+        public GET "/v1/credit-links/{token}" => CreditLinkOfferView;
+    /// Reserve one of a credit link's redemptions for a sign-up, for 15
+    /// minutes; the website's, for its visitor.
+    ReserveCreditLink = public POST "/api/mut/v1/credit-links/reserve"
+        (ReserveCreditLinkRequest) => CreditLinkReservationView;
+    /// Activate an account with a credit link's reservation: a limited
+    /// trial with the link's credit; signed with the key it registers.
+    ActivateWithCreditLink = wallet POST "/api/mut/v1/account/activate-with-credit-link"
+        (ActivateWithCreditLinkRequest) => AccountView;
+    /// Redeem a credit link for the account.
+    RedeemCreditLink = user POST "/api/mut/v1/account/credit-links/redeem"
+        (RedeemCreditLinkRequest) => CreditLinkRedeemedView;
     /// Turns two-factor codes on with a secret the client made and one
     /// current code of it. Only the account key does, which is also the
     /// recovery: a lost phone is a `DisableTotp`.
