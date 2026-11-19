@@ -3340,6 +3340,14 @@ fn notice(line: &str) {
 /// Returns the command's failure: unreadable account key or input files, backend
 /// rejections, transport errors, or invalid arguments.
 pub async fn execute(cli: &Cli) -> Result<Value> {
+    let result = execute_command(cli).await;
+    if cli.globals.compact {
+        return result.map_err(compact_confirmation);
+    }
+    result
+}
+
+async fn execute_command(cli: &Cli) -> Result<Value> {
     match &cli.command {
         Command::Key {
             command: KeyCommand::Import { from, replace },
@@ -5646,6 +5654,9 @@ fn readable_sections(command: &Command, output: &Value, terminal: Terminal) -> O
 /// colors the heading is red.
 #[must_use]
 pub fn render_error(error: &anyhow::Error, terminal: Terminal) -> String {
+    if let Some(confirmation) = error.downcast_ref::<Confirmation>() {
+        return escape_control_keeping_lines(&confirmation.preview).into_owned();
+    }
     let mut text = format!(
         "{} {}",
         pretty::paint_failure("Error:", terminal.colors),
@@ -5710,6 +5721,177 @@ impl std::fmt::Display for Refusal {
 
 impl std::error::Error for Refusal {}
 
+/// The code of a command that needs `--yes` and shows what it would do
+/// instead ([`Preview`]).
+const CONFIRMATION_REQUIRED: &str = "confirmation_required";
+
+/// What a command that needs `--yes` prints without it: the preview, not
+/// an error sentence. `sentence` is what `--compact` prints, as before.
+#[derive(Debug)]
+struct Confirmation {
+    preview: String,
+    sentence: String,
+}
+
+impl std::fmt::Display for Confirmation {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        formatter.write_str(&self.preview)
+    }
+}
+
+impl std::error::Error for Confirmation {}
+
+/// `argument` as a shell takes it back: as it is when it has only
+/// characters a shell leaves alone, else in single quotes.
+fn shell_word(argument: &str) -> String {
+    let plain = !argument.is_empty()
+        && argument
+            .chars()
+            .all(|character| character.is_ascii_alphanumeric() || "._:/@%+=,-".contains(character));
+    if plain {
+        argument.to_owned()
+    } else {
+        format!("'{}'", argument.replace('\'', "'\\''"))
+    }
+}
+
+/// The command line `arguments` (the program first) make, with `--yes`
+/// added: the program by its file name, each argument shell-quoted.
+fn go_ahead_command(arguments: impl IntoIterator<Item = String>) -> String {
+    let mut arguments = arguments.into_iter();
+    let program = arguments
+        .next()
+        .and_then(|program| {
+            std::path::Path::new(&program)
+                .file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+        })
+        .unwrap_or_else(|| "ghost".to_owned());
+    let mut words = vec![shell_word(&program)];
+    words.extend(arguments.map(|argument| shell_word(&argument)));
+    words.push("--yes".to_owned());
+    words.join(" ")
+}
+
+/// Whether a backup is still kept (and billed for storage): one that is
+/// not being deleted, deleted, failed or lost.
+fn backup_is_kept(backup: &BackupView) -> bool {
+    use ghostrack_client_api::website::BackupState;
+    !matches!(
+        backup.status,
+        BackupState::Deleting | BackupState::Deleted | BackupState::Failed | BackupState::Lost
+    )
+}
+
+/// How many of `backups` are kept ([`backup_is_kept`]).
+fn kept_backups_count(backups: &[BackupView]) -> usize {
+    backups
+        .iter()
+        .filter(|backup| backup_is_kept(backup))
+        .count()
+}
+
+/// What a command that needs `--yes` shows without it: a title naming the
+/// action and its target, rows of the facts the action touches, the
+/// sentences of what it does, and the command to repeat. Reads may fill it;
+/// nothing is ever sent.
+struct Preview {
+    title: String,
+    rows: Vec<(&'static str, String)>,
+    effects: Vec<String>,
+    sentence: String,
+}
+
+impl Preview {
+    /// A preview titled `title`, whose `--compact` form is `sentence`.
+    fn new(title: impl Into<String>, sentence: impl Into<String>) -> Self {
+        Self {
+            title: title.into(),
+            rows: Vec::new(),
+            effects: Vec::new(),
+            sentence: sentence.into(),
+        }
+    }
+
+    /// A row, when its value is known.
+    fn row(mut self, label: &'static str, value: Option<String>) -> Self {
+        if let Some(value) = value.filter(|value| !value.is_empty()) {
+            self.rows.push((label, value));
+        }
+        self
+    }
+
+    /// A sentence of what the command does: its first letter capitalized
+    /// and a full stop added.
+    fn effect(mut self, sentence: &str) -> Self {
+        let sentence = sentence.trim().trim_end_matches(';');
+        let mut characters = sentence.chars();
+        if let Some(first) = characters.next() {
+            let mut text: String = first.to_uppercase().collect();
+            text.push_str(characters.as_str());
+            if !text.ends_with(['.', '!', '?', ':']) {
+                text.push('.');
+            }
+            self.effects.push(text);
+        }
+        self
+    }
+
+    /// The sentences of `refusal`, its `;` parts, without the
+    /// `; repeat with --yes` that ends it.
+    fn said(mut self, refusal: &str) -> Self {
+        let said = refusal
+            .strip_suffix("; repeat with --yes")
+            .unwrap_or(refusal);
+        for part in said.split("; ") {
+            self = self.effect(part);
+        }
+        self
+    }
+
+    /// The preview as text for the command line `arguments`.
+    fn text(&self, arguments: impl IntoIterator<Item = String>) -> String {
+        let width = self.rows.iter().map(|(label, _)| label.len()).max();
+        let mut lines = Vec::new();
+        if !self.title.is_empty() {
+            lines.push(self.title.clone());
+        }
+        for (label, value) in &self.rows {
+            lines.push(format!(
+                "  {label:<width$}  {value}",
+                width = width.unwrap_or(0)
+            ));
+        }
+        if !self.effects.is_empty() && !lines.is_empty() {
+            lines.push(String::new());
+        }
+        if !self.effects.is_empty() {
+            lines.push(self.effects.join(" "));
+        }
+        lines.push(format!("To go ahead:  {}", go_ahead_command(arguments)));
+        lines.join("\n")
+    }
+
+    /// The error a command without `--yes` returns: this preview for the
+    /// command line as typed.
+    fn refusal(self) -> anyhow::Error {
+        Confirmation {
+            preview: self.text(std::env::args()),
+            sentence: self.sentence,
+        }
+        .into()
+    }
+}
+
+/// A failure that is a [`Confirmation`] is its one sentence under
+/// `--compact`, which scripts read.
+fn compact_confirmation(error: anyhow::Error) -> anyhow::Error {
+    match error.downcast_ref::<Confirmation>() {
+        Some(confirmation) => typed_refusal(CONFIRMATION_REQUIRED, confirmation.sentence.clone()),
+        None => error,
+    }
+}
+
 /// Return a [`Refusal`] with the backend's error code `$code` and the
 /// message the rest formats, as `bail!` returns an error.
 macro_rules! refuse {
@@ -5754,6 +5936,11 @@ pub fn error_output(error: &anyhow::Error) -> Value {
         .as_ref()
         .and_then(|rejection| rejection.code)
         .or_else(|| error.downcast_ref::<Refusal>().map(|refusal| refusal.code))
+        .or_else(|| {
+            error
+                .downcast_ref::<Confirmation>()
+                .map(|_| CONFIRMATION_REQUIRED)
+        })
         .or_else(|| api::got_no_response(error).then_some(NO_RESPONSE));
     let job_id = rejection
         .as_ref()
@@ -7044,9 +7231,15 @@ async fn execute_provider(api: &ApiClient, command: &ProviderCommand) -> Result<
                     && let Some(kept) =
                         kept_words(privacy.kept_instances, privacy.kept_local_backups)
                 {
-                    bail!(
+                    let sentence = format!(
                         "{kept} of accounts you do not allow are on this host and stay there: they run, reinstall and are billed as before, and only their new instances are refused; repeat with --yes to make it private"
                     );
+                    return Err(Preview::new(format!("Make host {host_id} private"), sentence)
+                        .effect(&format!(
+                            "{kept} of accounts you do not allow are on this host and stay there: they run, reinstall and are billed as before"
+                        ))
+                        .effect("only their new instances are refused")
+                        .refusal());
                 }
                 let privacy: HostPrivacyView = api
                     .write_retryable(
@@ -7101,9 +7294,16 @@ async fn execute_provider(api: &ApiClient, command: &ProviderCommand) -> Result<
                 mutation,
             } => {
                 if !yes {
-                    bail!(
-                        "host deletion permanently retires its enrollment identity; repeat with --yes after all rentals are gone"
-                    );
+                    return Err(host_preview(
+                        api,
+                        "Delete",
+                        *host_id,
+                        "host deletion permanently retires its enrollment identity; repeat with --yes after all rentals are gone",
+                    )
+                    .await
+                    .effect("host deletion permanently retires its enrollment identity")
+                    .effect("go ahead after all rentals are gone")
+                    .refusal());
                 }
                 let host: ProviderHostView = api
                     .write_retryable(&RetireHost { host_id: *host_id }, &(), &mutation.key())
@@ -7120,9 +7320,16 @@ async fn execute_provider(api: &ApiClient, command: &ProviderCommand) -> Result<
                 mutation,
             } => {
                 if !yes {
-                    bail!(
-                        "noticed retirement will delete every remaining VM after the deadline; repeat with --yes"
-                    );
+                    return Err(host_preview(
+                        api,
+                        "Retire",
+                        *host_id,
+                        "noticed retirement will delete every remaining VM after the deadline; repeat with --yes",
+                    )
+                    .await
+                    .row("Notice", Some(format!("{notice_days} days")))
+                    .said("noticed retirement will delete every remaining VM after the deadline")
+                    .refusal());
                 }
                 if *notice_days < 7 {
                     refuse!(
@@ -7148,9 +7355,15 @@ async fn execute_provider(api: &ApiClient, command: &ProviderCommand) -> Result<
                 mutation,
             } => {
                 if !yes {
-                    bail!(
-                        "an emergency declaration immediately abandons every active rental and revokes the host; repeat with --yes"
-                    );
+                    return Err(host_preview(
+                        api,
+                        "Declare an emergency on",
+                        *host_id,
+                        "an emergency declaration immediately abandons every active rental and revokes the host; repeat with --yes",
+                    )
+                    .await
+                    .said("an emergency declaration immediately abandons every active rental and revokes the host")
+                    .refusal());
                 }
                 let host: ProviderHostView = api
                     .write_retryable(
@@ -7195,9 +7408,18 @@ async fn execute_provider(api: &ApiClient, command: &ProviderCommand) -> Result<
                             kept_words(renter.kept_instances, renter.kept_local_backups)
                         })
                     {
-                        bail!(
+                        let sentence = format!(
                             "{kept} of {alias} are on your private hosts and stay there: they run, reinstall and are billed as before, and only its new instances are refused; repeat with --yes to remove it"
                         );
+                        return Err(Preview::new(
+                            format!("Remove {alias} from the allowed accounts"),
+                            sentence,
+                        )
+                        .effect(&format!(
+                            "{kept} of {alias} are on your private hosts and stay there: they run, reinstall and are billed as before"
+                        ))
+                        .effect("only its new instances are refused")
+                        .refusal());
                     }
                 }
                 let renter: PrivateRenterView = api
@@ -7245,9 +7467,13 @@ async fn execute_provider(api: &ApiClient, command: &ProviderCommand) -> Result<
             mutation,
         } => {
             if !yes {
-                bail!(
-                    "instance retirement schedules provider-initiated deletion; repeat with --yes"
-                );
+                return Err(Preview::new(
+                    format!("Retire instance {instance_id}"),
+                    "instance retirement schedules provider-initiated deletion; repeat with --yes",
+                )
+                .row("Notice", Some(format!("{notice_days} days")))
+                .said("instance retirement schedules provider-initiated deletion")
+                .refusal());
             }
             if *notice_days < 7 {
                 refuse!(
@@ -7310,7 +7536,21 @@ async fn execute_provider(api: &ApiClient, command: &ProviderCommand) -> Result<
                 mutation,
             } => {
                 if !yes {
-                    bail!("pool deletion is permanent; repeat with --yes");
+                    let pools: Option<Vec<CloudIpPoolView>> = api.read(&ListIpPools, "").await.ok();
+                    let pool = pools
+                        .as_deref()
+                        .and_then(|pools| pools.iter().find(|pool| pool.pool_id == *pool_id));
+                    return Err(Preview::new(
+                        format!("Delete IP pool {pool_id}"),
+                        "pool deletion is permanent; repeat with --yes",
+                    )
+                    .row("Pool", pool.map(|pool| pool.label.clone()))
+                    .row(
+                        "Addresses",
+                        pool.map(|pool| pool.addresses.len().to_string()),
+                    )
+                    .said("pool deletion is permanent")
+                    .refusal());
                 }
                 let pool: CloudIpPoolView = api
                     .write_retryable(&DeleteIpPool { pool_id: *pool_id }, &(), &mutation.key())
@@ -7372,7 +7612,12 @@ async fn execute_provider(api: &ApiClient, command: &ProviderCommand) -> Result<
                 mutation,
             } => {
                 if !yes {
-                    bail!("IP removal stops future allocation; repeat with --yes");
+                    return Err(Preview::new(
+                        format!("Remove {address} from IP pool {pool}"),
+                        "IP removal stops future allocation; repeat with --yes",
+                    )
+                    .said("IP removal stops future allocation")
+                    .refusal());
                 }
                 let address_id = pool_address_id(api, *pool, *address).await?;
                 let pool: CloudIpPoolView = api
@@ -7693,9 +7938,12 @@ async fn execute_account(cli: &Cli, api: &ApiClient, command: &AccountCommand) -
         }
         AccountCommand::UnlinkGithub { yes } => {
             if !yes {
-                bail!(
-                    "unlinking ends the website sessions a GitHub login began and stops `Log in with GitHub` for this account; repeat with --yes"
-                );
+                return Err(Preview::new(
+                    "Unlink GitHub",
+                    "unlinking ends the website sessions a GitHub login began and stops `Log in with GitHub` for this account; repeat with --yes",
+                )
+                .said("unlinking ends the website sessions a GitHub login began and stops `Log in with GitHub` for this account")
+                .refusal());
             }
             let unlinked: GithubUnlinked = api
                 .write(&UnlinkGithub, &(), Some(&*Uuid::now_v7().to_string()))
@@ -7816,9 +8064,12 @@ async fn execute_account(cli: &Cli, api: &ApiClient, command: &AccountCommand) -
             command: TotpCommand::Disable { yes },
         } => {
             if !yes {
-                bail!(
-                    "turning two-factor codes off lets a website login by password or GitHub in without a code; repeat with --yes"
-                );
+                return Err(Preview::new(
+                    "Turn two-factor codes off",
+                    "turning two-factor codes off lets a website login by password or GitHub in without a code; repeat with --yes",
+                )
+                .said("turning two-factor codes off lets a website login by password or GitHub in without a code")
+                .refusal());
             }
             let disabled: ghostrack_client_api::website::TotpDisabled = api
                 .write(&ghostrack_client_api::api::DisableTotp, &(), None)
@@ -7931,9 +8182,14 @@ async fn execute_account(cli: &Cli, api: &ApiClient, command: &AccountCommand) -
         },
         AccountCommand::MigrateSeed { new_seed_file, yes } => {
             if !yes {
-                bail!(
-                    "account key migration revokes all existing keys and sessions; back up both account keys and repeat with --yes"
-                );
+                return Err(Preview::new(
+                    "Migrate the account key",
+                    "account key migration revokes all existing keys and sessions; back up both account keys and repeat with --yes",
+                )
+                .row("New key", Some(new_seed_file.display().to_string()))
+                .said("account key migration revokes all existing keys and sessions")
+                .effect("back up both account keys first")
+                .refusal());
             }
             let old_seed = load_account_seed(cli)?;
             let old_identity = keys::authentication_identity(&old_seed)?;
@@ -8672,21 +8928,42 @@ async fn execute_instance(
         InstanceCommand::Reinstall(args) => {
             if !args.yes {
                 // An older instance's reinstall keeps a backup of it first
-                // (item 267), which the refusal names with its most and its
-                // lock: the instance and the prices are read, nothing is
-                // sent.
-                let instance_id =
-                    resolve_instance(api, &args.instance_id, InstanceUse::Change).await?;
-                let instance: Option<InstanceView> =
-                    api.read(&GetInstance { instance_id }, "").await.ok();
+                // (item 267), which the preview names with its most and its
+                // lock: the instance, the image and the prices are read,
+                // nothing is sent.
+                let (instance_id, instance) = preview_instance(api, &args.instance_id).await;
                 let forced = forced_backup_of(api, instance.as_ref(), None).await;
-                bail!(
-                    "{}",
-                    unconfirmed(
-                        "reinstall destroys the current root filesystem and starts the instance if it is stopped",
-                        forced.as_deref(),
-                    )
+                let image = image_preview_name(api, &args.image).await;
+                let mut keys = Vec::new();
+                if !args.ssh_keys.is_empty() {
+                    keys.push(format!("{} on the command line", args.ssh_keys.len()));
+                }
+                keys.extend(
+                    args.ssh_key_files
+                        .iter()
+                        .map(|file| file.display().to_string()),
                 );
+                return Err(Preview::new(
+                    instance_preview_title(
+                        "Reinstall",
+                        &args.instance_id,
+                        instance_id,
+                        instance.as_ref(),
+                    ),
+                    unconfirmed(REINSTALL_SAID, forced.as_deref()),
+                )
+                .row("Instance", instance_preview_row(instance.as_ref()))
+                .row("Image", image_preview_row(instance.as_ref(), Some(&image)))
+                .row("SSH keys", Some(keys.join(", ")))
+                .row(
+                    "Cloud-init",
+                    args.cloud_init_file
+                        .as_ref()
+                        .map(|file| file.display().to_string()),
+                )
+                .said(REINSTALL_SAID)
+                .effect(forced.as_deref().unwrap_or_default())
+                .refusal());
             }
             let instance_id = resolve_instance(api, &args.instance_id, InstanceUse::Change).await?;
             let ssh_public_keys = load_ssh_keys(&args.ssh_keys, &args.ssh_key_files)?;
@@ -8800,7 +9077,15 @@ async fn execute_instance(
                 message,
             })?;
             if !args.yes {
-                bail!("{}", update_confirmation());
+                // Nothing is read: an update is confirmed without reading
+                // the instance's settings or secrets.
+                let typed = instance_reference_text(&args.instance_id);
+                return Err(
+                    Preview::new(format!("Update {typed}"), update_confirmation())
+                        .row("Tag", args.tag.clone())
+                        .said(update_confirmation())
+                        .refusal(),
+                );
             }
             let instance_id = resolve_instance(api, &args.instance_id, InstanceUse::Change).await?;
             let accepted: JobAccepted = api
@@ -8827,14 +9112,34 @@ async fn execute_instance(
             // private key given by mistake is refused before anything is
             // sent.
             let request = redeploy_request(args)?;
-            let instance_id = resolve_instance(api, &args.instance_id, InstanceUse::Change).await?;
-            // Only for the words: an instance that cannot be read here is
-            // still redeployed, and the backend refuses what it must.
-            let instance: Option<InstanceView> =
-                api.read(&GetInstance { instance_id }, "").await.ok();
             if !args.yes {
-                bail!("{}", redeploy_confirmation(&request, instance.as_ref()));
+                let (instance_id, instance) = preview_instance(api, &args.instance_id).await;
+                let sentence = redeploy_confirmation(&request, instance.as_ref());
+                let becomes = request
+                    .image
+                    .clone()
+                    .or_else(|| request.stock_image.clone());
+                return Err(Preview::new(
+                    instance_preview_title(
+                        "Redeploy",
+                        &args.instance_id,
+                        instance_id,
+                        instance.as_ref(),
+                    ),
+                    sentence.clone(),
+                )
+                .row("Instance", instance_preview_row(instance.as_ref()))
+                .row(
+                    "Image",
+                    image_preview_row(instance.as_ref(), becomes.as_deref()),
+                )
+                .said(&sentence)
+                .refusal());
             }
+            let instance_id = resolve_instance(api, &args.instance_id, InstanceUse::Change).await?;
+            // Read as before the command had a preview, which now takes
+            // the words; the backend refuses what it must.
+            let _: Option<InstanceView> = api.read(&GetInstance { instance_id }, "").await.ok();
             if args.spec.stock_image.is_some() {
                 require_stock_image_keys(api, &request.ssh_public_keys).await?;
             }
@@ -8869,11 +9174,17 @@ async fn execute_instance(
                 quote_upgrade(api, instance_id, &args.offering).await;
             }
             if !args.yes {
-                bail!(
-                    "an upgrade shuts the instance down and starts it again.\nTo upgrade: ghost instance upgrade {} --offering {} --yes",
-                    escape_control(&instance_reference_text(&args.instance_id)),
-                    escape_control(&args.offering)
-                );
+                return Err(Preview::new(
+                    instance_preview_title("Upgrade", &args.instance_id, Some(instance_id), None),
+                    format!(
+                        "an upgrade shuts the instance down and starts it again.\nTo upgrade: ghost instance upgrade {} --offering {} --yes",
+                        escape_control(&instance_reference_text(&args.instance_id)),
+                        escape_control(&args.offering)
+                    ),
+                )
+                .row("Offering", Some(args.offering.clone()))
+                .effect("an upgrade shuts the instance down and starts it again")
+                .refusal());
             }
             let accepted: JobAccepted = api
                 .write_retryable(
@@ -9025,13 +9336,13 @@ async fn execute_instance(
                 .await?
             };
             if !args.yes {
-                bail!(
-                    "{}\nTo change: ghost instance gateway {}{}{} --yes",
-                    if cloud || args.tier == Some(GatewayTierArg::DedicatedIp) {
-                        cloud_change_warning(charge)
-                    } else {
-                        gateway_change_warning(charge)
-                    },
+                let warning = if cloud || args.tier == Some(GatewayTierArg::DedicatedIp) {
+                    cloud_change_warning(charge)
+                } else {
+                    gateway_change_warning(charge)
+                };
+                let sentence = format!(
+                    "{warning}\nTo change: ghost instance gateway {}{}{} --yes",
                     escape_control(&instance_reference_text(&args.instance_id)),
                     args.tier
                         .map_or_else(String::new, |tier| format!(" --tier {}", tier.word())),
@@ -9042,6 +9353,19 @@ async fn execute_instance(
                             escape_control(location)
                         ))
                 );
+                return Err(Preview::new(
+                    instance_preview_title(
+                        "Change the gateway of",
+                        &args.instance_id,
+                        Some(instance_id),
+                        None,
+                    ),
+                    sentence,
+                )
+                .row("Gateway", args.tier.map(|tier| tier.word().to_owned()))
+                .row("Location", args.location.clone())
+                .effect(&warning)
+                .refusal());
             }
             let accepted: JobAccepted = api
                 .write_retryable(
@@ -9072,12 +9396,24 @@ async fn execute_instance(
                 .await?
             };
             if !args.yes {
-                bail!(
-                    "{}\nTo move: ghost instance gateway-location {} {} --yes",
-                    gateway_change_warning(charge),
+                let warning = gateway_change_warning(charge);
+                let sentence = format!(
+                    "{warning}\nTo move: ghost instance gateway-location {} {} --yes",
                     escape_control(&instance_reference_text(&args.instance_id)),
                     escape_control(&args.location)
                 );
+                return Err(Preview::new(
+                    instance_preview_title(
+                        "Move the gateway of",
+                        &args.instance_id,
+                        Some(instance_id),
+                        None,
+                    ),
+                    sentence,
+                )
+                .row("Location", Some(args.location.clone()))
+                .effect(&warning)
+                .refusal());
             }
             let accepted: JobAccepted = api
                 .write_retryable(
@@ -9092,7 +9428,48 @@ async fn execute_instance(
         }
         InstanceCommand::Delete(args) => {
             if !args.yes {
-                bail!("instance deletion is irreversible; repeat with --yes");
+                let (instance_id, instance) = preview_instance(api, &args.instance_id).await;
+                let backups: Option<Vec<BackupView>> = match instance_id {
+                    Some(instance_id) => api
+                        .read(&ListInstanceBackups { instance_id }, "")
+                        .await
+                        .ok(),
+                    None => None,
+                };
+                let kept = backups.as_deref().map_or(0, kept_backups_count);
+                return Err(Preview::new(
+                    instance_preview_title(
+                        "Delete",
+                        &args.instance_id,
+                        instance_id,
+                        instance.as_ref(),
+                    ),
+                    "instance deletion is irreversible; repeat with --yes",
+                )
+                .row("Instance", instance_preview_row(instance.as_ref()))
+                .row(
+                    "Address",
+                    instance
+                        .as_ref()
+                        .and_then(|instance| instance.public_ipv4.clone()),
+                )
+                .row(
+                    "Waits",
+                    instance
+                        .as_ref()
+                        .and_then(|instance| instance.deletion_safety)
+                        .map(|safety| format!("{} minutes", safety.delete_delay_minutes)),
+                )
+                .row(
+                    "Backups",
+                    (kept > 0).then(|| {
+                        format!(
+                            "{kept} kept after it is deleted and billed for storage until deleted"
+                        )
+                    }),
+                )
+                .said("instance deletion is irreversible")
+                .refusal());
             }
             let instance_id = resolve_instance(api, &args.instance_id, InstanceUse::Change).await?;
             // Only a note: a backup list that cannot be read never stops the
@@ -9204,6 +9581,10 @@ async fn forced_backup_of(
     forced_backup_line(instance, pricing.as_ref(), restored, Utc::now())
 }
 
+/// What a reinstall does, as its preview says it.
+const REINSTALL_SAID: &str =
+    "reinstall destroys the current root filesystem and starts the instance if it is stopped";
+
 /// The refusal of a reinstall or restore without --yes: what it does, and
 /// the backup it keeps first ([`forced_backup_line`]) when it keeps one.
 fn unconfirmed(what: &str, forced: Option<&str>) -> String {
@@ -9211,6 +9592,129 @@ fn unconfirmed(what: &str, forced: Option<&str>) -> String {
         Some(line) => format!("{what}. {}; repeat with --yes", line.trim_end_matches('.')),
         None => format!("{what}; repeat with --yes"),
     }
+}
+
+/// The instance a preview is of, read without a request that writes: its
+/// ID and view, each None where it could not be read.
+async fn preview_instance(
+    api: &ApiClient,
+    reference: &InstanceReference,
+) -> (Option<Uuid>, Option<InstanceView>) {
+    let Ok(instance_id) = resolve_instance(api, reference, InstanceUse::Change).await else {
+        return (None, None);
+    };
+    let instance = api.read(&GetInstance { instance_id }, "").await.ok();
+    (Some(instance_id), instance)
+}
+
+/// A preview's title: the action, the instance by name and ID as far as
+/// they are known, else as typed.
+fn instance_preview_title(
+    verb: &str,
+    reference: &InstanceReference,
+    instance_id: Option<Uuid>,
+    instance: Option<&InstanceView>,
+) -> String {
+    let typed = instance_reference_text(reference);
+    let name = instance.map_or(typed, |instance| instance.display_name().to_owned());
+    match instance_id {
+        Some(id) if id.to_string() != name => format!("{verb} {name} ({id})"),
+        _ => format!("{verb} {name}"),
+    }
+}
+
+/// The instance row of a preview: `running, 2 vCPU, 4 GiB RAM, 20 GiB
+/// disk, Singapore`.
+fn instance_preview_row(instance: Option<&InstanceView>) -> Option<String> {
+    let instance = instance?;
+    let mut text = format!(
+        "{}, {}",
+        instance_state_words(instance.state),
+        size_text(
+            instance.vcpu_count,
+            instance.memory_bytes,
+            instance.root_disk_bytes
+        )
+    );
+    let place = if instance.location_name.is_empty() {
+        &instance.location
+    } else {
+        &instance.location_name
+    };
+    if !place.is_empty() {
+        text.push_str(", ");
+        text.push_str(place);
+    }
+    Some(text)
+}
+
+/// The image row of a preview: the image the root disk holds, and the one
+/// it becomes where there is one.
+fn image_preview_row(instance: Option<&InstanceView>, becomes: Option<&str>) -> Option<String> {
+    let now = instance
+        .and_then(|instance| instance.image.as_ref())
+        .map(|image| image.display_name.clone());
+    match (now, becomes) {
+        (Some(now), Some(becomes)) if now != becomes => Some(format!("{now}  →  {becomes}")),
+        (Some(now), _) => Some(now),
+        (None, Some(becomes)) => Some(becomes.to_owned()),
+        (None, None) => None,
+    }
+}
+
+/// The name of the catalog image `reference` (a slug or an ID) is, where
+/// the catalog can be read and has it; else the reference as typed.
+async fn image_preview_name(api: &ApiClient, reference: &str) -> String {
+    let images: Option<Vec<ImageView>> = api.read(&ListImages, "").await.ok();
+    images
+        .and_then(|images| {
+            images.into_iter().find(|image| {
+                image.slug.eq_ignore_ascii_case(reference)
+                    || image.image_id.to_string() == reference
+            })
+        })
+        .map_or_else(|| reference.to_owned(), |image| image.display_name)
+}
+
+/// What deleting a backup does, as its preview says it.
+const BACKUP_DELETE_SAID: &str = "backup deletion is irreversible";
+
+/// A backup as a preview names it: `ID, hosted, 12 GiB, taken 2026-11-01`.
+fn backup_preview_text(backup: &BackupView) -> String {
+    let place = match backup.destination {
+        BackupDestinationKind::Local => "local",
+        BackupDestinationKind::GigahostS3 => "hosted",
+        BackupDestinationKind::Unknown => "unknown destination",
+    };
+    let size = backup
+        .size_bytes
+        .map_or_else(|| "size not known yet".to_owned(), pretty::binary_size);
+    format!(
+        "{}, {place}, {size}, taken {}",
+        backup.backup_id,
+        backup
+            .created_at
+            .with_timezone(&chrono::Local)
+            .format("%Y-%m-%d %H:%M")
+    )
+}
+
+/// The preview of `verb` on a host: the host read for its name, status,
+/// location and rentals, none of them where it cannot be read.
+async fn host_preview(api: &ApiClient, verb: &str, host_id: Uuid, sentence: &str) -> Preview {
+    let detail: Option<ProviderHostDetailView> =
+        api.read(&GetProviderHost { host_id }, "").await.ok();
+    let host = detail.as_ref().map(|detail| &detail.host);
+    Preview::new(format!("{verb} host {host_id}"), sentence)
+        .row("Host", host.map(|host| host.label.clone()))
+        .row(
+            "Status",
+            host.map(|host| format!("{}, {}", host.status, host.location)),
+        )
+        .row(
+            "Rentals",
+            host.map(|host| host.active_instance_count.to_string()),
+        )
 }
 
 /// A time in this machine's zone: the time of day alone on today's date.
@@ -9537,7 +10041,26 @@ async fn execute_backup(cli: &Cli, api: &ApiClient, command: &BackupCommand) -> 
                 carry_rule_ids(&mut request, &current);
                 let deletions = schedule_deletions(&request, &current);
                 if !deletions.is_empty() && !args.yes {
-                    bail!("{}", schedule_deletion_refusal(&deletions));
+                    let mut preview = Preview::new(
+                        format!("Set the backup rules of instance {id}"),
+                        schedule_deletion_refusal(&deletions),
+                    );
+                    for deletion in &deletions {
+                        let deleted = deletion.deleted;
+                        preview.rows.push((
+                            "Rule",
+                            format!(
+                                "{} lowers the keep of the {} {} rule from {} to {}, which deletes its {deleted} oldest backup{}",
+                                deletion.number,
+                                schedule_frequency_word(deletion.live.frequency),
+                                schedule_destination_word(deletion.live.destination),
+                                deletion.live.keep,
+                                deletion.keep,
+                                if deleted == 1 { "" } else { "s" }
+                            ),
+                        ));
+                    }
+                    return Err(preview.effect("backup deletion is irreversible").refusal());
                 }
                 let schedule: BackupScheduleView = api
                     .write_retryable(
@@ -9565,7 +10088,48 @@ async fn execute_backup(cli: &Cli, api: &ApiClient, command: &BackupCommand) -> 
         },
         BackupCommand::Delete(args) => {
             if !args.yes {
-                bail!("backup deletion is irreversible; repeat with --yes");
+                let backup = named_backup(api, args.first_id, args.legacy_backup_id)
+                    .await
+                    .ok();
+                let instance = match &backup {
+                    Some(backup) => api
+                        .read(
+                            &GetInstance {
+                                instance_id: backup.instance_id,
+                            },
+                            "",
+                        )
+                        .await
+                        .ok(),
+                    None => None,
+                };
+                let backup_id = backup
+                    .as_ref()
+                    .map_or(args.legacy_backup_id.unwrap_or(args.first_id), |backup| {
+                        backup.backup_id
+                    });
+                return Err(Preview::new(
+                    format!("Delete backup {backup_id}"),
+                    BACKUP_DELETE_SAID.to_owned() + "; repeat with --yes",
+                )
+                .row("Backup", backup.as_ref().map(backup_preview_text))
+                .row(
+                    "Instance",
+                    instance.as_ref().map(|instance| {
+                        format!("{} ({})", instance.display_name(), instance.instance_id)
+                    }),
+                )
+                .row(
+                    "Storage",
+                    backup.as_ref().map(|backup| {
+                        format!(
+                            "{}/GiB-month",
+                            pretty::exact_dollars(backup.storage_charge_microusd_per_gib_month)
+                        )
+                    }),
+                )
+                .said(BACKUP_DELETE_SAID)
+                .refusal());
             }
             let backup = named_backup(api, args.first_id, args.legacy_backup_id).await?;
             let accepted: JobAccepted = api
@@ -9842,13 +10406,28 @@ async fn restore_backup(cli: &Cli, api: &ApiClient, args: &RestoreBackupArgs) ->
     let instance: Option<InstanceView> = api.read(&GetInstance { instance_id }, "").await.ok();
     let forced = forced_backup_of(api, instance.as_ref(), Some(backup.created_at)).await;
     if !args.yes {
-        bail!(
-            "{}",
+        let charge = backup.size_bytes.and_then(|size| {
+            backup_byte_charge(size, backup.restore_charge_microusd_per_gib)
+                .map(|(_, charge)| pretty::dollars(charge))
+        });
+        return Err(Preview::new(
+            instance_preview_title(
+                "Restore",
+                &InstanceReference::Id(instance_id),
+                Some(instance_id),
+                instance.as_ref(),
+            ),
             unconfirmed(
                 "restore replaces the current root filesystem",
-                forced.as_deref()
-            )
-        );
+                forced.as_deref(),
+            ),
+        )
+        .row("Instance", instance_preview_row(instance.as_ref()))
+        .row("Backup", Some(backup_preview_text(&backup)))
+        .row("Charge", charge)
+        .said("restore replaces the current root filesystem")
+        .effect(forced.as_deref().unwrap_or_default())
+        .refusal());
     }
     if let Some(line) = &forced {
         notice(line);
@@ -10047,18 +10626,9 @@ fn reinstall_start_note(instance: &InstanceView) -> Option<String> {
 /// What `instance delete` says about the instance's backups: they outlive it
 /// and are billed for storage until they are deleted. None when it has none.
 fn kept_backups_note(backups: &[BackupView]) -> Option<String> {
-    use ghostrack_client_api::website::BackupState;
     let kept = backups
         .iter()
-        .filter(|backup| {
-            !matches!(
-                backup.status,
-                BackupState::Deleting
-                    | BackupState::Deleted
-                    | BackupState::Failed
-                    | BackupState::Lost
-            )
-        })
+        .filter(|backup| backup_is_kept(backup))
         .collect::<Vec<_>>();
     let first = kept.first()?;
     let lines = kept
@@ -13808,6 +14378,14 @@ impl From<BackupDestinationArg> for BackupDestinationKind {
 
 #[cfg(test)]
 mod tests {
+    /// Whether the last line of a preview is the command to repeat:
+    /// `To go ahead:  … --yes`.
+    fn ends_with_go_ahead(text: &str) -> bool {
+        text.lines()
+            .last()
+            .is_some_and(|line| line.starts_with("To go ahead:  ") && line.ends_with(" --yes"))
+    }
+
     use super::*;
 
     /// `ghost backup schedule set` reads the spec's example and a rule's
@@ -20434,8 +21012,10 @@ mod tests {
             ),
             (202, accepted.to_string()),
             // Without --yes the instance is read, for the backup an older
-            // one keeps first (item 267); this one is new.
+            // one keeps first (item 267); this one is new. The image is
+            // looked up by its ID in the catalog.
             (200, instance("stopped", "stopped").to_string()),
+            (200, "[]".to_owned()),
         ])
         .await;
         let (id, image) = (instance_id.to_string(), Uuid::now_v7().to_string());
@@ -20449,16 +21029,20 @@ mod tests {
             let result = execute(&reinstall(&["--yes"])).await.unwrap();
             assert_eq!(result["job_id"], job_id.to_string());
         }
-        let refused = execute(&reinstall(&[])).await.unwrap_err();
-        assert_eq!(
-            refused.to_string(),
-            "reinstall destroys the current root filesystem and starts the instance if it is stopped; repeat with --yes"
+        let refused = execute(&reinstall(&[])).await.unwrap_err().to_string();
+        assert!(
+            refused.starts_with(&format!("Reinstall vm ({id})\n"))
+                && refused.contains(
+                    "Reinstall destroys the current root filesystem and starts the instance if it is stopped."
+                )
+                && ends_with_go_ahead(&refused),
+            "{refused}"
         );
         let read = format!("GET /v1/instances/{id}");
         let post = format!("POST /api/mut/v1/instances/{id}/reinstall");
         assert_eq!(
             request_lines(&received),
-            [&*read, &post, &read, &post, &read]
+            [&*read, &post, &read, &post, &read, "GET /v1/catalog/images"]
         );
     }
 
@@ -20491,6 +21075,7 @@ mod tests {
         let (url, received) = canned_server(vec![
             (200, instance.to_string()),
             (200, pricing.to_string()),
+            (200, "[]".to_owned()),
         ])
         .await;
         let (id, image) = (instance_id.to_string(), Uuid::now_v7().to_string());
@@ -20505,19 +21090,232 @@ mod tests {
         let until = (Utc::now() + chrono::Duration::days(7))
             .with_timezone(&chrono::Local)
             .format("%Y-%m-%d");
-        assert_eq!(
-            refused,
-            format!(
-                "reinstall destroys the current root filesystem and starts the instance if it is stopped. Keeps a backup first: up to $0.80, locked until {until}; repeat with --yes"
-            )
+        assert!(
+            refused.contains(&format!(
+                "Reinstall destroys the current root filesystem and starts the instance if it is stopped. Keeps a backup first: up to $0.80, locked until {until}."
+            )) && ends_with_go_ahead(&refused),
+            "{refused}"
         );
         assert_eq!(
             request_lines(&received),
             [
                 format!("GET /v1/instances/{id}"),
                 "GET /v1/catalog/backup-pricing".to_owned(),
+                "GET /v1/catalog/images".to_owned(),
             ]
         );
+    }
+
+    /// An argument a shell would split or expand is quoted in the command
+    /// to repeat, and the program is its file name.
+    #[test]
+    fn the_command_to_repeat_quotes_what_a_shell_would_change() {
+        let line = go_ahead_command(
+            [
+                "/usr/local/bin/ghost",
+                "instance",
+                "reinstall",
+                "web-1",
+                "--ssh-key",
+                "ssh-ed25519 AAA it's",
+                "",
+                "a$b",
+            ]
+            .map(str::to_owned),
+        );
+        assert_eq!(
+            line,
+            "ghost instance reinstall web-1 --ssh-key 'ssh-ed25519 AAA it'\\''s' '' 'a$b' --yes"
+        );
+        assert_eq!(go_ahead_command(Vec::new()), "ghost --yes");
+        for plain in [
+            "a-b_c.d",
+            "x:y/z@1%+=,",
+            "01a1f511-3f73-7cc3-be9a-8f3630230b32",
+        ] {
+            assert_eq!(shell_word(plain), plain);
+        }
+    }
+
+    /// A preview: the title, the rows with their labels aligned, a blank
+    /// line, the sentences, and the command to repeat; a row without a value
+    /// is left out.
+    #[test]
+    fn a_preview_lines_up_its_rows_and_ends_with_the_command() {
+        let preview = Preview::new("Delete web-1 (id)", "sentence; repeat with --yes")
+            .row("Instance", Some("running".to_owned()))
+            .row("Address", None)
+            .row("Backups", Some("2 kept".to_owned()))
+            .said("instance deletion is irreversible; the root disk is lost; repeat with --yes");
+        assert_eq!(
+            preview.text(["ghost", "instance", "delete", "web-1"].map(str::to_owned)),
+            "Delete web-1 (id)\n  Instance  running\n  Backups   2 kept\n\nInstance deletion is irreversible. The root disk is lost.\nTo go ahead:  ghost instance delete web-1 --yes"
+        );
+        let bare = Preview::new("", "x").effect("a question?");
+        assert_eq!(
+            bare.text(["ghost".to_owned()]),
+            "A question?\nTo go ahead:  ghost --yes"
+        );
+    }
+
+    /// Without --yes a delete shows the instance, its address and the
+    /// backups it leaves, from reads alone; with its reads failing it still
+    /// shows the title and what it does. `--json` has the code
+    /// `confirmation_required`, `--compact` the old sentence.
+    #[tokio::test]
+    async fn an_unconfirmed_delete_shows_what_it_would_do_and_sends_nothing() {
+        let directory = tempfile::tempdir().unwrap();
+        let seed = directory.path().join("account.seed");
+        keys::generate_seed(&seed).unwrap();
+        let (instance_id, backup_id) = (Uuid::now_v7(), Uuid::now_v7());
+        let instance = json!({"instance_id": instance_id, "offering_id": "o", "hostname": "web-1",
+            "root_disk_bytes": 20_u64 << 30, "vcpu_count": 2, "memory_bytes": 4_u64 << 30,
+            "location_name": "Singapore", "public_ipv4": "203.0.113.9",
+            "state": "running", "desired_power_state": "running",
+            "holds_capacity": true, "network_microusd_per_tib": 0, "created_at": Utc::now(),
+            "balance_reservation_microusd": 0});
+        let backup = json!([{"backup_id": backup_id, "instance_id": instance_id,
+            "destination": "local", "status": "available", "purpose": "regular",
+            "funding_lifecycle_id": null, "size_bytes": 1 << 30, "restore_pricing_revision": 1,
+            "restore_charge_microusd_per_gib": 10_000,
+            "storage_charge_microusd_per_gib_month": 20_000,
+            "recipient_key_fingerprint": null, "wrapped_data_key": null,
+            "created_at": Utc::now(), "completed_at": Utc::now()}]);
+        let (url, received) =
+            canned_server(vec![(200, instance.to_string()), (200, backup.to_string())]).await;
+        let id = instance_id.to_string();
+        let shown = execute(&account_command(&url, &seed, &["instance", "delete", &id]))
+            .await
+            .unwrap_err();
+        let text = shown.to_string();
+        assert!(
+            text.starts_with(&format!("Delete web-1 ({id})\n"))
+                && text
+                    .contains("  Instance  running, 2 vCPU, 4 GiB RAM, 20 GiB disk, Singapore\n")
+                && text.contains("  Address   203.0.113.9\n")
+                && text.contains("  Backups   1 kept after it is deleted")
+                && text.contains("\n\nInstance deletion is irreversible.\nTo go ahead:  ")
+                && ends_with_go_ahead(&text),
+            "{text}"
+        );
+        assert!(!render_error(&shown, Terminal::stderr()).starts_with("Error:"));
+        assert_eq!(
+            error_output(&shown)["error"]["code"],
+            "confirmation_required"
+        );
+        assert_eq!(
+            request_lines(&received),
+            [
+                format!("GET /v1/instances/{id}"),
+                format!("GET /v1/instances/{id}/backups")
+            ]
+        );
+
+        // Reads that fail leave the title and the sentences.
+        let (url, received) = canned_server(vec![
+            (
+                404,
+                json!({"code": "not_found", "message": "gone"}).to_string(),
+            ),
+            (
+                404,
+                json!({"code": "not_found", "message": "gone"}).to_string(),
+            ),
+        ])
+        .await;
+        let text = execute(&account_command(&url, &seed, &["instance", "delete", &id]))
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(
+            text.starts_with(&format!(
+                "Delete {id}\n\nInstance deletion is irreversible."
+            )),
+            "{text}"
+        );
+        assert!(
+            request_lines(&received)
+                .iter()
+                .all(|line| line.starts_with("GET ")),
+            "{:?}",
+            request_lines(&received)
+        );
+
+        // `--compact` keeps the one sentence and the code.
+        let (url, _) = canned_server(vec![]).await;
+        let compact = execute(&account_command(
+            &url,
+            &seed,
+            &["--compact", "instance", "delete", &id],
+        ))
+        .await
+        .unwrap_err();
+        assert_eq!(
+            compact.to_string(),
+            "instance deletion is irreversible; repeat with --yes"
+        );
+        assert_eq!(
+            error_output(&compact)["error"]["code"],
+            "confirmation_required"
+        );
+    }
+
+    /// The commands of the account and the provider that need --yes show
+    /// their title and sentences without a request that writes.
+    #[tokio::test]
+    async fn the_other_gates_show_a_preview_and_write_nothing() {
+        let directory = tempfile::tempdir().unwrap();
+        let seed = directory.path().join("account.seed");
+        keys::generate_seed(&seed).unwrap();
+        let host = Uuid::now_v7().to_string();
+        let new_seed = directory.path().join("new.seed").display().to_string();
+        let cases: [(Vec<&str>, &str, &str); 5] = [
+            (
+                vec!["account", "unlink-github"],
+                "Unlink GitHub\n",
+                "Unlinking ends the website sessions a GitHub login began and stops `Log in with GitHub` for this account.",
+            ),
+            (
+                vec!["account", "totp", "disable"],
+                "Turn two-factor codes off\n",
+                "Turning two-factor codes off lets a website login by password or GitHub in without a code.",
+            ),
+            (
+                vec!["account", "migrate-seed", "--new-seed-file", &new_seed],
+                "Migrate the account key\n",
+                "Account key migration revokes all existing keys and sessions. Back up both account keys first.",
+            ),
+            (
+                vec!["provider", "host", "delete", &host],
+                &format!("Delete host {host}\n"),
+                "Host deletion permanently retires its enrollment identity. Go ahead after all rentals are gone.",
+            ),
+            (
+                vec!["provider", "host", "emergency", &host, "--reason", "fire"],
+                &format!("Declare an emergency on host {host}\n"),
+                "An emergency declaration immediately abandons every active rental and revokes the host.",
+            ),
+        ];
+        for (arguments, title, sentences) in cases {
+            let (url, received) = canned_server(vec![(
+                404,
+                json!({"code": "not_found", "message": "gone"}).to_string(),
+            )])
+            .await;
+            let text = execute(&account_command(&url, &seed, &arguments))
+                .await
+                .unwrap_err()
+                .to_string();
+            assert!(text.starts_with(title), "{text}");
+            assert!(text.contains(sentences), "{text}");
+            assert!(ends_with_go_ahead(&text), "{text}");
+            assert!(
+                request_lines(&received)
+                    .iter()
+                    .all(|line| line.starts_with("GET ")),
+                "{arguments:?}"
+            );
+        }
     }
 
     /// `ghost instance get` says a limit or block in a line, a control byte
@@ -21119,7 +21917,14 @@ mod tests {
         let (url, received) = canned_server(vec![
             (200, backup.clone()),
             (202, accepted.to_string()),
+            (200, backup.clone()),
+            // Unconfirmed: the backup, then its instance, which cannot be
+            // read here: the preview still prints.
             (200, backup),
+            (
+                404,
+                json!({"code": "not_found", "message": "instance not found"}).to_string(),
+            ),
         ])
         .await;
         let backup = backup_id.to_string();
@@ -21151,9 +21956,12 @@ mod tests {
         ))
         .await
         .unwrap_err();
-        assert_eq!(
-            unconfirmed.to_string(),
-            "backup deletion is irreversible; repeat with --yes"
+        let unconfirmed = unconfirmed.to_string();
+        assert!(
+            unconfirmed.starts_with(&format!("Delete backup {backup_id}\n"))
+                && unconfirmed.contains("Backup deletion is irreversible.")
+                && ends_with_go_ahead(&unconfirmed),
+            "{unconfirmed}"
         );
         let lines = received
             .lock()
@@ -21172,6 +21980,8 @@ mod tests {
                 format!("GET /v1/backups/{backup_id}"),
                 format!("DELETE /api/mut/v1/instances/{instance_id}/backups/{backup_id}"),
                 format!("GET /v1/backups/{backup_id}"),
+                format!("GET /v1/backups/{backup_id}"),
+                format!("GET /v1/instances/{instance_id}"),
             ]
         );
     }
@@ -22421,7 +23231,7 @@ mod tests {
         .unwrap_err();
         let text = error.to_string();
         assert!(text.contains(". Its current link works until "), "{text}");
-        assert!(text.ends_with("Repeat with --yes to go ahead."), "{text}");
+        assert!(ends_with_go_ahead(&text), "{text}");
         assert_eq!(request_lines(&received).len(), 1);
     }
 
@@ -22628,7 +23438,7 @@ mod tests {
         .unwrap_err();
         let text = error.to_string();
         assert!(text.contains("costs $"), "{text}");
-        assert!(text.ends_with("Repeat with --yes to go ahead."), "{text}");
+        assert!(ends_with_go_ahead(&text), "{text}");
         assert_eq!(
             request_lines(&received),
             [format!("GET /v1/backups/{backup_id}")]
@@ -23271,9 +24081,12 @@ mod tests {
         ))
         .await
         .unwrap_err();
-        assert_eq!(
-            unconfirmed.to_string(),
-            "restore replaces the current root filesystem; repeat with --yes"
+        let unconfirmed = unconfirmed.to_string();
+        assert!(
+            unconfirmed.contains("Restore replaces the current root filesystem.")
+                && unconfirmed.contains(&format!("  Backup    {backup_id}, "))
+                && ends_with_go_ahead(&unconfirmed),
+            "{unconfirmed}"
         );
         assert_eq!(
             request_lines(&received),
@@ -26219,9 +27032,11 @@ mod tests {
         .await
         .unwrap_err();
         assert!(
-            error.to_string().ends_with(&format!(
-                "To upgrade: ghost instance upgrade {id} --offering of2_up --yes"
-            )),
+            error.to_string().starts_with(&format!("Upgrade {id}\n"))
+                && error
+                    .to_string()
+                    .contains("An upgrade shuts the instance down and starts it again.")
+                && ends_with_go_ahead(&error.to_string()),
             "{error}"
         );
         assert_eq!(
@@ -26339,14 +27154,15 @@ mod tests {
         .await
         .unwrap_err();
         assert!(
-            error.to_string().ends_with(&format!(
-                "To move: ghost instance gateway-location {id} de-fra --yes"
-            )),
+            error
+                .to_string()
+                .starts_with(&format!("Move the gateway of {id}\n"))
+                && ends_with_go_ahead(&error.to_string()),
             "{error}"
         );
         // The change costs the charge, named before anything is charged.
         assert!(
-            error.to_string().contains("the change costs $0.80"),
+            error.to_string().contains("The change costs $0.80"),
             "{error}"
         );
         assert_eq!(request_lines(&received).len(), 2);
@@ -26369,7 +27185,7 @@ mod tests {
             assert!(
                 error
                     .to_string()
-                    .contains("the change costs nothing: the gateway is being retired;")
+                    .contains("The change costs nothing: the gateway is being retired;")
                     && !error.to_string().contains("$0.80"),
                 "{error}"
             );
@@ -26396,10 +27212,8 @@ mod tests {
         .await
         .unwrap_err();
         assert!(
-            error.to_string().contains("the change costs $0.80")
-                && error.to_string().ends_with(&format!(
-                    "To change: ghost instance gateway {id} --tier shared-ip --location de-fra --yes"
-                )),
+            error.to_string().contains("The change costs $0.80")
+                && ends_with_go_ahead(&error.to_string()),
             "{error}"
         );
         assert_eq!(request_lines(&received).len(), 2);
@@ -26436,10 +27250,8 @@ mod tests {
         .await
         .unwrap_err();
         assert!(
-            error.to_string().contains("the change costs $0.80")
-                && error.to_string().ends_with(&format!(
-                    "To change: ghost instance gateway {id} --tier high-bandwidth --yes"
-                )),
+            error.to_string().contains("The change costs $0.80")
+                && ends_with_go_ahead(&error.to_string()),
             "{error}"
         );
         assert_eq!(request_lines(&received).len(), 2);
@@ -26595,11 +27407,9 @@ mod tests {
             ]
         );
         assert!(
-            error.to_string().starts_with(
-                "the change costs $0.50 (the instance creation charge) and $1.00 (the setup fee); the VM restarts with a new public address."
-            ) && error.to_string().ends_with(&format!(
-                "To change: ghost instance gateway {id} --tier dedicated-ip --yes"
-            )),
+            error.to_string().contains(
+                "The change costs $0.50 (the instance creation charge) and $1.00 (the setup fee); the VM restarts with a new public address."
+            ) && ends_with_go_ahead(&error.to_string()),
             "{error}"
         );
 
@@ -26806,11 +27616,11 @@ mod tests {
                 "{tier}"
             );
             assert!(
-                error.starts_with(
-                    "the change costs the instance creation charge, and for a Dedicated IP the setup fee; the VM restarts with a new public address."
-                ) && error.ends_with(&format!(
-                    "To change: ghost instance gateway {id} --tier {tier} --yes"
-                )),
+                error.starts_with(&format!("Change the gateway of {id}\n"))
+                    && error.contains(
+                        "The change costs the instance creation charge, and for a Dedicated IP the setup fee; the VM restarts with a new public address."
+                    )
+                    && ends_with_go_ahead(&error),
                 "{tier}: {error}"
             );
         }

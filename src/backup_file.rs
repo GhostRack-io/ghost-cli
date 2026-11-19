@@ -93,7 +93,7 @@ fn write_private(path: &Path, bytes: &[u8]) -> Result<()> {
 
 /// Ask whether to go ahead with `question`, which names the charge: yes
 /// with `--yes`; otherwise on a terminal the answer typed (`y` or `yes`),
-/// and off one a refusal that says to repeat the command with `--yes`.
+/// and off one a preview that gives the command to repeat with `--yes`.
 pub fn consent(
     question: &str,
     yes: bool,
@@ -105,7 +105,11 @@ pub fn consent(
         return Ok(true);
     }
     if !terminal {
-        bail!("{question} Repeat with --yes to go ahead.");
+        return Err(
+            crate::Preview::new("", format!("{question} Repeat with --yes to go ahead."))
+                .effect(question)
+                .refusal(),
+        );
     }
     write!(output, "{question} [y/N] ")?;
     output.flush()?;
@@ -653,9 +657,13 @@ pub(crate) mod tests {
         };
         assert_eq!(ask(true, false, ""), (Ok(true), String::new()));
         let (refused, asked) = ask(false, false, "y\n");
-        assert_eq!(
-            refused.unwrap_err(),
-            format!("{question} Repeat with --yes to go ahead.")
+        let refused = refused.unwrap_err();
+        assert!(
+            refused.starts_with(question)
+                && refused.lines().last().is_some_and(
+                    |line| line.starts_with("To go ahead:  ") && line.ends_with(" --yes")
+                ),
+            "{refused}"
         );
         assert_eq!(asked, "");
         assert_eq!(

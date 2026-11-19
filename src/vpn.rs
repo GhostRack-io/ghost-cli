@@ -701,7 +701,38 @@ pub(crate) async fn execute(
             idempotency,
         } => {
             if !*yes {
-                bail!("VPN connection deletion is irreversible; repeat with --yes");
+                let connection_id = resolve(api, connection, false).await.ok();
+                let view = match connection_id {
+                    Some(connection_id) => {
+                        api.read(&GetVpnConnection { connection_id }, "").await.ok()
+                    }
+                    None => None,
+                };
+                let view: Option<VpnConnectionView> = view;
+                let typed = crate::instance_reference_text(connection);
+                let name = view.as_ref().map_or(typed, |view| view.name.clone());
+                let title = match connection_id {
+                    Some(id) if id.to_string() != name => {
+                        format!("Delete VPN connection {name} ({id})")
+                    }
+                    _ => format!("Delete VPN connection {name}"),
+                };
+                return Err(crate::Preview::new(
+                    title,
+                    "VPN connection deletion is irreversible; repeat with --yes",
+                )
+                .row(
+                    "Connection",
+                    view.as_ref().map(|view| {
+                        if view.location_name.is_empty() {
+                            view.location.clone()
+                        } else {
+                            view.location_name.clone()
+                        }
+                    }),
+                )
+                .said("VPN connection deletion is irreversible")
+                .refusal());
             }
             let connection_id = resolve(api, connection, true).await?;
             let view = api
