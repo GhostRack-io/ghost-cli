@@ -1064,6 +1064,11 @@ pub struct OfferingFilters {
     /// `raid`. `false` or absent: no filter.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub redundant_disks: Option<bool>,
+    /// `true`: only offerings with a host the operator lists for trials,
+    /// whose charges a trial credit pays (backlog item 294). `false` or
+    /// absent: no filter.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub trial_host: Option<bool>,
 }
 
 /// Which memory a catalog list holds ([`OfferingFilters::memory`]).
