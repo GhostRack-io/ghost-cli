@@ -8459,8 +8459,12 @@ async fn approve_browser_operation(
         );
     }
     if !yes {
+        // An instance action's screen is read once: printed below unless
+        // `--compact`, and its rows go into the JSON for a program such as
+        // the desktop app, which shows them before it approves.
+        let review = instance_action_review(api, id, &intent.operation).await;
         if !cli.globals.compact {
-            quote_operation(api, id, &intent.operation, show_data).await?;
+            quote_operation(api, id, &intent.operation, review.as_ref(), show_data).await?;
         }
         // The quote goes to standard error before this notice is read only
         // where the result is shown for reading; JSON is read by a program,
@@ -8469,9 +8473,13 @@ async fn approve_browser_operation(
             &intent.operation,
             cli.output_format() == OutputFormat::Readable,
         );
-        return Ok(
-            json!({"request":intent,"approve_command":format!("ghost account approve {id} --yes"),"notice":notice}),
-        );
+        let mut shown = json!({"request":intent,"approve_command":format!("ghost account approve {id} --yes"),"notice":notice});
+        if let (Some(review), Some(object)) = (review, shown.as_object_mut()) {
+            for (key, value) in review.json_fields() {
+                object.insert(key.to_owned(), value);
+            }
+        }
+        return Ok(shown);
     }
     let mutation = MutationArgs {
         idempotency: IdempotencyArgs {
@@ -8743,6 +8751,7 @@ async fn quote_operation(
     api: &ApiClient,
     intent_id: Uuid,
     operation: &ghostrack_client_api::website::BrowserOperation,
+    review: Option<&InstanceActionReview>,
     show_data: bool,
 ) -> Result<()> {
     use ghostrack_client_api::website::BrowserOperation;
@@ -8825,6 +8834,73 @@ async fn quote_operation(
             notice("");
             quote_offering(api, offering_id, *gateway_tier, Some(&backup), None, None).await?;
         }
+        BrowserOperation::ReinstallInstance { request, .. } => {
+            if let Some(review) = review {
+                for line in review.preview.lines() {
+                    notice(&line);
+                }
+            }
+            if show_data {
+                show_request_data("Cloud-init", request.cloud_init.as_deref());
+                show_request_data("First-boot command", request.startup_command.as_deref());
+            }
+            notice("");
+        }
+        BrowserOperation::ResetInstanceAccess { .. } | BrowserOperation::RescueInstance { .. } => {
+            if let Some(review) = review {
+                for line in review.preview.lines() {
+                    notice(&line);
+                }
+            }
+            notice("");
+        }
+        BrowserOperation::Unknown => refuse!("invalid_request", "{UNKNOWN_OPERATION}"),
+    }
+    Ok(())
+}
+
+/// What an instance action's approval screen shows: its [`Preview`] (the
+/// title, the rows and what it does) and the instance's name where it
+/// could be read.
+struct InstanceActionReview {
+    preview: Preview,
+    instance_name: Option<String>,
+}
+
+impl InstanceActionReview {
+    /// The review as JSON beside the request: `review` holds the screen's
+    /// rows in order (a row of several lines carries an empty label on each
+    /// line after its first, as the screen prints it), `review_effects` the
+    /// sentences of what approving does, and `instance_name` the instance's
+    /// name, control characters escaped, where it could be read.
+    fn json_fields(&self) -> [(&'static str, Value); 3] {
+        [
+            (
+                "review",
+                Value::Array(
+                    self.preview
+                        .rows
+                        .iter()
+                        .map(|(label, value)| json!({"label": label, "value": value}))
+                        .collect(),
+                ),
+            ),
+            ("review_effects", json!(self.preview.effects)),
+            ("instance_name", json!(self.instance_name)),
+        ]
+    }
+}
+
+/// The approval screen of website request `intent_id` when `operation` is
+/// an instance action (a reinstall, an SSH access reset or a rescue boot),
+/// with what it names read now; None for any other kind.
+async fn instance_action_review(
+    api: &ApiClient,
+    intent_id: Uuid,
+    operation: &ghostrack_client_api::website::BrowserOperation,
+) -> Option<InstanceActionReview> {
+    use ghostrack_client_api::website::BrowserOperation;
+    let (instance, preview) = match operation {
         BrowserOperation::ReinstallInstance {
             instance_id,
             request,
@@ -8876,14 +8952,7 @@ async fn quote_operation(
             )
             .said(REINSTALL_SAID)
             .effect(forced.as_deref().unwrap_or_default());
-            for line in preview.lines() {
-                notice(&line);
-            }
-            if show_data {
-                show_request_data("Cloud-init", request.cloud_init.as_deref());
-                show_request_data("First-boot command", request.startup_command.as_deref());
-            }
-            notice("");
+            (instance, preview)
         }
         BrowserOperation::ResetInstanceAccess {
             instance_id,
@@ -8913,10 +8982,7 @@ async fn quote_operation(
                     .firewall
                     .then(|| "stopped for that boot only".to_owned()),
             );
-            for line in preview.lines() {
-                notice(&line);
-            }
-            notice("");
+            (instance, preview)
         }
         BrowserOperation::RescueInstance {
             instance_id,
@@ -8940,14 +9006,18 @@ async fn quote_operation(
             )
             .row("Instance", instance_preview_row(instance.as_ref()))
             .rows("SSH keys", keys);
-            for line in preview.lines() {
-                notice(&line);
-            }
-            notice("");
+            (instance, preview)
         }
-        BrowserOperation::Unknown => refuse!("invalid_request", "{UNKNOWN_OPERATION}"),
-    }
-    Ok(())
+        BrowserOperation::RestoreBackup { .. }
+        | BrowserOperation::CreateFromBackup { .. }
+        | BrowserOperation::Unknown => return None,
+    };
+    Some(InstanceActionReview {
+        preview,
+        instance_name: instance
+            .as_ref()
+            .map(|instance| escape_control(instance.display_name()).into_owned()),
+    })
 }
 
 /// The instance an instance action's website request names, for reading:
@@ -18729,10 +18799,83 @@ mod tests {
                 "GET /v1/account/ssh-keys".to_owned(),
             ]
         );
-        // For a program, the notice names what approving does itself.
-        let (json_shown, _, _) = approve(vec![(200, intent(None, None))], &["--compact"]).await;
-        let notice = json_shown.unwrap()["notice"].as_str().unwrap().to_owned();
+        // The screen's rows, in its order, by the functions that print it.
+        let rows = |shown: &Value| {
+            shown["review"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|row| {
+                    (
+                        row["label"].as_str().unwrap().to_owned(),
+                        row["value"].as_str().unwrap().to_owned(),
+                    )
+                })
+                .collect::<Vec<_>>()
+        };
+        let screen = rows(&shown);
+        assert_eq!(
+            screen
+                .iter()
+                .map(|(label, _)| label.as_str())
+                .collect::<Vec<_>>(),
+            [
+                "Instance",
+                "Image",
+                "Hostname",
+                "SSH keys",
+                "Cloud-init",
+                "First-boot command"
+            ],
+            "{shown}"
+        );
+        assert_eq!(screen[1].1, "Ubuntu 24.04 LTS");
+        assert_eq!(screen[2].1, "web-2");
+        // Saved keys none, the pasted key by its fingerprint.
+        assert_eq!(screen[3].1, pasted_key_line(&request.ssh_public_keys[0]));
+        assert!(
+            screen[3].1.starts_with("ssh-ed25519 SHA256:"),
+            "{}",
+            screen[3].1
+        );
+        assert!(screen[3].1.ends_with(" given"), "{}", screen[3].1);
+        assert_eq!(screen[4].1, data_fact(request.cloud_init.as_deref()));
+        assert_eq!(screen[5].1, "not set");
+        assert_eq!(shown["instance_name"], "web");
+        assert_eq!(
+            shown["review_effects"][0],
+            "Reinstall destroys the current root filesystem and starts the instance if it is stopped."
+        );
+
+        // For a program, the notice names what approving does itself, and
+        // the review carries the same rows.
+        let instance = serde_json::to_string(&json!({
+            "instance_id": instance_id, "offering_id": "o", "hostname": "vm", "name": "web",
+            "root_disk_bytes": 12_u64 << 30, "state": "running", "desired_power_state": "running",
+            "holds_capacity": true, "network_microusd_per_tib": 0, "created_at": Utc::now(),
+            "balance_reservation_microusd": 0,
+        }))
+        .unwrap();
+        let images = serde_json::to_string(&json!([{
+            "image_id": image_id, "slug": "ubuntu-24.04", "display_name": "Ubuntu 24.04 LTS",
+            "architecture": "x86_64", "minimum_disk_bytes": 1_u64 << 30,
+        }]))
+        .unwrap();
+        let (json_shown, _, _) = approve(
+            vec![
+                (200, intent(None, None)),
+                (200, instance),
+                (200, images),
+                (200, "[]".to_owned()),
+            ],
+            &["--compact"],
+        )
+        .await;
+        let json_shown = json_shown.unwrap();
+        let notice = json_shown["notice"].as_str().unwrap().to_owned();
         assert!(notice.contains("Inspect the request"), "{notice}");
+        assert_eq!(rows(&json_shown), screen);
+        assert_eq!(json_shown["review_effects"], shown["review_effects"]);
 
         // Approved: the stored request, under the request's key, then the
         // completion.
