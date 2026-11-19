@@ -5989,6 +5989,11 @@ pub struct ProviderBalanceView {
     /// The MMX address every payout goes to, or `None` until it is set with
     /// a signed CLI request.
     pub payout_address: Option<String>,
+    /// The MMX paid out by itself, this amount at a time, once the
+    /// available MMX reaches it, in atomic units; `None` while automatic
+    /// payouts are off, and from older backends.
+    #[serde(default)]
+    pub automatic_payout_mmx_atomic: Option<u64>,
 }
 
 /// A payout always goes to the provider's payout address; a request cannot
