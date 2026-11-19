@@ -492,14 +492,20 @@ struct OfferingPlacementFilters {
 
 #[derive(Subcommand)]
 enum AccountCommand {
-    /// Inspect and approve a hosted backup's restore requested on the
-    /// website, which only the account key can decrypt.
+    /// Inspect and approve a request made on the website that only the
+    /// account key may carry out: a hosted backup's restore, which only
+    /// the account key can decrypt, or an instance's reinstall, reset of
+    /// SSH access or rescue boot.
     Approve {
         /// Request ID, as the website shows it.
         intent_id: Uuid,
         /// Approve and run the request; without it the request is only shown.
         #[arg(long)]
         yes: bool,
+        /// Also print a reinstall's cloud-init user data and first-boot
+        /// command in full, which the request otherwise shows by size.
+        #[arg(long)]
+        show_data: bool,
     },
     /// Publish or update a review after paid usage with a provider.
     Review {
@@ -5884,6 +5890,14 @@ impl Preview {
 
     /// The preview as text for the command line `arguments`.
     fn text<A: AsRef<std::ffi::OsStr>>(&self, arguments: impl IntoIterator<Item = A>) -> String {
+        let mut lines = self.lines();
+        lines.push(format!("To go ahead:  {}", go_ahead_command(arguments)));
+        lines.join("\n")
+    }
+
+    /// The preview's lines without the command that goes ahead: its title,
+    /// its rows and what it does.
+    fn lines(&self) -> Vec<String> {
         let width = self.rows.iter().map(|(label, _)| label.len()).max();
         let mut lines = Vec::new();
         if !self.title.is_empty() {
@@ -5901,8 +5915,7 @@ impl Preview {
         if !self.effects.is_empty() {
             lines.push(self.effects.join(" "));
         }
-        lines.push(format!("To go ahead:  {}", go_ahead_command(arguments)));
-        lines.join("\n")
+        lines
     }
 
     /// The error a command without `--yes` returns: this preview for the
@@ -7921,9 +7934,11 @@ async fn execute_account(cli: &Cli, api: &ApiClient, command: &AccountCommand) -
             )
             .await
         }
-        AccountCommand::Approve { intent_id, yes } => {
-            approve_browser_operation(cli, api, *intent_id, *yes).await
-        }
+        AccountCommand::Approve {
+            intent_id,
+            yes,
+            show_data,
+        } => approve_browser_operation(cli, api, *intent_id, *yes, *show_data).await,
         AccountCommand::History(LedgerHistoryArgs {
             instance,
             kind,
@@ -8415,6 +8430,7 @@ async fn approve_browser_operation(
     api: &ApiClient,
     id: Uuid,
     yes: bool,
+    show_data: bool,
 ) -> Result<Value> {
     use ghostrack_client_api::website::{BrowserOperation, BrowserOperationView};
     let intent: BrowserOperationView = api.read(&GetOperationIntent { id }, "").await?;
@@ -8432,7 +8448,7 @@ async fn approve_browser_operation(
     }
     if !yes {
         if !cli.globals.compact {
-            quote_operation(api, id, &intent.operation).await?;
+            quote_operation(api, id, &intent.operation, show_data).await?;
         }
         // The quote goes to standard error before this notice is read only
         // where the result is shown for reading; JSON is read by a program,
@@ -8461,15 +8477,24 @@ async fn approve_browser_operation(
             status_url: format!("/v1/jobs/{job_id}"),
             delete_at: None,
         };
-        let (destination_instance_id, backup_id) = match &intent.operation {
+        let restore = match &intent.operation {
             BrowserOperation::RestoreBackup {
                 instance_id,
                 backup_id,
-            } => (*instance_id, *backup_id),
-            BrowserOperation::CreateFromBackup { backup_id, .. } => (job.resource_id, *backup_id),
+            } => Some((*instance_id, *backup_id)),
+            BrowserOperation::CreateFromBackup { backup_id, .. } => {
+                Some((job.resource_id, *backup_id))
+            }
+            // An instance action's job needs nothing more of the account
+            // key once it started: it is completed below.
+            BrowserOperation::ReinstallInstance { .. }
+            | BrowserOperation::ResetInstanceAccess { .. }
+            | BrowserOperation::RescueInstance { .. } => None,
             BrowserOperation::Unknown => refuse!("invalid_request", "{UNKNOWN_OPERATION}"),
         };
-        if !terminal(&job) {
+        if let Some((destination_instance_id, backup_id)) = restore
+            && !terminal(&job)
+        {
             let backup: BackupView = api.read(&GetBackup { backup_id }, "").await?;
             // If the CLI exited after rewrapping, the durable job already owns its key.
             if backup.destination == BackupDestinationKind::GigahostS3
@@ -8555,6 +8580,47 @@ async fn approve_browser_operation(
                 )
                 .await?
             }
+            // Exactly the request approved: the backend refuses another
+            // under this key (409 intent_mismatch).
+            BrowserOperation::ReinstallInstance {
+                instance_id,
+                request,
+            } => {
+                let accepted: JobAccepted = api
+                    .write_retryable(
+                        &ReinstallInstance { instance_id },
+                        &request,
+                        &mutation.key(),
+                    )
+                    .await?;
+                #[cfg(unix)]
+                ghostd::forget_instance(instance_id);
+                mutation_result(api, accepted, &mutation, !cli.globals.compact).await?
+            }
+            BrowserOperation::ResetInstanceAccess {
+                instance_id,
+                request,
+            } => {
+                let accepted: JobAccepted = api
+                    .write_retryable(
+                        &ResetInstanceAccess { instance_id },
+                        &request,
+                        &mutation.key(),
+                    )
+                    .await?;
+                mutation_result(api, accepted, &mutation, !cli.globals.compact).await?
+            }
+            BrowserOperation::RescueInstance {
+                instance_id,
+                request,
+            } => {
+                let accepted: JobAccepted = api
+                    .write_retryable(&RescueInstance { instance_id }, &request, &mutation.key())
+                    .await?;
+                #[cfg(unix)]
+                ghostd::forget_instance(instance_id);
+                mutation_result(api, accepted, &mutation, !cli.globals.compact).await?
+            }
             BrowserOperation::Unknown => refuse!("invalid_request", "{UNKNOWN_OPERATION}"),
         }
     };
@@ -8596,6 +8662,24 @@ fn approval_notice(
         }
         (BrowserOperation::CreateFromBackup { .. }, false) => {
             "Approving lets the host create this instance from the backup and charges the creation fee and the backup restore now, then the monthly price while it exists. Inspect the requested resources before approving."
+        }
+        (BrowserOperation::ReinstallInstance { .. }, true) => {
+            "Approving reinstalls the instance as shown above."
+        }
+        (BrowserOperation::ReinstallInstance { .. }, false) => {
+            "Approving reinstalls the instance, which destroys its root filesystem, and may keep a backup of an older instance first, which is charged. Inspect the request before approving."
+        }
+        (BrowserOperation::ResetInstanceAccess { .. }, true) => {
+            "Approving resets the instance's SSH access as shown above."
+        }
+        (BrowserOperation::ResetInstanceAccess { .. }, false) => {
+            "Approving installs the request's SSH keys for root at the instance's next boot, which it starts. Inspect the request before approving."
+        }
+        (BrowserOperation::RescueInstance { .. }, true) => {
+            "Approving boots the instance into rescue as shown above."
+        }
+        (BrowserOperation::RescueInstance { .. }, false) => {
+            "Approving boots the instance into the rescue system, where root logs in with the request's SSH keys. Inspect the request before approving."
         }
         (BrowserOperation::Unknown, _) => UNKNOWN_OPERATION,
     }
@@ -8647,6 +8731,7 @@ async fn quote_operation(
     api: &ApiClient,
     intent_id: Uuid,
     operation: &ghostrack_client_api::website::BrowserOperation,
+    show_data: bool,
 ) -> Result<()> {
     use ghostrack_client_api::website::BrowserOperation;
     let colors = Terminal::stderr().colors;
@@ -8728,9 +8813,209 @@ async fn quote_operation(
             notice("");
             quote_offering(api, offering_id, *gateway_tier, Some(&backup), None, None).await?;
         }
+        BrowserOperation::ReinstallInstance {
+            instance_id,
+            request,
+        } => {
+            let instance = approval_instance(api, *instance_id).await;
+            let images: Option<Vec<ImageView>> = api.read(&ListImages, "").await.ok();
+            let image = images
+                .as_deref()
+                .and_then(|images| {
+                    images
+                        .iter()
+                        .find(|image| image.image_id == request.image_id)
+                })
+                .map_or_else(
+                    || request.image_id.to_string(),
+                    |image| image.display_name.clone(),
+                );
+            let forced = forced_backup_of(api, instance.as_ref(), None).await;
+            let keys = approval_keys(
+                api,
+                request.ssh_key_ids.as_deref(),
+                &request.ssh_public_keys,
+            )
+            .await;
+            let preview = Preview::new(
+                approval_title(intent_id, "reinstall", *instance_id, instance.as_ref()),
+                String::new(),
+            )
+            .row("Instance", instance_preview_row(instance.as_ref()))
+            .row("Image", image_preview_row(instance.as_ref(), Some(&image)))
+            .row(
+                "Hostname",
+                Some(
+                    request
+                        .hostname
+                        .as_deref()
+                        .or_else(|| instance.as_ref().map(|instance| instance.hostname.as_str()))
+                        .map_or_else(
+                            || "unchanged".to_owned(),
+                            |name| escape_control(name).into_owned(),
+                        ),
+                ),
+            )
+            .row("SSH keys", Some(keys))
+            .row("Cloud-init", Some(data_size(request.cloud_init.as_deref())))
+            .row(
+                "First-boot command",
+                Some(data_size(request.startup_command.as_deref())),
+            )
+            .said(REINSTALL_SAID)
+            .effect(forced.as_deref().unwrap_or_default());
+            for line in preview.lines() {
+                notice(&line);
+            }
+            if show_data {
+                show_request_data("Cloud-init", request.cloud_init.as_deref());
+                show_request_data("First-boot command", request.startup_command.as_deref());
+            }
+            notice("");
+        }
+        BrowserOperation::ResetInstanceAccess {
+            instance_id,
+            request,
+        } => {
+            let instance = approval_instance(api, *instance_id).await;
+            let keys = approval_keys(
+                api,
+                request.ssh_key_ids.as_deref(),
+                &request.ssh_public_keys,
+            )
+            .await;
+            let preview = Preview::new(
+                approval_title(
+                    intent_id,
+                    "reset SSH access of",
+                    *instance_id,
+                    instance.as_ref(),
+                ),
+                String::new(),
+            )
+            .row("Instance", instance_preview_row(instance.as_ref()))
+            .row("SSH keys", Some(keys))
+            .row(
+                "Firewall",
+                request
+                    .firewall
+                    .then(|| "stopped for that boot only".to_owned()),
+            );
+            for line in preview.lines() {
+                notice(&line);
+            }
+            notice("");
+        }
+        BrowserOperation::RescueInstance {
+            instance_id,
+            request,
+        } => {
+            let instance = approval_instance(api, *instance_id).await;
+            let keys = approval_keys(
+                api,
+                request.ssh_key_ids.as_deref(),
+                &request.ssh_public_keys,
+            )
+            .await;
+            let preview = Preview::new(
+                approval_title(
+                    intent_id,
+                    "boot into rescue",
+                    *instance_id,
+                    instance.as_ref(),
+                ),
+                String::new(),
+            )
+            .row("Instance", instance_preview_row(instance.as_ref()))
+            .row("SSH keys", Some(keys));
+            for line in preview.lines() {
+                notice(&line);
+            }
+            notice("");
+        }
         BrowserOperation::Unknown => refuse!("invalid_request", "{UNKNOWN_OPERATION}"),
     }
     Ok(())
+}
+
+/// The instance an instance action's website request names, for reading:
+/// None where it cannot be read now, and the request shows its ID.
+async fn approval_instance(api: &ApiClient, instance_id: Uuid) -> Option<InstanceView> {
+    api.read(&GetInstance { instance_id }, "").await.ok()
+}
+
+/// The first line of an instance action's approval screen: the request,
+/// what it does and the instance by name and ID.
+fn approval_title(
+    intent_id: Uuid,
+    verb: &str,
+    instance_id: Uuid,
+    instance: Option<&InstanceView>,
+) -> String {
+    let name = instance.map_or_else(
+        || instance_id.to_string(),
+        |instance| escape_control(instance.display_name()).into_owned(),
+    );
+    if name == instance_id.to_string() {
+        format!("Website request {intent_id}: {verb} {name}")
+    } else {
+        format!("Website request {intent_id}: {verb} {name} ({instance_id})")
+    }
+}
+
+/// The SSH keys an instance action installs, as its approval screen shows
+/// them: the saved ones by label (every saved key when the request names
+/// none, `ids` absent), then the pasted ones by count. A saved key that
+/// cannot be read now is shown by its ID.
+async fn approval_keys(api: &ApiClient, ids: Option<&[Uuid]>, pasted: &[String]) -> String {
+    let saved: Vec<ghostrack_client_api::website::AccountSshKeyView> = api
+        .read(&ghostrack_client_api::api::ListAccountSshKeys, "")
+        .await
+        .unwrap_or_default();
+    let mut names: Vec<String> = match ids {
+        None => saved
+            .iter()
+            .map(|key| escape_control(&key.label).into_owned())
+            .collect(),
+        Some(ids) => ids
+            .iter()
+            .map(|id| {
+                saved.iter().find(|key| key.ssh_key_id == *id).map_or_else(
+                    || id.to_string(),
+                    |key| escape_control(&key.label).into_owned(),
+                )
+            })
+            .collect(),
+    };
+    match pasted.len() {
+        0 => {}
+        1 => names.push("1 pasted".to_owned()),
+        count => names.push(format!("{count} pasted")),
+    }
+    if names.is_empty() {
+        "none".to_owned()
+    } else {
+        names.join(", ")
+    }
+}
+
+/// A reinstall's cloud-init user data or first-boot command by its size,
+/// never its content: `not set`, or `1.2 KiB`.
+fn data_size(value: Option<&str>) -> String {
+    match value.filter(|value| !value.trim().is_empty()) {
+        Some(value) => pretty::binary_size(value.len() as u64),
+        None => "not set".to_owned(),
+    }
+}
+
+/// Print a reinstall's cloud-init user data or first-boot command in full
+/// (`--show-data`), under its label, when it is set.
+fn show_request_data(label: &str, value: Option<&str>) {
+    if let Some(value) = value.filter(|value| !value.trim().is_empty()) {
+        notice("");
+        notice(&format!("{label}:"));
+        notice(&escape_control_keeping_lines(value));
+    }
 }
 
 async fn execute_instance(
@@ -18282,6 +18567,201 @@ mod tests {
         assert_eq!(finished.unwrap()["job_id"], job_id.to_string());
         assert_eq!(received.len(), 3);
         assert!(received[2].0.starts_with("POST "), "{}", received[2].0);
+    }
+
+    /// An instance action's website request (item 296): shown without
+    /// `--yes` from the instance, the images and the saved keys, and
+    /// approved with it by sending exactly the stored request to the
+    /// action's route under the request's key, then completing it; a job
+    /// it started is completed, not sent again. Each kind reads as one this
+    /// release knows.
+    #[tokio::test]
+    async fn approving_an_instance_action_sends_the_stored_request() {
+        use ghostrack_client_api::website::{
+            BrowserOperation, BrowserOperationView, ReinstallInstanceRequest,
+        };
+
+        let directory = tempfile::tempdir().unwrap();
+        let seed = directory.path().join("account.seed");
+        keys::generate_seed(&seed).unwrap();
+        let seed = seed.to_str().unwrap().to_owned();
+        let id = Uuid::now_v7();
+        let instance_id = Uuid::now_v7();
+        let image_id = Uuid::now_v7();
+        let job_id = Uuid::now_v7();
+        let request = ReinstallInstanceRequest {
+            image_id,
+            ssh_public_keys: vec!["ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f given".to_owned()],
+            cloud_init: Some("#cloud-config\nruncmd: [true]\n".to_owned()),
+            hostname: Some("web-2".to_owned()),
+            startup_command: None,
+            ssh_key_ids: Some(Vec::new()),
+            accept_forced_backup: true,
+        };
+        let intent = |started_job_id, completed_job_id| {
+            serde_json::to_string(&BrowserOperationView {
+                intent_id: id,
+                operation: BrowserOperation::ReinstallInstance {
+                    instance_id,
+                    request: request.clone(),
+                },
+                expires_at: Utc::now() + chrono::Duration::minutes(10),
+                started_job_id,
+                completed_job_id,
+                refusal: None,
+            })
+            .unwrap()
+        };
+        let approve = async |responses: Vec<(u16, String)>, flags: &[&str]| {
+            let (url, received, heads) = canned_server_recording_heads(
+                responses
+                    .into_iter()
+                    .map(|(status, body)| (status, String::new(), body))
+                    .collect(),
+            )
+            .await;
+            let intent_id = id.to_string();
+            let mut arguments = vec!["ghost", "--api-url", &url, "--seed-file", &seed];
+            arguments.extend(["account", "approve", &intent_id]);
+            arguments.extend_from_slice(flags);
+            let result = execute(&Cli::try_parse_from(arguments).unwrap()).await;
+            let received = received.lock().unwrap().clone();
+            let heads = heads.lock().unwrap().clone();
+            (result, received, heads)
+        };
+        let line = |received: &[(String, Vec<u8>)], index: usize| {
+            received[index]
+                .0
+                .split_whitespace()
+                .take(2)
+                .collect::<Vec<_>>()
+                .join(" ")
+        };
+
+        // Shown: the request, the instance, the images and the saved keys.
+        let instance = serde_json::to_string(&json!({
+            "instance_id": instance_id, "offering_id": "o", "hostname": "vm", "name": "web",
+            "root_disk_bytes": 12_u64 << 30, "state": "running", "desired_power_state": "running",
+            "holds_capacity": true, "network_microusd_per_tib": 0, "created_at": Utc::now(),
+            "balance_reservation_microusd": 0,
+        }))
+        .unwrap();
+        let images = serde_json::to_string(&json!([{
+            "image_id": image_id, "slug": "ubuntu-24.04", "display_name": "Ubuntu 24.04 LTS",
+            "architecture": "x86_64", "minimum_disk_bytes": 1_u64 << 30,
+        }]))
+        .unwrap();
+        let (shown, received, _) = approve(
+            vec![
+                (200, intent(None, None)),
+                (200, instance),
+                (200, images),
+                (200, "[]".to_owned()),
+            ],
+            &["--show-data"],
+        )
+        .await;
+        let shown = shown.unwrap();
+        assert_eq!(
+            shown["approve_command"],
+            format!("ghost account approve {id} --yes")
+        );
+        assert!(
+            shown["notice"].as_str().unwrap().ends_with("shown above."),
+            "{shown}"
+        );
+        assert_eq!(
+            (1..received.len())
+                .map(|index| line(&received, index))
+                .collect::<Vec<_>>(),
+            [
+                format!("GET /v1/instances/{instance_id}"),
+                "GET /v1/catalog/images".to_owned(),
+                "GET /v1/account/ssh-keys".to_owned(),
+            ]
+        );
+        // For a program, the notice names what approving does itself.
+        let (json_shown, _, _) = approve(vec![(200, intent(None, None))], &["--compact"]).await;
+        let notice = json_shown.unwrap()["notice"].as_str().unwrap().to_owned();
+        assert!(notice.contains("Inspect the request"), "{notice}");
+
+        // Approved: the stored request, under the request's key, then the
+        // completion.
+        let accepted = serde_json::to_string(&JobAccepted {
+            job_id,
+            resource_id: instance_id,
+            status_url: format!("/v1/jobs/{job_id}"),
+            delete_at: None,
+        })
+        .unwrap();
+        let (approved, received, heads) = approve(
+            vec![
+                (200, intent(None, None)),
+                (202, accepted),
+                (200, intent(Some(job_id), Some(job_id))),
+            ],
+            &["--yes"],
+        )
+        .await;
+        assert_eq!(approved.unwrap()["job_id"], job_id.to_string());
+        assert_eq!(
+            line(&received, 1),
+            format!("POST /api/mut/v1/instances/{instance_id}/reinstall")
+        );
+        let sent: ReinstallInstanceRequest = serde_json::from_slice(&received[1].1).unwrap();
+        assert_eq!(sent, request);
+        assert!(
+            heads[1]
+                .to_ascii_lowercase()
+                .contains(&format!("idempotency-key: browser-intent-{id}")),
+            "{}",
+            heads[1]
+        );
+        assert_eq!(
+            line(&received, 2),
+            format!("POST /api/mut/v1/account/operation-intents/{id}/complete")
+        );
+
+        // Started already: completed with its job, nothing sent again.
+        let (resumed, received, _) = approve(
+            vec![
+                (200, intent(Some(job_id), None)),
+                (
+                    200,
+                    job_json(
+                        JobState::Running,
+                        &[("reinstall_instance", JobStepState::Running)],
+                        json!({}),
+                    ),
+                ),
+                (200, intent(Some(job_id), Some(job_id))),
+            ],
+            &["--yes"],
+        )
+        .await;
+        assert_eq!(resumed.unwrap()["job_id"], job_id.to_string());
+        assert_eq!(
+            line(&received, 2),
+            format!("POST /api/mut/v1/account/operation-intents/{id}/complete")
+        );
+    }
+
+    /// An instance action's screen shows a reinstall's data by size, and
+    /// the instance by name and ID.
+    #[test]
+    fn an_instance_action_s_screen_shows_data_by_size() {
+        assert_eq!(data_size(None), "not set");
+        assert_eq!(data_size(Some("  ")), "not set");
+        assert_eq!(
+            data_size(Some(&"a".repeat(2048))),
+            pretty::binary_size(2048)
+        );
+        let id = Uuid::nil();
+        let intent = Uuid::from_u128(1);
+        assert_eq!(
+            approval_title(intent, "reinstall", id, None),
+            format!("Website request {intent}: reinstall {id}")
+        );
     }
 
     /// Approving a website request to create an instance from a hosted
