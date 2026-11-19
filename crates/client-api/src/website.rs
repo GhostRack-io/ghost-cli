@@ -401,8 +401,10 @@ pub enum LedgerKind {
 
 /// What a website request asks the CLI to approve: the operations only the
 /// seed can carry out, a hosted backup's restore over its instance or into
-/// a new one, since only the seed's recovery key decrypts a hosted backup.
-/// A website session does everything else itself.
+/// a new one, since only the seed's recovery key decrypts a hosted backup,
+/// and the instance actions only an account key may sign (item 262):
+/// reinstall, reset access and rescue (item 296). A website session does
+/// everything else itself.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum BrowserOperation {
@@ -428,6 +430,21 @@ pub enum BrowserOperation {
         /// capacity; any host of the offering when absent.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         lan_mesh_id: Option<Uuid>,
+    },
+    /// Reinstall an instance with exactly this request (item 296).
+    ReinstallInstance {
+        instance_id: Uuid,
+        request: ReinstallInstanceRequest,
+    },
+    /// Reset an instance's SSH access with exactly this request (item 296).
+    ResetInstanceAccess {
+        instance_id: Uuid,
+        request: ResetInstanceAccessRequest,
+    },
+    /// Boot an instance into rescue with exactly this request (item 296).
+    RescueInstance {
+        instance_id: Uuid,
+        request: RescueInstanceRequest,
     },
     /// A variant of a newer release, which this one does not know.
     #[serde(other)]
@@ -457,6 +474,18 @@ pub enum BrowserOperationInput {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         lan_mesh_id: Option<Uuid>,
     },
+    ReinstallInstance {
+        instance_id: Uuid,
+        request: ReinstallInstanceRequest,
+    },
+    ResetInstanceAccess {
+        instance_id: Uuid,
+        request: ResetInstanceAccessRequest,
+    },
+    RescueInstance {
+        instance_id: Uuid,
+        request: RescueInstanceRequest,
+    },
 }
 
 impl From<BrowserOperationInput> for BrowserOperation {
@@ -485,6 +514,27 @@ impl From<BrowserOperationInput> for BrowserOperation {
                 name,
                 tags,
                 lan_mesh_id,
+            },
+            BrowserOperationInput::ReinstallInstance {
+                instance_id,
+                request,
+            } => Self::ReinstallInstance {
+                instance_id,
+                request,
+            },
+            BrowserOperationInput::ResetInstanceAccess {
+                instance_id,
+                request,
+            } => Self::ResetInstanceAccess {
+                instance_id,
+                request,
+            },
+            BrowserOperationInput::RescueInstance {
+                instance_id,
+                request,
+            } => Self::RescueInstance {
+                instance_id,
+                request,
             },
         }
     }
@@ -3899,7 +3949,7 @@ pub struct InstanceAddressChangeView {
     pub available: bool,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ReinstallInstanceRequest {
     pub image_id: Uuid,
@@ -3923,7 +3973,7 @@ pub struct ReinstallInstanceRequest {
 /// boot, which the reset starts, a one-time part appends the keys to root's `authorized_keys`, lets
 /// root in over SSH by key, applies the platform's network data again and, with `firewall`, stops
 /// the guest's firewall for that boot. A VM only; a stopped one is started.
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ResetInstanceAccessRequest {
     /// The account's saved keys to install, as
@@ -3942,7 +3992,7 @@ pub struct ResetInstanceAccessRequest {
 
 /// Boot an instance into the platform's rescue system (`RescueInstance`): root logs in over SSH
 /// with these keys, by key only. A VM only.
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct RescueInstanceRequest {
     /// The account's saved keys root logs in with, as
