@@ -88,24 +88,25 @@ use ghostrack_client_api::{
         BackupDestinationKind, BackupDownloadView, BackupPricingView, BackupScheduleFrequency,
         BackupScheduleRuleInput, BackupScheduleRuleView, BackupScheduleView, BackupSort,
         BackupStateFilter, BackupView, BillingAuthorization, ChangeGatewayRequest,
-        CloudIpAddressInput, CloudIpPoolScope, CloudIpPoolView, ContainerEnvVar,
-        ContainerImageView, ContainerLogView, CreateBackupRequest, CreateCloudIpPoolRequest,
-        CreateContainerRequest, CreateHostEnrollmentTokenRequest, CreateInstanceRequest,
-        CreateProviderPayoutRequest, CreateSupportTicketRequest, DeclareHostEmergencyRequest,
-        DepositLookupView, DiskChoice, DownloadBackupRequest, GatewayTier, GatewayTrafficView,
-        GithubUnlinked, HandOverCloudIpPoolRequest, HostAgentUpdateView, HostEnrollmentToken,
-        HostModeFilter, HostPrivacyView, ImageView, InstanceConsoleLogView, InstanceEgressLevel,
-        InstanceKind, InstanceListQuery, InstanceMeshView, InstanceProjectionView, InstanceSort,
-        InstanceSource, InstanceState, InstanceStateFilter, InstanceTagView, InstanceUpgradeView,
-        InstanceView, IpChoice, JobAccepted, JobEventView, JobKind, JobPage, JobState,
-        JobStateFilter, JobStepState, JobView, KindChoice, LedgerKind, LocationView, LoginGrant,
-        MAX_SSH_PUBLIC_KEYS, MemoryChoice, MigrateAccountSeedRequest, MoveGatewayLocationRequest,
-        OfferingView, PortForwardChange, PrivateRenterView, ProviderAgentsView,
-        ProviderBalanceView, ProviderConversionView, ProviderDisplayNameView,
-        ProviderHostDetailView, ProviderHostView, ProviderIncidentSeverity, ProviderIncidentState,
-        ProviderIncidentView, ProviderOutageDetailView, ProviderOutagePage,
-        ProviderPayoutAddressView, ProviderPayoutView, ProviderReliabilityView, ProviderUptimeView,
-        RedeployInstanceRequest, RedeploySetting, ReinstallInstanceRequest, RenameInstanceRequest,
+        CloudIpAddressInput, CloudIpAddressView, CloudIpPoolScope, CloudIpPoolView,
+        ContainerEnvVar, ContainerImageView, ContainerLogView, CreateBackupRequest,
+        CreateCloudIpPoolRequest, CreateContainerRequest, CreateHostEnrollmentTokenRequest,
+        CreateInstanceRequest, CreateProviderPayoutRequest, CreateSupportTicketRequest,
+        DeclareHostEmergencyRequest, DepositLookupView, DiskChoice, DownloadBackupRequest,
+        GatewayTier, GatewayTrafficView, GithubUnlinked, HandOverCloudIpPoolRequest,
+        HostAgentUpdateView, HostEnrollmentToken, HostModeFilter, HostPrivacyView, ImageView,
+        InstanceConsoleLogView, InstanceEgressLevel, InstanceKind, InstanceListQuery,
+        InstanceMeshView, InstanceProjectionView, InstanceSort, InstanceSource, InstanceState,
+        InstanceStateFilter, InstanceTagView, InstanceUpgradeView, InstanceView, IpChoice,
+        JobAccepted, JobEventView, JobKind, JobPage, JobState, JobStateFilter, JobStepState,
+        JobView, KindChoice, LedgerKind, LocationView, LoginGrant, MAX_SSH_PUBLIC_KEYS,
+        MemoryChoice, MigrateAccountSeedRequest, MoveGatewayLocationRequest, OfferingView,
+        PortForwardChange, PrivateRenterView, ProviderAgentsView, ProviderBalanceView,
+        ProviderConversionView, ProviderDisplayNameView, ProviderHostDetailView, ProviderHostView,
+        ProviderIncidentSeverity, ProviderIncidentState, ProviderIncidentView,
+        ProviderOutageDetailView, ProviderOutagePage, ProviderPayoutAddressView,
+        ProviderPayoutView, ProviderReliabilityView, ProviderUptimeView, RedeployInstanceRequest,
+        RedeploySetting, ReinstallInstanceRequest, RenameInstanceRequest,
         RequestProviderDisplayNameRequest, RescueInstanceRequest, ResetInstanceAccessRequest,
         RestoreBackupRequest, RotateGatewayKeysRequest, SSH_PUBLIC_KEY_TYPES,
         ScheduleHostRetirementRequest, ScheduleInstanceRetirementRequest, SessionRevocationView,
@@ -5755,20 +5756,52 @@ fn shell_word(argument: &str) -> String {
     }
 }
 
+/// [`shell_word`] of an argument that need not be UTF-8, as a file name
+/// need not be: one that is not is written byte by byte in the `$'...'`
+/// form bash and zsh read back to the same bytes.
+fn shell_word_os(argument: &std::ffi::OsStr) -> String {
+    if let Some(text) = argument.to_str() {
+        return shell_word(text);
+    }
+    #[cfg(unix)]
+    {
+        use std::os::unix::ffi::OsStrExt as _;
+        let mut quoted = String::from("$'");
+        for &byte in argument.as_bytes() {
+            match byte {
+                b'\'' | b'\\' => {
+                    quoted.push('\\');
+                    quoted.push(char::from(byte));
+                }
+                b' '..=b'~' => quoted.push(char::from(byte)),
+                _ => {
+                    let _ = write!(quoted, "\\x{byte:02x}");
+                }
+            }
+        }
+        quoted.push('\'');
+        quoted
+    }
+    #[cfg(not(unix))]
+    {
+        shell_word(&argument.to_string_lossy())
+    }
+}
+
 /// The command line `arguments` (the program first) make, with `--yes`
 /// added: the program by its file name, each argument shell-quoted.
-fn go_ahead_command(arguments: impl IntoIterator<Item = String>) -> String {
+fn go_ahead_command<A: AsRef<std::ffi::OsStr>>(arguments: impl IntoIterator<Item = A>) -> String {
     let mut arguments = arguments.into_iter();
     let program = arguments
         .next()
         .and_then(|program| {
-            std::path::Path::new(&program)
+            std::path::Path::new(program.as_ref())
                 .file_name()
                 .map(|name| name.to_string_lossy().into_owned())
         })
         .unwrap_or_else(|| "ghost".to_owned());
     let mut words = vec![shell_word(&program)];
-    words.extend(arguments.map(|argument| shell_word(&argument)));
+    words.extend(arguments.map(|argument| shell_word_os(argument.as_ref())));
     words.push("--yes".to_owned());
     words.join(" ")
 }
@@ -5850,7 +5883,7 @@ impl Preview {
     }
 
     /// The preview as text for the command line `arguments`.
-    fn text(&self, arguments: impl IntoIterator<Item = String>) -> String {
+    fn text<A: AsRef<std::ffi::OsStr>>(&self, arguments: impl IntoIterator<Item = A>) -> String {
         let width = self.rows.iter().map(|(label, _)| label.len()).max();
         let mut lines = Vec::new();
         if !self.title.is_empty() {
@@ -5875,11 +5908,34 @@ impl Preview {
     /// The error a command without `--yes` returns: this preview for the
     /// command line as typed.
     fn refusal(self) -> anyhow::Error {
+        self.refusal_for(std::env::args_os())
+    }
+
+    /// [`Self::refusal`] for the command line `arguments`, which a file
+    /// name in it may make not UTF-8.
+    fn refusal_for<A: AsRef<std::ffi::OsStr>>(
+        self,
+        arguments: impl IntoIterator<Item = A>,
+    ) -> anyhow::Error {
         Confirmation {
-            preview: self.text(std::env::args()),
+            preview: self.text(arguments),
             sentence: self.sentence,
         }
         .into()
+    }
+}
+
+/// The answer of a read a preview makes of what its command names (its
+/// instance, image, backup, host or connection): None where the backend
+/// could not be reached or failed ([`api::is_transient`]), whose rows the
+/// preview then leaves out and still prints. Any other failure, such as a
+/// name no instance has or an ID the backend does not know, is returned:
+/// `--yes` would fail the same way, and the preview would invite it.
+fn preview_lookup<T>(read: Result<T>) -> Result<Option<T>> {
+    match read {
+        Ok(answer) => Ok(Some(answer)),
+        Err(error) if api::is_transient(&error) => Ok(None),
+        Err(error) => Err(error),
     }
 }
 
@@ -6886,6 +6942,15 @@ async fn execute_notification(api: &ApiClient, command: &NotificationCommand) ->
 /// The ID of `address` in the provider's pool `pool`.
 async fn pool_address_id(api: &ApiClient, pool: Uuid, address: Ipv4Addr) -> Result<Uuid> {
     let pools: Vec<CloudIpPoolView> = api.read(&ListIpPools, "").await?;
+    find_pool_address(&pools, pool, address).map(|(_, found)| found.address_id)
+}
+
+/// The pool `pool` and its address `address` among `pools`.
+fn find_pool_address(
+    pools: &[CloudIpPoolView],
+    pool: Uuid,
+    address: Ipv4Addr,
+) -> Result<(&CloudIpPoolView, &CloudIpAddressView)> {
     pools
         .iter()
         .find(|candidate| candidate.pool_id == pool)
@@ -6894,8 +6959,8 @@ async fn pool_address_id(api: &ApiClient, pool: Uuid, address: Ipv4Addr) -> Resu
                 .addresses
                 .iter()
                 .find(|candidate| candidate.address == address.to_string())
+                .map(|found| (candidate, found))
         })
-        .map(|candidate| candidate.address_id)
         .with_context(|| format!("address {address} was not found in pool {pool}"))
 }
 
@@ -7234,12 +7299,18 @@ async fn execute_provider(api: &ApiClient, command: &ProviderCommand) -> Result<
                     let sentence = format!(
                         "{kept} of accounts you do not allow are on this host and stay there: they run, reinstall and are billed as before, and only their new instances are refused; repeat with --yes to make it private"
                     );
-                    return Err(Preview::new(format!("Make host {host_id} private"), sentence)
-                        .effect(&format!(
-                            "{kept} of accounts you do not allow are on this host and stay there: they run, reinstall and are billed as before"
-                        ))
-                        .effect("only their new instances are refused")
-                        .refusal());
+                    return Err(host_preview(
+                        api,
+                        format!("Make host {host_id} private"),
+                        *host_id,
+                        &sentence,
+                    )
+                    .await?
+                    .effect(&format!(
+                        "{kept} of accounts you do not allow are on this host and stay there: they run, reinstall and are billed as before"
+                    ))
+                    .effect("only their new instances are refused")
+                    .refusal());
                 }
                 let privacy: HostPrivacyView = api
                     .write_retryable(
@@ -7296,11 +7367,11 @@ async fn execute_provider(api: &ApiClient, command: &ProviderCommand) -> Result<
                 if !yes {
                     return Err(host_preview(
                         api,
-                        "Delete",
+                        format!("Delete host {host_id}"),
                         *host_id,
                         "host deletion permanently retires its enrollment identity; repeat with --yes after all rentals are gone",
                     )
-                    .await
+                    .await?
                     .effect("host deletion permanently retires its enrollment identity")
                     .effect("go ahead after all rentals are gone")
                     .refusal());
@@ -7322,11 +7393,11 @@ async fn execute_provider(api: &ApiClient, command: &ProviderCommand) -> Result<
                 if !yes {
                     return Err(host_preview(
                         api,
-                        "Retire",
+                        format!("Retire host {host_id}"),
                         *host_id,
                         "noticed retirement will delete every remaining VM after the deadline; repeat with --yes",
                     )
-                    .await
+                    .await?
                     .row("Notice", Some(format!("{notice_days} days")))
                     .said("noticed retirement will delete every remaining VM after the deadline")
                     .refusal());
@@ -7357,11 +7428,11 @@ async fn execute_provider(api: &ApiClient, command: &ProviderCommand) -> Result<
                 if !yes {
                     return Err(host_preview(
                         api,
-                        "Declare an emergency on",
+                        format!("Declare an emergency on host {host_id}"),
                         *host_id,
                         "an emergency declaration immediately abandons every active rental and revokes the host; repeat with --yes",
                     )
-                    .await
+                    .await?
                     .said("an emergency declaration immediately abandons every active rental and revokes the host")
                     .refusal());
                 }
@@ -7401,19 +7472,28 @@ async fn execute_provider(api: &ApiClient, command: &ProviderCommand) -> Result<
             } => {
                 if !yes {
                     let renters: Vec<PrivateRenterView> = api.read(&ListPrivateRenters, "").await?;
-                    if let Some(kept) = renters
+                    let renter = renters
                         .iter()
-                        .find(|renter| renter.account_alias.eq_ignore_ascii_case(alias.trim()))
-                        .and_then(|renter| {
-                            kept_words(renter.kept_instances, renter.kept_local_backups)
-                        })
-                    {
+                        .find(|renter| renter.account_alias.eq_ignore_ascii_case(alias.trim()));
+                    if let Some(kept) = renter.and_then(|renter| {
+                        kept_words(renter.kept_instances, renter.kept_local_backups)
+                    }) {
                         let sentence = format!(
                             "{kept} of {alias} are on your private hosts and stay there: they run, reinstall and are billed as before, and only its new instances are refused; repeat with --yes to remove it"
                         );
                         return Err(Preview::new(
                             format!("Remove {alias} from the allowed accounts"),
                             sentence,
+                        )
+                        .row(
+                            "Allowed since",
+                            renter.map(|renter| {
+                                renter
+                                    .added_at
+                                    .with_timezone(&chrono::Local)
+                                    .format("%Y-%m-%d")
+                                    .to_string()
+                            }),
                         )
                         .effect(&format!(
                             "{kept} of {alias} are on your private hosts and stay there: they run, reinstall and are billed as before"
@@ -7536,10 +7616,17 @@ async fn execute_provider(api: &ApiClient, command: &ProviderCommand) -> Result<
                 mutation,
             } => {
                 if !yes {
-                    let pools: Option<Vec<CloudIpPoolView>> = api.read(&ListIpPools, "").await.ok();
-                    let pool = pools
-                        .as_deref()
-                        .and_then(|pools| pools.iter().find(|pool| pool.pool_id == *pool_id));
+                    let pools: Option<Vec<CloudIpPoolView>> =
+                        preview_lookup(api.read(&ListIpPools, "").await)?;
+                    let pool = match pools.as_deref() {
+                        Some(pools) => Some(
+                            pools
+                                .iter()
+                                .find(|pool| pool.pool_id == *pool_id)
+                                .with_context(|| format!("no IP pool {pool_id}"))?,
+                        ),
+                        None => None,
+                    };
                     return Err(Preview::new(
                         format!("Delete IP pool {pool_id}"),
                         "pool deletion is permanent; repeat with --yes",
@@ -7612,9 +7699,22 @@ async fn execute_provider(api: &ApiClient, command: &ProviderCommand) -> Result<
                 mutation,
             } => {
                 if !yes {
+                    let pools: Option<Vec<CloudIpPoolView>> =
+                        preview_lookup(api.read(&ListIpPools, "").await)?;
+                    let found = match pools.as_deref() {
+                        Some(pools) => Some(find_pool_address(pools, *pool, *address)?),
+                        None => None,
+                    };
                     return Err(Preview::new(
                         format!("Remove {address} from IP pool {pool}"),
                         "IP removal stops future allocation; repeat with --yes",
+                    )
+                    .row("Pool", found.map(|(pool, _)| pool.label.clone()))
+                    .row(
+                        "State",
+                        found.map(|(_, address)| {
+                            format!("{}, {}", address.status, wire_name(address.verification))
+                        }),
                     )
                     .said("IP removal stops future allocation")
                     .refusal());
@@ -8931,18 +9031,18 @@ async fn execute_instance(
                 // (item 267), which the preview names with its most and its
                 // lock: the instance, the image and the prices are read,
                 // nothing is sent.
-                let (instance_id, instance) = preview_instance(api, &args.instance_id).await;
+                let (instance_id, instance) = preview_instance(api, &args.instance_id).await?;
                 let forced = forced_backup_of(api, instance.as_ref(), None).await;
-                let image = image_preview_name(api, &args.image).await;
-                let mut keys = Vec::new();
-                if !args.ssh_keys.is_empty() {
-                    keys.push(format!("{} on the command line", args.ssh_keys.len()));
-                }
-                keys.extend(
-                    args.ssh_key_files
-                        .iter()
-                        .map(|file| file.display().to_string()),
-                );
+                let image = image_preview_name(api, &args.image).await?;
+                let keys = login_keys_preview(
+                    api,
+                    &args.ssh_keys,
+                    &args.ssh_key_files,
+                    args.cloud_init_file
+                        .is_none()
+                        .then_some(no_login_refusal as fn() -> anyhow::Error),
+                )
+                .await?;
                 return Err(Preview::new(
                     instance_preview_title(
                         "Reinstall",
@@ -8954,7 +9054,7 @@ async fn execute_instance(
                 )
                 .row("Instance", instance_preview_row(instance.as_ref()))
                 .row("Image", image_preview_row(instance.as_ref(), Some(&image)))
-                .row("SSH keys", Some(keys.join(", ")))
+                .row("SSH keys", keys)
                 .row(
                     "Cloud-init",
                     args.cloud_init_file
@@ -9077,8 +9177,9 @@ async fn execute_instance(
                 message,
             })?;
             if !args.yes {
-                // Nothing is read: an update is confirmed without reading
-                // the instance's settings or secrets.
+                // Nothing is read, by design: an update is confirmed without
+                // reading the instance's settings or secrets, so it has no
+                // image or kept-path rows, only the tag it is given.
                 let typed = instance_reference_text(&args.instance_id);
                 return Err(
                     Preview::new(format!("Update {typed}"), update_confirmation())
@@ -9113,8 +9214,19 @@ async fn execute_instance(
             // sent.
             let request = redeploy_request(args)?;
             if !args.yes {
-                let (instance_id, instance) = preview_instance(api, &args.instance_id).await;
+                let (instance_id, instance) = preview_instance(api, &args.instance_id).await?;
                 let sentence = redeploy_confirmation(&request, instance.as_ref());
+                let keys = if request.stock_image.is_some() {
+                    login_keys_preview(
+                        api,
+                        &args.ssh_keys,
+                        &args.ssh_key_files,
+                        Some(no_stock_keys_refusal),
+                    )
+                    .await?
+                } else {
+                    None
+                };
                 let becomes = request
                     .image
                     .clone()
@@ -9133,6 +9245,7 @@ async fn execute_instance(
                     "Image",
                     image_preview_row(instance.as_ref(), becomes.as_deref()),
                 )
+                .row("SSH keys", keys)
                 .said(&sentence)
                 .refusal());
             }
@@ -9428,7 +9541,7 @@ async fn execute_instance(
         }
         InstanceCommand::Delete(args) => {
             if !args.yes {
-                let (instance_id, instance) = preview_instance(api, &args.instance_id).await;
+                let (instance_id, instance) = preview_instance(api, &args.instance_id).await?;
                 let backups: Option<Vec<BackupView>> = match instance_id {
                     Some(instance_id) => api
                         .read(&ListInstanceBackups { instance_id }, "")
@@ -9595,16 +9708,24 @@ fn unconfirmed(what: &str, forced: Option<&str>) -> String {
 }
 
 /// The instance a preview is of, read without a request that writes: its
-/// ID and view, each None where it could not be read.
+/// ID and view, each None where the backend could not be reached
+/// ([`preview_lookup`]).
+///
+/// # Errors
+///
+/// The instance is not there: a name no instance has or several have, an
+/// ID the backend does not know.
 async fn preview_instance(
     api: &ApiClient,
     reference: &InstanceReference,
-) -> (Option<Uuid>, Option<InstanceView>) {
-    let Ok(instance_id) = resolve_instance(api, reference, InstanceUse::Change).await else {
-        return (None, None);
+) -> Result<(Option<Uuid>, Option<InstanceView>)> {
+    let Some(instance_id) =
+        preview_lookup(resolve_instance(api, reference, InstanceUse::Change).await)?
+    else {
+        return Ok((None, None));
     };
-    let instance = api.read(&GetInstance { instance_id }, "").await.ok();
-    (Some(instance_id), instance)
+    let instance = preview_lookup(api.read(&GetInstance { instance_id }, "").await)?;
+    Ok((Some(instance_id), instance))
 }
 
 /// A preview's title: the action, the instance by name and ID as far as
@@ -9664,16 +9785,33 @@ fn image_preview_row(instance: Option<&InstanceView>, becomes: Option<&str>) -> 
 
 /// The name of the catalog image `reference` (a slug or an ID) is, where
 /// the catalog can be read and has it; else the reference as typed.
-async fn image_preview_name(api: &ApiClient, reference: &str) -> String {
-    let images: Option<Vec<ImageView>> = api.read(&ListImages, "").await.ok();
-    images
-        .and_then(|images| {
-            images.into_iter().find(|image| {
-                image.slug.eq_ignore_ascii_case(reference)
-                    || image.image_id.to_string() == reference
-            })
-        })
-        .map_or_else(|| reference.to_owned(), |image| image.display_name)
+///
+/// # Errors
+///
+/// A slug the catalog does not have, as [`resolve_image`] refuses it.
+async fn image_preview_name(api: &ApiClient, reference: &str) -> Result<String> {
+    let by_id = Uuid::parse_str(reference).is_ok();
+    let images: Option<Vec<ImageView>> = if by_id {
+        // An ID is sent as it is: the catalog only names it.
+        api.read(&ListImages, "").await.ok()
+    } else {
+        preview_lookup(
+            api.read(&ListImages, "")
+                .await
+                .context("list the catalog images to find --image"),
+        )?
+    };
+    let Some(images) = images else {
+        return Ok(reference.to_owned());
+    };
+    let found = images.iter().find(|image| {
+        image.slug.eq_ignore_ascii_case(reference) || image.image_id.to_string() == reference
+    });
+    match found {
+        Some(image) => Ok(image.display_name.clone()),
+        None if by_id => Ok(reference.to_owned()),
+        None => Err(not_a_catalog_image(reference, &images)),
+    }
 }
 
 /// What deleting a backup does, as its preview says it.
@@ -9699,13 +9837,23 @@ fn backup_preview_text(backup: &BackupView) -> String {
     )
 }
 
-/// The preview of `verb` on a host: the host read for its name, status,
-/// location and rentals, none of them where it cannot be read.
-async fn host_preview(api: &ApiClient, verb: &str, host_id: Uuid, sentence: &str) -> Preview {
+/// The preview titled `title` of a command on a host: the host read for its
+/// name, status, location and rentals, none of them where the backend could
+/// not be reached.
+///
+/// # Errors
+///
+/// The backend does not know the host ([`preview_lookup`]).
+async fn host_preview(
+    api: &ApiClient,
+    title: String,
+    host_id: Uuid,
+    sentence: &str,
+) -> Result<Preview> {
     let detail: Option<ProviderHostDetailView> =
-        api.read(&GetProviderHost { host_id }, "").await.ok();
+        preview_lookup(api.read(&GetProviderHost { host_id }, "").await)?;
     let host = detail.as_ref().map(|detail| &detail.host);
-    Preview::new(format!("{verb} host {host_id}"), sentence)
+    Ok(Preview::new(title, sentence)
         .row("Host", host.map(|host| host.label.clone()))
         .row(
             "Status",
@@ -9714,7 +9862,7 @@ async fn host_preview(api: &ApiClient, verb: &str, host_id: Uuid, sentence: &str
         .row(
             "Rentals",
             host.map(|host| host.active_instance_count.to_string()),
-        )
+        ))
 }
 
 /// A time in this machine's zone: the time of day alone on today's date.
@@ -10041,10 +10189,18 @@ async fn execute_backup(cli: &Cli, api: &ApiClient, command: &BackupCommand) -> 
                 carry_rule_ids(&mut request, &current);
                 let deletions = schedule_deletions(&request, &current);
                 if !deletions.is_empty() && !args.yes {
+                    let instance: Option<InstanceView> =
+                        api.read(&GetInstance { instance_id: id }, "").await.ok();
                     let mut preview = Preview::new(
-                        format!("Set the backup rules of instance {id}"),
+                        instance_preview_title(
+                            "Set the backup rules of",
+                            &args.instance_id,
+                            Some(id),
+                            instance.as_ref(),
+                        ),
                         schedule_deletion_refusal(&deletions),
-                    );
+                    )
+                    .row("Instance", instance_preview_row(instance.as_ref()));
                     for deletion in &deletions {
                         let deleted = deletion.deleted;
                         preview.rows.push((
@@ -10088,9 +10244,8 @@ async fn execute_backup(cli: &Cli, api: &ApiClient, command: &BackupCommand) -> 
         },
         BackupCommand::Delete(args) => {
             if !args.yes {
-                let backup = named_backup(api, args.first_id, args.legacy_backup_id)
-                    .await
-                    .ok();
+                let backup =
+                    preview_lookup(named_backup(api, args.first_id, args.legacy_backup_id).await)?;
                 let instance = match &backup {
                     Some(backup) => api
                         .read(
@@ -12966,10 +13121,7 @@ fn login_material(
             return Ok(None);
         }
         if saved == 0 {
-            refuse!(
-                "invalid_request",
-                "at least one --ssh-key, --ssh-key-file, or --cloud-init-file is required, or a key saved with `ghost account ssh-keys add`"
-            );
+            return Err(no_login_refusal());
         }
         return Ok(Some(saved_keys_note(saved)));
     };
@@ -12980,6 +13132,15 @@ fn login_material(
         )));
     }
     Ok(None)
+}
+
+/// The refusal of a reinstall or a creation with no key, no user data and
+/// no key saved in the account.
+fn no_login_refusal() -> anyhow::Error {
+    typed_refusal(
+        "invalid_request",
+        "at least one --ssh-key, --ssh-key-file, or --cloud-init-file is required, or a key saved with `ghost account ssh-keys add`".to_owned(),
+    )
 }
 
 /// A stock image is reached over SSH with the keys given, or the account's
@@ -13004,12 +13165,50 @@ async fn require_stock_image_keys(api: &ApiClient, ssh_public_keys: &[String]) -
 /// account has `saved` keys: the refusal, or the note to print.
 fn stock_image_keys(saved: usize) -> Result<String> {
     if saved == 0 {
-        refuse!(
-            "invalid_request",
-            "a stock image is reached over SSH with the instance's keys: give at least one --ssh-key or --ssh-key-file, or save a key with `ghost account ssh-keys add`"
-        );
+        return Err(no_stock_keys_refusal());
     }
     Ok(saved_keys_note(saved))
+}
+
+/// The refusal of a stock image with no key given and none saved.
+fn no_stock_keys_refusal() -> anyhow::Error {
+    typed_refusal(
+        "invalid_request",
+        "a stock image is reached over SSH with the instance's keys: give at least one --ssh-key or --ssh-key-file, or save a key with `ghost account ssh-keys add`".to_owned(),
+    )
+}
+
+/// The SSH keys row of the preview of a reinstall or a stock image's
+/// redeploy: the keys the command line gives, else the number the account
+/// saved, which the command installs when it gives none. None where the
+/// saved keys cannot be read, and where the account has none and the
+/// command has another way in; `refusal` is what the command refuses
+/// without one, which the preview returns, as it would invite a command
+/// that cannot run.
+async fn login_keys_preview(
+    api: &ApiClient,
+    ssh_keys: &[String],
+    ssh_key_files: &[PathBuf],
+    refusal: Option<fn() -> anyhow::Error>,
+) -> Result<Option<String>> {
+    let mut given = Vec::new();
+    if !ssh_keys.is_empty() {
+        given.push(format!("{} on the command line", ssh_keys.len()));
+    }
+    given.extend(ssh_key_files.iter().map(|file| file.display().to_string()));
+    if !given.is_empty() {
+        return Ok(Some(given.join(", ")));
+    }
+    let saved = api
+        .read(&ghostrack_client_api::api::ListAccountSshKeys, "")
+        .await
+        .ok()
+        .map(|keys| keys.len());
+    match (saved, refusal) {
+        (Some(0), Some(refusal)) => Err(refusal()),
+        (Some(0) | None, _) => Ok(None),
+        (Some(saved), _) => Ok(Some(format!("{saved} saved in the account"))),
+    }
 }
 
 /// What a creation without a key of its own says: the account's `saved`
@@ -13638,12 +13837,18 @@ async fn resolve_image(api: &ApiClient, reference: &str) -> Result<Uuid> {
     {
         return Ok(image.image_id);
     }
+    Err(not_a_catalog_image(reference, &images))
+}
+
+/// The refusal of an `--image` that is not an image ID and names no slug of
+/// the catalog `images`.
+fn not_a_catalog_image(reference: &str, images: &[ImageView]) -> anyhow::Error {
     let mut slugs = images
         .iter()
         .map(|image| image.slug.as_str())
         .collect::<Vec<_>>();
     slugs.sort_unstable();
-    bail!(
+    anyhow::anyhow!(
         "--image {reference} is not a catalog image; the catalog has {}",
         slugs.join(", ")
     )
@@ -21127,7 +21332,7 @@ mod tests {
             line,
             "ghost instance reinstall web-1 --ssh-key 'ssh-ed25519 AAA it'\\''s' '' 'a$b' --yes"
         );
-        assert_eq!(go_ahead_command(Vec::new()), "ghost --yes");
+        assert_eq!(go_ahead_command(Vec::<String>::new()), "ghost --yes");
         for plain in [
             "a-b_c.d",
             "x:y/z@1%+=,",
@@ -21211,18 +21416,10 @@ mod tests {
             ]
         );
 
-        // Reads that fail leave the title and the sentences.
-        let (url, received) = canned_server(vec![
-            (
-                404,
-                json!({"code": "not_found", "message": "gone"}).to_string(),
-            ),
-            (
-                404,
-                json!({"code": "not_found", "message": "gone"}).to_string(),
-            ),
-        ])
-        .await;
+        // Reads of a backend that cannot answer leave the title and the
+        // sentences.
+        let down = json!({"code": "unavailable", "message": "down"}).to_string();
+        let (url, received) = canned_server(vec![(503, down.clone()), (503, down.clone())]).await;
         let text = execute(&account_command(&url, &seed, &["instance", "delete", &id]))
             .await
             .unwrap_err()
@@ -21239,6 +21436,24 @@ mod tests {
                 .all(|line| line.starts_with("GET ")),
             "{:?}",
             request_lines(&received)
+        );
+
+        // An instance the backend does not know is refused as the deletion
+        // would be, not previewed: the preview would invite a command that
+        // cannot run.
+        let (url, received) = canned_server(vec![(
+            404,
+            json!({"code": "not_found", "message": "gone"}).to_string(),
+        )])
+        .await;
+        let error = execute(&account_command(&url, &seed, &["instance", "delete", &id]))
+            .await
+            .unwrap_err();
+        assert!(error.downcast_ref::<Confirmation>().is_none(), "{error:#}");
+        assert_eq!(api::rejection_code(&error), Some("not_found"));
+        assert_eq!(
+            request_lines(&received),
+            [format!("GET /v1/instances/{id}")]
         );
 
         // `--compact` keeps the one sentence and the code.
@@ -21261,7 +21476,8 @@ mod tests {
     }
 
     /// The commands of the account and the provider that need --yes show
-    /// their title and sentences without a request that writes.
+    /// their title and sentences without a request that writes, also when
+    /// the backend cannot answer the reads of their rows.
     #[tokio::test]
     async fn the_other_gates_show_a_preview_and_write_nothing() {
         let directory = tempfile::tempdir().unwrap();
@@ -21298,8 +21514,8 @@ mod tests {
         ];
         for (arguments, title, sentences) in cases {
             let (url, received) = canned_server(vec![(
-                404,
-                json!({"code": "not_found", "message": "gone"}).to_string(),
+                503,
+                json!({"code": "unavailable", "message": "down"}).to_string(),
             )])
             .await;
             let text = execute(&account_command(&url, &seed, &arguments))
@@ -21316,6 +21532,523 @@ mod tests {
                 "{arguments:?}"
             );
         }
+    }
+
+    /// The value of the row `label` of a preview's text.
+    fn preview_row(text: &str, label: &str) -> Option<String> {
+        text.lines().find_map(|line| {
+            line.strip_prefix("  ")?
+                .strip_prefix(label)?
+                .strip_prefix(' ')
+                .map(|value| value.trim_start().to_owned())
+        })
+    }
+
+    /// A host as `GET /v1/provider/hosts/{id}` answers it.
+    fn host_detail_json(host_id: Uuid, label: &str, rentals: u32) -> Value {
+        json!({"host": {"host_id": host_id, "label": label, "mode": "cloud_routed",
+            "status": "active", "location": "eu-fra", "rentals_paused": false,
+            "active_instance_count": rentals, "can_retire": false, "retired_at": null,
+            "retirement_notice": null, "public_path_verified_at": null,
+            "public_path_error": null, "public_path_checking": false,
+            "last_heartbeat_at": null, "cpu_model": null, "memory_bytes": 0,
+            "storage_bytes": 0, "installed_memory_bytes": 0,
+            "installed_storage_bytes": 0, "pricing": null},
+            "memory_bytes_per_cpu_core": 0, "minimum_instance_memory_bytes": 0,
+            "sizes_below_minimum_memory": [], "agent_version": "1",
+            "heartbeat_interval_seconds": 30, "inventory_revision": null,
+            "inventory_collected_at": null, "heartbeat": null, "hardware": {},
+            "numa_nodes": [], "storage_pools": [], "current": null})
+    }
+
+    /// An instance as `GET /v1/instances/{id}` answers it, a container's
+    /// when `container` is given.
+    fn named_instance_json(instance_id: Uuid, container: Option<Value>) -> Value {
+        let mut instance = json!({"instance_id": instance_id, "offering_id": "o",
+            "hostname": "web-1", "root_disk_bytes": 20_u64 << 30, "vcpu_count": 2,
+            "memory_bytes": 4_u64 << 30, "location_name": "Singapore",
+            "state": "running", "desired_power_state": "running",
+            "holds_capacity": true, "network_microusd_per_tib": 0,
+            "created_at": Utc::now(), "balance_reservation_microusd": 0});
+        if let Some(container) = container {
+            instance["container"] = container;
+        }
+        instance
+    }
+
+    /// A gate's arguments, the canned answers of its reads, the title, a
+    /// sentence and the rows of its preview.
+    type Gate<'a> = (
+        Vec<&'a str>,
+        Vec<(u16, String)>,
+        String,
+        &'a str,
+        Vec<(&'a str, String)>,
+    );
+
+    /// The commands that need --yes and are not covered by their own tests
+    /// show their title, rows, sentences and the command to repeat, from
+    /// reads alone: no request that is not a GET, and each read made.
+    #[tokio::test]
+    async fn every_gate_shows_its_rows_and_sends_no_write() {
+        let directory = tempfile::tempdir().unwrap();
+        let seed = directory.path().join("account.seed");
+        keys::generate_seed(&seed).unwrap();
+        let (host, pool, instance_id) = (Uuid::now_v7(), Uuid::now_v7(), Uuid::now_v7());
+        let (host_text, pool_text, id) =
+            (host.to_string(), pool.to_string(), instance_id.to_string());
+        let ok = |value: Value| (200, value.to_string());
+        let pools = json!([{"pool_id": pool, "label": "core", "scope": "host",
+            "host_ids": [host], "addresses": [{"address_id": Uuid::now_v7(),
+            "address": "203.0.113.5", "gateway": null, "prefix_length": 32,
+            "mac_address": null, "status": "available", "verification": "verified",
+            "verified_at": null, "verified_host_id": null, "verification_error": null,
+            "checked_at": null, "created_at": Utc::now()}],
+            "address_counts": {"total": 1, "live": 1, "verified": 1, "unchecked": 0,
+                "failed": 0, "in_use": 0},
+            "can_delete": true, "created_at": Utc::now(), "deleted_at": null}]);
+        let added = "2026-10-01T12:00:00Z".parse::<DateTime<Utc>>().unwrap();
+        let renters = json!([{"account_alias": "friend", "added_at": added,
+            "kept_instances": 2, "kept_local_backups": 0}]);
+        let container = json!({"image": "docker.io/library/nginx:1.25",
+            "volumes": ["/data", "/var/lib/app"]});
+        let schedule = json!({"instance_id": instance_id, "maximum_backups": 100,
+            "rules": [live_rule(Uuid::now_v7(), "local", "daily", 180, 30, 30)]});
+        let privacy = json!({"host_id": host, "private": false, "kept_instances": 2,
+            "kept_local_backups": 1});
+        let cases: Vec<Gate<'_>> = vec![
+            (
+                vec!["provider", "ip-pool", "delete", &pool_text],
+                vec![ok(pools.clone())],
+                format!("Delete IP pool {pool}"),
+                "Pool deletion is permanent.",
+                vec![("Pool", "core".to_owned()), ("Addresses", "1".to_owned())],
+            ),
+            (
+                vec![
+                    "provider", "ip", "remove", "--pool", &pool_text, "--address",
+                    "203.0.113.5",
+                ],
+                vec![ok(pools.clone())],
+                format!("Remove 203.0.113.5 from IP pool {pool}"),
+                "IP removal stops future allocation.",
+                vec![
+                    ("Pool", "core".to_owned()),
+                    ("State", "available, verified".to_owned()),
+                ],
+            ),
+            (
+                vec!["provider", "host", "retire", &host_text, "--notice-days", "10"],
+                vec![ok(host_detail_json(host, "mev-1", 3))],
+                format!("Retire host {host}"),
+                "Noticed retirement will delete every remaining VM after the deadline.",
+                vec![
+                    ("Host", "mev-1".to_owned()),
+                    ("Status", "active, eu-fra".to_owned()),
+                    ("Rentals", "3".to_owned()),
+                    ("Notice", "10 days".to_owned()),
+                ],
+            ),
+            (
+                vec!["provider", "retire-instance", &id, "--notice-days", "10"],
+                vec![],
+                format!("Retire instance {instance_id}"),
+                "Instance retirement schedules provider-initiated deletion.",
+                vec![("Notice", "10 days".to_owned())],
+            ),
+            (
+                vec!["provider", "host", "private", &host_text],
+                vec![ok(privacy), ok(host_detail_json(host, "mev-1", 3))],
+                format!("Make host {host} private"),
+                "2 instances and 1 local backup of accounts you do not allow are on this host and stay there: they run, reinstall and are billed as before. Only their new instances are refused.",
+                vec![
+                    ("Host", "mev-1".to_owned()),
+                    ("Status", "active, eu-fra".to_owned()),
+                    ("Rentals", "3".to_owned()),
+                ],
+            ),
+            (
+                vec!["provider", "private-renters", "remove", "friend"],
+                vec![ok(renters)],
+                "Remove friend from the allowed accounts".to_owned(),
+                "2 instances of friend are on your private hosts and stay there",
+                vec![(
+                    "Allowed since",
+                    added
+                        .with_timezone(&chrono::Local)
+                        .format("%Y-%m-%d")
+                        .to_string(),
+                )],
+            ),
+            // An update is confirmed without reading the instance: no read
+            // is made, and its only row is the tag.
+            (
+                vec!["instance", "update", &id, "--tag", "1.26"],
+                vec![],
+                format!("Update {id}"),
+                "An update preserves settings and secrets",
+                vec![("Tag", "1.26".to_owned())],
+            ),
+            (
+                vec!["instance", "redeploy", &id, "--container", "nginx:1.27"],
+                vec![ok(named_instance_json(instance_id, Some(container)))],
+                format!("Redeploy web-1 ({instance_id})"),
+                "A redeploy replaces everything on the instance's root disk but the paths it keeps: /data and /var/lib/app and the VOLUME paths",
+                vec![
+                    (
+                        "Instance",
+                        "running, 2 vCPU, 4 GiB RAM, 20 GiB disk, Singapore".to_owned(),
+                    ),
+                    ("Image", "nginx:1.27".to_owned()),
+                ],
+            ),
+            (
+                vec![
+                    "backup", "schedule", "set", &id, "--rule", "daily:local:3@03:00",
+                ],
+                vec![ok(schedule), ok(named_instance_json(instance_id, None))],
+                format!("Set the backup rules of web-1 ({instance_id})"),
+                "Backup deletion is irreversible.",
+                vec![
+                    (
+                        "Instance",
+                        "running, 2 vCPU, 4 GiB RAM, 20 GiB disk, Singapore".to_owned(),
+                    ),
+                    (
+                        "Rule",
+                        "1 lowers the keep of the daily local rule from 30 to 3, which deletes its 27 oldest backups".to_owned(),
+                    ),
+                ],
+            ),
+        ];
+        for (arguments, responses, title, said, rows) in cases {
+            let reads = responses.len();
+            let (url, received) = canned_server(responses).await;
+            let error = execute(&account_command(&url, &seed, &arguments))
+                .await
+                .unwrap_err();
+            assert!(
+                error.downcast_ref::<Confirmation>().is_some(),
+                "{arguments:?}: {error:#}"
+            );
+            let text = error.to_string();
+            assert!(text.starts_with(&format!("{title}\n")), "{text}");
+            assert!(text.contains(said), "{text}");
+            for (label, value) in rows {
+                assert_eq!(
+                    preview_row(&text, label).as_deref(),
+                    Some(value.as_str()),
+                    "{label}: {text}"
+                );
+            }
+            assert!(ends_with_go_ahead(&text), "{text}");
+            assert!(!text.contains('\u{1b}'), "{text}");
+            assert!(
+                !render_error(&error, Terminal::plain()).starts_with("Error:"),
+                "{text}"
+            );
+            assert_eq!(
+                error_output(&error)["error"]["code"],
+                "confirmation_required"
+            );
+            let lines = request_lines(&received);
+            assert!(
+                lines.iter().all(|line| line.starts_with("GET ")),
+                "{arguments:?}: {lines:?}"
+            );
+            assert_eq!(lines.len(), reads, "{arguments:?}: {lines:?}");
+        }
+    }
+
+    /// A VPN connection's deletion without --yes names the connection and
+    /// writes nothing; one the backend does not know is refused.
+    #[tokio::test]
+    async fn an_unconfirmed_vpn_deletion_names_the_connection() {
+        let directory = tempfile::tempdir().unwrap();
+        let seed = directory.path().join("account.seed");
+        keys::generate_seed(&seed).unwrap();
+        let id = Uuid::now_v7();
+        let connection = json!({"id": id, "name": "home", "tier": "shared_ip",
+            "location": "de-frankfurt", "location_name": "Frankfurt", "state": "ready",
+            "created_at": "2026-11-13T10:00:00Z", "device_public_key": "AAAA",
+            "tracked_connections": 4096, "incoming_allowed": false,
+            "key_revision": 1, "applied_key_revision": 1});
+        let (url, received) = canned_server(vec![(200, connection.to_string())]).await;
+        let error = execute(&account_command(
+            &url,
+            &seed,
+            &["vpn", "delete", &id.to_string()],
+        ))
+        .await
+        .unwrap_err();
+        let text = error.to_string();
+        assert!(
+            text.starts_with(&format!("Delete VPN connection home ({id})\n"))
+                && preview_row(&text, "Connection").as_deref() == Some("Frankfurt")
+                && text.contains("VPN connection deletion is irreversible.")
+                && ends_with_go_ahead(&text),
+            "{text}"
+        );
+        assert!(error.downcast_ref::<Confirmation>().is_some());
+        assert!(
+            request_lines(&received)
+                .iter()
+                .all(|line| line.starts_with("GET ")),
+            "{:?}",
+            request_lines(&received)
+        );
+
+        // A name no connection has is refused, as the deletion would be.
+        let (url, received) = canned_server(vec![(200, "[]".to_owned())]).await;
+        let error = execute(&account_command(&url, &seed, &["vpn", "delete", "nothing"]))
+            .await
+            .unwrap_err();
+        assert!(error.downcast_ref::<Confirmation>().is_none(), "{error:#}");
+        assert_eq!(
+            error_output(&error)["error"]["code"],
+            "vpn_connection_not_found"
+        );
+        assert_eq!(request_lines(&received), ["GET /v1/vpn/connections"]);
+    }
+
+    /// A preview does not invite what the command with --yes would refuse:
+    /// a name no instance has, an image the catalog lacks, no way in for a
+    /// reinstall or a stock image. A backend that cannot answer leaves the
+    /// rows out and still previews.
+    #[tokio::test]
+    async fn a_preview_refuses_what_its_command_would_refuse() {
+        let directory = tempfile::tempdir().unwrap();
+        let seed = directory.path().join("account.seed");
+        keys::generate_seed(&seed).unwrap();
+        let instance_id = Uuid::now_v7();
+        let id = instance_id.to_string();
+        let instance = named_instance_json(instance_id, None).to_string();
+        let down = json!({"code": "unavailable", "message": "down"}).to_string();
+        let image = json!({"image_id": Uuid::now_v7(), "slug": "arch-linux",
+            "display_name": "Arch Linux", "architecture": "x86_64",
+            "minimum_disk_bytes": 0});
+        let key = json!({"ssh_key_id": Uuid::now_v7(), "label": "laptop",
+            "public_key": TEST_PUBLIC_KEY, "key_type": "ssh-ed25519",
+            "fingerprint": "SHA256:x", "created_at": Utc::now()});
+
+        // Names no instance has, for each command that previews one.
+        for arguments in [
+            vec!["instance", "delete", "missing"],
+            vec!["instance", "reinstall", "missing", "--image", "arch-linux"],
+            vec![
+                "instance",
+                "redeploy",
+                "missing",
+                "--container",
+                "nginx:1.27",
+            ],
+        ] {
+            let (url, received) = canned_server(vec![(200, "[]".to_owned())]).await;
+            let error = execute(&account_command(&url, &seed, &arguments))
+                .await
+                .unwrap_err();
+            assert!(
+                error.downcast_ref::<Confirmation>().is_none(),
+                "{arguments:?}: {error:#}"
+            );
+            assert_eq!(
+                error_output(&error)["error"]["code"],
+                "instance_not_found",
+                "{arguments:?}"
+            );
+            assert_eq!(request_lines(&received), ["GET /v1/instances"]);
+        }
+
+        // An image the catalog lacks, with the instance read first.
+        let (url, _) = canned_server(vec![
+            (200, instance.clone()),
+            (200, json!([image]).to_string()),
+        ])
+        .await;
+        let error = execute(&account_command(
+            &url,
+            &seed,
+            &["instance", "reinstall", &id, "--image", "no-such-os"],
+        ))
+        .await
+        .unwrap_err();
+        assert!(error.downcast_ref::<Confirmation>().is_none(), "{error:#}");
+        assert!(
+            error.to_string().contains("is not a catalog image")
+                && error.to_string().contains("arch-linux"),
+            "{error:#}"
+        );
+
+        // No key typed: the saved keys are counted; none saved is refused
+        // as the reinstall would be.
+        let (url, received) = canned_server(vec![
+            (200, instance.clone()),
+            (200, json!([image]).to_string()),
+            (200, json!([key, key]).to_string()),
+        ])
+        .await;
+        let text = execute(&account_command(
+            &url,
+            &seed,
+            &["instance", "reinstall", &id, "--image", "arch-linux"],
+        ))
+        .await
+        .unwrap_err()
+        .to_string();
+        assert_eq!(
+            preview_row(&text, "SSH keys").as_deref(),
+            Some("2 saved in the account"),
+            "{text}"
+        );
+        assert_eq!(
+            preview_row(&text, "Image").as_deref(),
+            Some("Arch Linux"),
+            "{text}"
+        );
+        assert!(
+            request_lines(&received)
+                .iter()
+                .all(|line| line.starts_with("GET ")),
+            "{:?}",
+            request_lines(&received)
+        );
+        let (url, _) = canned_server(vec![
+            (200, instance.clone()),
+            (200, json!([image]).to_string()),
+            (200, "[]".to_owned()),
+        ])
+        .await;
+        let error = execute(&account_command(
+            &url,
+            &seed,
+            &["instance", "reinstall", &id, "--image", "arch-linux"],
+        ))
+        .await
+        .unwrap_err();
+        assert!(error.downcast_ref::<Confirmation>().is_none(), "{error:#}");
+        assert!(
+            error.to_string().contains("at least one --ssh-key"),
+            "{error:#}"
+        );
+        // A cloud-init file is another way in: no refusal, no row.
+        let user_data = directory.path().join("user-data");
+        fs::write(&user_data, "#cloud-config\n").unwrap();
+        let (url, _) = canned_server(vec![
+            (200, instance.clone()),
+            (200, json!([image]).to_string()),
+            (200, "[]".to_owned()),
+        ])
+        .await;
+        let text = execute(&account_command(
+            &url,
+            &seed,
+            &[
+                "instance",
+                "reinstall",
+                &id,
+                "--image",
+                "arch-linux",
+                "--cloud-init-file",
+                user_data.to_str().unwrap(),
+            ],
+        ))
+        .await
+        .unwrap_err()
+        .to_string();
+        assert!(
+            preview_row(&text, "SSH keys").is_none() && preview_row(&text, "Cloud-init").is_some(),
+            "{text}"
+        );
+
+        // A stock image's redeploy takes the saved keys, or refuses.
+        let redeploy = ["instance", "redeploy", &id, "--stock-image", "alpine-edge"];
+        let (url, _) = canned_server(vec![
+            (200, instance.clone()),
+            (200, json!([key]).to_string()),
+        ])
+        .await;
+        let text = execute(&account_command(&url, &seed, &redeploy))
+            .await
+            .unwrap_err()
+            .to_string();
+        assert_eq!(
+            preview_row(&text, "SSH keys").as_deref(),
+            Some("1 saved in the account"),
+            "{text}"
+        );
+        let (url, _) = canned_server(vec![(200, instance.clone()), (200, "[]".to_owned())]).await;
+        let error = execute(&account_command(&url, &seed, &redeploy))
+            .await
+            .unwrap_err();
+        assert!(error.downcast_ref::<Confirmation>().is_none(), "{error:#}");
+        assert!(
+            error
+                .to_string()
+                .contains("a stock image is reached over SSH"),
+            "{error:#}"
+        );
+
+        // A backend that cannot answer: the title and the sentences still
+        // print, and nothing is written.
+        let (url, received) = canned_server(vec![
+            (503, down.clone()),
+            (503, down.clone()),
+            (503, down.clone()),
+        ])
+        .await;
+        let text = execute(&account_command(
+            &url,
+            &seed,
+            &["instance", "reinstall", &id, "--image", "arch-linux"],
+        ))
+        .await
+        .unwrap_err()
+        .to_string();
+        assert!(
+            text.starts_with(&format!(
+                "Reinstall {id}\n  Image  arch-linux\n\nReinstall destroys"
+            )),
+            "{text}"
+        );
+        assert!(
+            request_lines(&received)
+                .iter()
+                .all(|line| line.starts_with("GET ")),
+            "{:?}",
+            request_lines(&received)
+        );
+    }
+
+    /// A file name that is not UTF-8 neither stops the preview nor changes
+    /// in the command to repeat: it is written byte by byte in the form a
+    /// shell reads back.
+    #[cfg(unix)]
+    #[test]
+    fn a_command_to_repeat_keeps_file_names_that_are_not_utf8() {
+        use std::{ffi::OsString, os::unix::ffi::OsStringExt as _};
+
+        let file = OsString::from_vec(b"/tmp/a\xffb'c\\d".to_vec());
+        let arguments = [
+            OsString::from("/usr/bin/ghost"),
+            OsString::from("account"),
+            OsString::from("migrate-seed"),
+            OsString::from("--new-seed-file"),
+            file,
+        ];
+        assert_eq!(
+            go_ahead_command(&arguments),
+            "ghost account migrate-seed --new-seed-file $'/tmp/a\\xffb\\'c\\\\d' --yes"
+        );
+        let error = Preview::new("Migrate the account key", "sentence")
+            .effect("it migrates")
+            .refusal_for(&arguments);
+        let text = error.to_string();
+        assert!(
+            text.starts_with(
+                "Migrate the account key\n\nIt migrates.\nTo go ahead:  ghost account"
+            ) && ends_with_go_ahead(&text),
+            "{text}"
+        );
     }
 
     /// `ghost instance get` says a limit or block in a line, a control byte

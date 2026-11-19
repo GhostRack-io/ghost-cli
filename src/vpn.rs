@@ -701,14 +701,16 @@ pub(crate) async fn execute(
             idempotency,
         } => {
             if !*yes {
-                let connection_id = resolve(api, connection, false).await.ok();
-                let view = match connection_id {
-                    Some(connection_id) => {
-                        api.read(&GetVpnConnection { connection_id }, "").await.ok()
-                    }
+                // The connection is read, but only a backend that cannot be
+                // reached leaves its rows out: one that does not know it
+                // refuses, as the deletion would.
+                let connection_id = crate::preview_lookup(resolve(api, connection, false).await)?;
+                let view: Option<VpnConnectionView> = match connection_id {
+                    Some(connection_id) => crate::preview_lookup(
+                        api.read(&GetVpnConnection { connection_id }, "").await,
+                    )?,
                     None => None,
                 };
-                let view: Option<VpnConnectionView> = view;
                 let typed = crate::instance_reference_text(connection);
                 let name = view.as_ref().map_or(typed, |view| view.name.clone());
                 let title = match connection_id {
