@@ -503,7 +503,8 @@ enum AccountCommand {
         #[arg(long)]
         yes: bool,
         /// Also print a reinstall's cloud-init user data and first-boot
-        /// command in full, which the request otherwise shows by size.
+        /// command in full, which the request otherwise shows by size and
+        /// SHA-256.
         #[arg(long)]
         show_data: bool,
     },
@@ -5860,6 +5861,17 @@ impl Preview {
         self
     }
 
+    /// A row of several lines: the first value under `label`, each other
+    /// one on its own line below it, in the values' column.
+    fn rows(mut self, label: &'static str, values: Vec<String>) -> Self {
+        let mut label = label;
+        for value in values.into_iter().filter(|value| !value.is_empty()) {
+            self.rows.push((label, value));
+            label = "";
+        }
+        self
+    }
+
     /// A sentence of what the command does: its first letter capitalized
     /// and a full stop added.
     fn effect(mut self, sentence: &str) -> Self {
@@ -8856,11 +8868,11 @@ async fn quote_operation(
                         ),
                 ),
             )
-            .row("SSH keys", Some(keys))
-            .row("Cloud-init", Some(data_size(request.cloud_init.as_deref())))
+            .rows("SSH keys", keys)
+            .row("Cloud-init", Some(data_fact(request.cloud_init.as_deref())))
             .row(
                 "First-boot command",
-                Some(data_size(request.startup_command.as_deref())),
+                Some(data_fact(request.startup_command.as_deref())),
             )
             .said(REINSTALL_SAID)
             .effect(forced.as_deref().unwrap_or_default());
@@ -8894,7 +8906,7 @@ async fn quote_operation(
                 String::new(),
             )
             .row("Instance", instance_preview_row(instance.as_ref()))
-            .row("SSH keys", Some(keys))
+            .rows("SSH keys", keys)
             .row(
                 "Firewall",
                 request
@@ -8927,7 +8939,7 @@ async fn quote_operation(
                 String::new(),
             )
             .row("Instance", instance_preview_row(instance.as_ref()))
-            .row("SSH keys", Some(keys));
+            .rows("SSH keys", keys);
             for line in preview.lines() {
                 notice(&line);
             }
@@ -8964,15 +8976,28 @@ fn approval_title(
 }
 
 /// The SSH keys an instance action installs, as its approval screen shows
-/// them: the saved ones by label (every saved key when the request names
-/// none, `ids` absent), then the pasted ones by count. A saved key that
-/// cannot be read now is shown by its ID.
-async fn approval_keys(api: &ApiClient, ids: Option<&[Uuid]>, pasted: &[String]) -> String {
+/// them ([`approval_key_lines`]), with the account's saved keys read now.
+async fn approval_keys(api: &ApiClient, ids: Option<&[Uuid]>, pasted: &[String]) -> Vec<String> {
     let saved: Vec<ghostrack_client_api::website::AccountSshKeyView> = api
         .read(&ghostrack_client_api::api::ListAccountSshKeys, "")
         .await
         .unwrap_or_default();
-    let mut names: Vec<String> = match ids {
+    approval_key_lines(&saved, ids, pasted)
+}
+
+/// The lines of an instance action's SSH keys on its approval screen: the
+/// `saved` ones it names by label on the first (every saved key when the
+/// request names none, `ids` absent; one not among `saved` by its ID), then
+/// each pasted key on its own line by its type, SHA-256 fingerprint and
+/// comment, as `ssh-keygen -l` shows them; `none` when there are none. A
+/// saved key was added with the account key, but a pasted one only came
+/// from the website, so the screen shows which key it is, not a count.
+fn approval_key_lines(
+    saved: &[ghostrack_client_api::website::AccountSshKeyView],
+    ids: Option<&[Uuid]>,
+    pasted: &[String],
+) -> Vec<String> {
+    let names: Vec<String> = match ids {
         None => saved
             .iter()
             .map(|key| escape_control(&key.label).into_owned())
@@ -8987,23 +9012,47 @@ async fn approval_keys(api: &ApiClient, ids: Option<&[Uuid]>, pasted: &[String])
             })
             .collect(),
     };
-    match pasted.len() {
-        0 => {}
-        1 => names.push("1 pasted".to_owned()),
-        count => names.push(format!("{count} pasted")),
+    let mut lines = Vec::new();
+    if !names.is_empty() {
+        lines.push(names.join(", "));
     }
-    if names.is_empty() {
-        "none".to_owned()
-    } else {
-        names.join(", ")
+    lines.extend(pasted.iter().map(|line| pasted_key_line(line)));
+    if lines.is_empty() {
+        lines.push("none".to_owned());
     }
+    lines
 }
 
-/// A reinstall's cloud-init user data or first-boot command by its size,
-/// never its content: `not set`, or `1.2 KiB`.
-fn data_size(value: Option<&str>) -> String {
+/// A pasted SSH public key `line` as an approval screen shows it: its
+/// type, its `SHA256:` fingerprint and its comment, control characters
+/// escaped; a line that is no key the backend takes, escaped as it is.
+fn pasted_key_line(line: &str) -> String {
+    let line = line.trim();
+    let text = match ghostrack_client_api::website::ssh_public_key_fingerprint(line) {
+        Some((kind, fingerprint)) => {
+            let comment: Vec<&str> = line.split_ascii_whitespace().skip(2).collect();
+            if comment.is_empty() {
+                format!("{kind} {fingerprint}")
+            } else {
+                format!("{kind} {fingerprint} {}", comment.join(" "))
+            }
+        }
+        None => line.to_owned(),
+    };
+    escape_control(&text).into_owned()
+}
+
+/// A reinstall's cloud-init user data or first-boot command as its
+/// approval screen shows it, never its content: `not set`, or its size and
+/// its SHA-256 as `sha256sum` prints it for the same text (`1.2 KiB,
+/// SHA-256 9f86…`), so that content other than the renter's shows.
+fn data_fact(value: Option<&str>) -> String {
     match value.filter(|value| !value.trim().is_empty()) {
-        Some(value) => pretty::binary_size(value.len() as u64),
+        Some(value) => format!(
+            "{}, SHA-256 {:x}",
+            pretty::binary_size(value.len() as u64),
+            Sha256::digest(value.as_bytes())
+        ),
         None => "not set".to_owned(),
     }
 }
@@ -18746,21 +18795,92 @@ mod tests {
         );
     }
 
-    /// An instance action's screen shows a reinstall's data by size, and
-    /// the instance by name and ID.
+    /// An instance action's screen shows a reinstall's data by size and
+    /// SHA-256 as `sha256sum` prints it, and the instance by name and ID.
     #[test]
-    fn an_instance_action_s_screen_shows_data_by_size() {
-        assert_eq!(data_size(None), "not set");
-        assert_eq!(data_size(Some("  ")), "not set");
+    fn an_instance_action_s_screen_shows_data_by_size_and_digest() {
+        assert_eq!(data_fact(None), "not set");
+        assert_eq!(data_fact(Some("  ")), "not set");
         assert_eq!(
-            data_size(Some(&"a".repeat(2048))),
-            pretty::binary_size(2048)
+            data_fact(Some("abc")),
+            format!(
+                "{}, SHA-256 ba7816bf8f01cfea414140de5dae2223b00361a396177a9cb410ff61f20015ad",
+                pretty::binary_size(3)
+            )
         );
         let id = Uuid::nil();
         let intent = Uuid::from_u128(1);
         assert_eq!(
             approval_title(intent, "reinstall", id, None),
             format!("Website request {intent}: reinstall {id}")
+        );
+    }
+
+    /// An instance action's screen shows each pasted SSH key by its type,
+    /// fingerprint and comment, as `ssh-keygen -l` does, on its own line
+    /// under the saved keys' labels: a key the renter did not paste shows,
+    /// where a count would not (item 296's review).
+    #[test]
+    fn an_instance_action_s_screen_shows_each_pasted_key() {
+        use ghostrack_client_api::website::AccountSshKeyView;
+
+        let saved = |n: u128, label: &str| AccountSshKeyView {
+            ssh_key_id: Uuid::from_u128(n),
+            label: label.to_owned(),
+            public_key: String::new(),
+            key_type: "ssh-ed25519".to_owned(),
+            fingerprint: String::new(),
+            created_at: Utc::now(),
+        };
+        let saved = [saved(1, "laptop"), saved(2, "work\u{1b}[2J")];
+        let pasted = [
+            "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIAABAgMEBQYHCAkKCwwNDg8QERITFBUWFxgZGhscHR4f given"
+                .to_owned(),
+            " ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIM4TI3fU48wsfY9TGfQb/qG1TJXl6/rJ/W+8bwjpmasO "
+                .to_owned(),
+            "ssh-ed25519 AAAAC3NzaC1lZDI1NTE5AAAAIM4TI3fU48wsfY9TGfQb/qG1TJXl6/rJ/W+8bwjpmasO me@\u{1b}[2Jhost two"
+                .to_owned(),
+            "not a key\u{7}".to_owned(),
+        ];
+        let lines = approval_key_lines(&saved, Some(&[Uuid::from_u128(1)]), &pasted);
+        assert_eq!(
+            lines,
+            [
+                "laptop",
+                "ssh-ed25519 SHA256:ZkAslGjFiUHdGf/WUL8rQvkib4PTvQatUV0OUQSncCA given",
+                "ssh-ed25519 SHA256:GoL1KSPCu7m7DZwAo0wdZbuDVPrVG70BAI7gIShXHWQ",
+                "ssh-ed25519 SHA256:GoL1KSPCu7m7DZwAo0wdZbuDVPrVG70BAI7gIShXHWQ me@\\u{1b}[2Jhost two",
+                "not a key\\u{7}",
+            ]
+        );
+        // Every saved key when the request names none, a missing one by
+        // its ID, and none at all.
+        assert_eq!(
+            approval_key_lines(&saved, None, &[]),
+            ["laptop, work\\u{1b}[2J"]
+        );
+        assert_eq!(
+            approval_key_lines(&saved, Some(&[Uuid::from_u128(3)]), &[]),
+            [Uuid::from_u128(3).to_string()]
+        );
+        assert_eq!(approval_key_lines(&saved, Some(&[]), &[]), ["none"]);
+        // Pasted keys alone: the first under the row's label, each other
+        // one below it in the values' column.
+        let text = Preview::new("Title", "")
+            .row("Instance", Some("web".to_owned()))
+            .rows(
+                "SSH keys",
+                approval_key_lines(&saved, Some(&[]), &pasted[..2]),
+            )
+            .lines();
+        assert_eq!(
+            text,
+            [
+                "Title",
+                "  Instance  web",
+                "  SSH keys  ssh-ed25519 SHA256:ZkAslGjFiUHdGf/WUL8rQvkib4PTvQatUV0OUQSncCA given",
+                "            ssh-ed25519 SHA256:GoL1KSPCu7m7DZwAo0wdZbuDVPrVG70BAI7gIShXHWQ",
+            ]
         );
     }
 
