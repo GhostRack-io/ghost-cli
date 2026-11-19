@@ -3290,6 +3290,14 @@ pub enum InstanceSource {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         accepted_charge: Option<AcceptedCharge>,
     },
+    /// A clone of the account's instance `instance_id` on another host of
+    /// its LAN mesh (item 295a): the new instance's root disk is a copy of
+    /// the instance's, of a running one as a backup reads it. The offering
+    /// is of the receiving host ([`MeshHostsView`]), with a root disk at
+    /// least the instance's. A backend before it refuses the kind.
+    Instance {
+        instance_id: Uuid,
+    },
 }
 
 /// The most environment variables a container instance is given.
@@ -4398,6 +4406,10 @@ pub struct InstanceView {
     /// The backup this VM was created from, if any; an in-place restore
     /// shows in `last_restore` instead.
     pub restored_from_backup_id: Option<Uuid>,
+    /// The instance this one was cloned from over the LAN mesh (item
+    /// 295a), if any; none from older backends.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub copied_from_instance_id: Option<Uuid>,
     /// The guest's hostname as the platform last set it: at the creation
     /// or the last reinstall. The guest's owner may change it inside.
     pub hostname: String,
@@ -8164,6 +8176,28 @@ pub struct LanMeshView {
     /// What traffic between instances in it costs per TiB sent, now.
     #[serde(default)]
     pub lan_mesh_microusd_per_tib: u64,
+}
+
+/// The hosts that can take a copy of an instance or of a local backup now
+/// (`ListInstanceMeshHosts`, `ListBackupMeshHosts`, item 295a): the other
+/// hosts of its host's LAN mesh, of any provider, with a proven LAN link
+/// to it and an agent that copies. Whether one has room for the new
+/// instance is the offering's.
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct MeshHostsView {
+    #[serde(default)]
+    pub hosts: Vec<MeshHostView>,
+}
+
+/// A host of [`MeshHostsView`].
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct MeshHostView {
+    pub host_id: Uuid,
+    #[serde(default)]
+    pub provider_name: String,
+    /// Its location code.
+    #[serde(default)]
+    pub location: String,
 }
 
 /// A provider with a host in a LAN mesh.

@@ -311,6 +311,7 @@ fn instance_fixture() -> InstanceView {
         instance_id: Uuid::now_v7(),
         offering_id: "offering".to_owned(),
         restored_from_backup_id: None,
+        copied_from_instance_id: None,
         hostname: "vm".to_owned(),
         tags: Vec::new(),
         redundant_tags: Vec::new(),

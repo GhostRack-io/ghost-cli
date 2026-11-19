@@ -565,6 +565,10 @@ endpoints! {
     /// month, today and in the last 15 minutes, or why it has none.
     GetInstanceMesh { instance_id: Uuid } =
         user GET "/v1/instances/{instance_id}/mesh" => crate::website::InstanceMeshView;
+    /// The hosts of the instance's LAN mesh that can take a clone of it now
+    /// (item 295a); whether one has room is its offering's.
+    ListInstanceMeshHosts { instance_id: Uuid } =
+        user GET "/v1/instances/{instance_id}/mesh-hosts" => crate::website::MeshHostsView;
     /// The current reading of each instance `ids` names (comma-separated,
     /// at most 100), as `GetInstanceUsage?resolution=current` has it; one
     /// read for a page of instances.
@@ -597,6 +601,10 @@ endpoints! {
     /// the backup list's instance filter offers.
     ListBackupInstances = user GET "/v1/backups/instances" => Vec<BackupInstanceView>;
     GetBackup { backup_id: Uuid } = user GET "/v1/backups/{backup_id}" => BackupView;
+    /// The hosts of the LAN mesh of a local backup's host that can restore
+    /// it now (item 295a); whether one has room is its offering's.
+    ListBackupMeshHosts { backup_id: Uuid } =
+        user GET "/v1/backups/{backup_id}/mesh-hosts" => crate::website::MeshHostsView;
     ListInstanceBackups { instance_id: Uuid } =
         user GET "/v1/instances/{instance_id}/backups" => Vec<BackupView>;
     CreateBackup { instance_id: Uuid } =

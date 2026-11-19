@@ -59,22 +59,22 @@ use ghostrack_client_api::{
         GetOffering, GetOperationIntent, GetProviderAgents, GetProviderBalance,
         GetProviderDisplayName, GetProviderHost, GetProviderHostInstanceUsage,
         GetProviderHostMetrics, GetProviderOutage, GetProviderReliability, GetProviderUptime,
-        GetTicket, HandOverIpPool, ListAuthKeys, ListBackups, ListContainerImages, ListImages,
-        ListIncidents, ListInstanceAddressChanges, ListInstanceBackups, ListInstanceTags,
-        ListInstanceUpgrades, ListInstances, ListIpPools, ListJobs, ListLocations,
-        ListNotifications, ListOfferings, ListPayouts, ListPrivateRenters, ListProviderConversions,
-        ListProviderHosts, ListProviderOutages, ListProviderReviews, ListSessions, ListTickets,
-        MigrateAccountSeed, MoveGatewayLocation, RedeployInstance, ReinstallInstance,
-        RemoveIpAddress, RemovePrivateRenter, RemoveWebsitePassword, RenameInstance,
-        RequestProviderDisplayName, RescueInstance, ResetInstanceAccess, RestoreBackup, RetireHost,
-        RetryHostAgentUpdate, RevokeSession, RevokeSessions, RotateGatewayKeys,
-        ScheduleHostRetirement, ScheduleInstanceRetirement, SetBackupSchedule,
-        SetHostAgentUpdatePolicy, SetHostPrivate, SetHostRentalAdmission, SetHostUplink,
-        SetIncidentState, SetInstanceBandwidthLimit, SetInstancePower, SetPayoutAddress,
-        SetPortForwards, SetTagRedundant, SetTicketState, SetWebsitePassword,
-        StartAgentUpdateSequence, StopAgentUpdateSequence, TagInstance, UnlinkGithub,
-        UpdateHostPricing, UpdateInstance, UpgradeInstance, WithdrawProviderDisplayName,
-        WriteProviderReview,
+        GetTicket, HandOverIpPool, ListAuthKeys, ListBackupMeshHosts, ListBackups,
+        ListContainerImages, ListImages, ListIncidents, ListInstanceAddressChanges,
+        ListInstanceBackups, ListInstanceMeshHosts, ListInstanceTags, ListInstanceUpgrades,
+        ListInstances, ListIpPools, ListJobs, ListLocations, ListNotifications, ListOfferings,
+        ListPayouts, ListPrivateRenters, ListProviderConversions, ListProviderHosts,
+        ListProviderOutages, ListProviderReviews, ListSessions, ListTickets, MigrateAccountSeed,
+        MoveGatewayLocation, RedeployInstance, ReinstallInstance, RemoveIpAddress,
+        RemovePrivateRenter, RemoveWebsitePassword, RenameInstance, RequestProviderDisplayName,
+        RescueInstance, ResetInstanceAccess, RestoreBackup, RetireHost, RetryHostAgentUpdate,
+        RevokeSession, RevokeSessions, RotateGatewayKeys, ScheduleHostRetirement,
+        ScheduleInstanceRetirement, SetBackupSchedule, SetHostAgentUpdatePolicy, SetHostPrivate,
+        SetHostRentalAdmission, SetHostUplink, SetIncidentState, SetInstanceBandwidthLimit,
+        SetInstancePower, SetPayoutAddress, SetPortForwards, SetTagRedundant, SetTicketState,
+        SetWebsitePassword, StartAgentUpdateSequence, StopAgentUpdateSequence, TagInstance,
+        UnlinkGithub, UpdateHostPricing, UpdateInstance, UpgradeInstance,
+        WithdrawProviderDisplayName, WriteProviderReview,
     },
     hypervisor::{GuestInitializationStatus, HostMode, PowerState, RestartPolicy},
     website::{
@@ -100,13 +100,13 @@ use ghostrack_client_api::{
         InstanceStateFilter, InstanceTagView, InstanceUpgradeView, InstanceView, IpChoice,
         JobAccepted, JobEventView, JobKind, JobPage, JobState, JobStateFilter, JobStepState,
         JobView, KindChoice, LedgerKind, LocationView, LoginGrant, MAX_SSH_PUBLIC_KEYS,
-        MemoryChoice, MigrateAccountSeedRequest, MoveGatewayLocationRequest, OfferingView,
-        PortForwardChange, PrivateRenterView, ProviderAgentsView, ProviderBalanceView,
-        ProviderConversionView, ProviderDisplayNameView, ProviderHostDetailView, ProviderHostView,
-        ProviderIncidentSeverity, ProviderIncidentState, ProviderIncidentView,
-        ProviderOutageDetailView, ProviderOutagePage, ProviderPayoutAddressView,
-        ProviderPayoutView, ProviderReliabilityView, ProviderUptimeView, RedeployInstanceRequest,
-        RedeploySetting, ReinstallInstanceRequest, RenameInstanceRequest,
+        MemoryChoice, MeshHostsView, MigrateAccountSeedRequest, MoveGatewayLocationRequest,
+        OfferingView, PortForwardChange, PrivateRenterView, ProviderAgentsView,
+        ProviderBalanceView, ProviderConversionView, ProviderDisplayNameView,
+        ProviderHostDetailView, ProviderHostView, ProviderIncidentSeverity, ProviderIncidentState,
+        ProviderIncidentView, ProviderOutageDetailView, ProviderOutagePage,
+        ProviderPayoutAddressView, ProviderPayoutView, ProviderReliabilityView, ProviderUptimeView,
+        RedeployInstanceRequest, RedeploySetting, ReinstallInstanceRequest, RenameInstanceRequest,
         RequestProviderDisplayNameRequest, RescueInstanceRequest, ResetInstanceAccessRequest,
         RestoreBackupRequest, RotateGatewayKeysRequest, SSH_PUBLIC_KEY_TYPES,
         ScheduleHostRetirementRequest, ScheduleInstanceRetirementRequest, SessionRevocationView,
@@ -480,12 +480,16 @@ struct OfferingFilters {
 #[derive(Args, Clone, Default)]
 struct OfferingPlacementFilters {
     /// Only offerings that can place an instance on this host: a host from
-    /// an offering's `host_ids`, or a local backup's `host_id`.
+    /// an offering's `host_ids`, a local backup's `host_id`, or one that
+    /// `ghost instance mesh-hosts` or `ghost backup mesh-hosts` lists for a
+    /// clone or a backup's copy.
     #[arg(long, value_name = "HOST_ID")]
     host: Option<Uuid>,
     /// Only offerings that can create an instance from this backup: a root
     /// at least as large as the backup's disk, the backup's kind (VM or
-    /// container) and, for a local backup, its host.
+    /// container) and, for a local backup, its host, or the host --host
+    /// names of its LAN mesh, where it is copied (`ghost backup
+    /// mesh-hosts`).
     #[arg(long, value_name = "BACKUP_ID")]
     for_backup: Option<Uuid>,
 }
@@ -1501,6 +1505,14 @@ enum InstanceCommand {
         #[arg(value_name = "INSTANCE", value_parser = parse_instance_reference)]
         instance_id: InstanceReference,
     },
+    /// List the hosts of the VM's LAN mesh that can take a clone of it now
+    /// (`ghost instance create --clone`), of any provider. Whether one has
+    /// room is its offering's: `ghost catalog offerings --host HOST_ID`.
+    MeshHosts {
+        /// Instance ID or name, from `ghost instance list`.
+        #[arg(value_name = "INSTANCE", value_parser = parse_instance_reference)]
+        instance_id: InstanceReference,
+    },
     /// Read what a home instance's hosted gateway counted over the last
     /// hour and day. Informational: billing never uses these figures.
     GatewayTraffic {
@@ -1818,7 +1830,7 @@ enum InstanceCommand {
 #[command(group(
     clap::ArgGroup::new("source")
         .required(true)
-        .args(["image", "backup", "container", "stock_image"])
+        .args(["image", "backup", "clone", "container", "stock_image"])
 ))]
 struct CreateInstanceArgs {
     /// Offering ID, from `ghost catalog offerings`.
@@ -1833,6 +1845,13 @@ struct CreateInstanceArgs {
     /// container instance.
     #[arg(long, value_name = "BACKUP_ID")]
     backup: Option<Uuid>,
+    /// Create a clone of this VM of yours on the offering's host, another
+    /// host of its host's LAN mesh (`ghost instance mesh-hosts`): its disk
+    /// is copied there over the mesh, a running VM's from a snapshot, and
+    /// billed as LAN mesh traffic. The offering's root disk must be at
+    /// least the VM's.
+    #[arg(long, value_name = "INSTANCE", value_parser = parse_instance_reference)]
+    clone: Option<InstanceReference>,
     #[command(flatten)]
     spec: ContainerArgs,
     /// How the VM is reached: required for home offerings; for a cloud
@@ -2523,6 +2542,14 @@ enum BackupCommand {
     /// Show one backup, a deleted one too: its state, size, prices, key
     /// fingerprint, and the instance and image it was taken of.
     Get {
+        /// Backup ID, from `ghost backup list`.
+        backup_id: Uuid,
+    },
+    /// List the hosts of a local backup's LAN mesh that can restore it now
+    /// (`ghost instance create --backup` with an offering on one of them),
+    /// of any provider. Whether one has room is its offering's: `ghost
+    /// catalog offerings --host HOST_ID --for-backup BACKUP_ID`.
+    MeshHosts {
         /// Backup ID, from `ghost backup list`.
         backup_id: Uuid,
     },
@@ -8588,6 +8615,7 @@ async fn approve_browser_operation(
                         offering: offering_id,
                         image: None,
                         backup: Some(backup_id),
+                        clone: None,
                         spec: ContainerArgs::default(),
                         gateway_tier,
                         gateway_location: None,
@@ -9217,6 +9245,11 @@ async fn execute_instance(
             let mesh: InstanceMeshView = api.read(&GetInstanceMesh { instance_id }, "").await?;
             to_value(mesh)
         }
+        InstanceCommand::MeshHosts { instance_id } => {
+            let instance_id = resolve_instance(api, instance_id, InstanceUse::Read).await?;
+            let hosts: MeshHostsView = api.read(&ListInstanceMeshHosts { instance_id }, "").await?;
+            to_value(hosts.hosts)
+        }
         InstanceCommand::GatewayTraffic { instance_id } => {
             let instance_id = resolve_instance(api, instance_id, InstanceUse::Read).await?;
             let traffic: GatewayTrafficView = api
@@ -9327,6 +9360,12 @@ async fn execute_instance(
                     "--ssh-key, --ssh-key-file, and startup commands cannot be used with --backup, whose system keeps its keys; put what the new VM needs in --cloud-init-file"
                 );
             }
+            if args.clone.is_some() && (!ssh_public_keys.is_empty() || startup_command.is_some()) {
+                refuse!(
+                    "invalid_request",
+                    "--ssh-key, --ssh-key-file, and startup commands cannot be used with --clone, whose system keeps its keys; put what the new VM needs in --cloud-init-file"
+                );
+            }
             let key = args.mutation.key();
             let mut hosted_recovery = None;
             let mut selected_backup = None;
@@ -9345,6 +9384,10 @@ async fn execute_instance(
                     billing_authorization: Some(authorization),
                     accepted_charge: None,
                 })
+            } else if let Some(clone) = &args.clone {
+                Some(InstanceSource::Instance {
+                    instance_id: resolve_instance(api, clone, InstanceUse::Read).await?,
+                })
             } else {
                 None
             };
@@ -9354,7 +9397,7 @@ async fn execute_instance(
                 let kind = if container.is_some() {
                     Some(InstanceKind::Container)
                 } else {
-                    args.image.as_ref().map(|_| InstanceKind::Vm)
+                    (args.image.is_some() || args.clone.is_some()).then_some(InstanceKind::Vm)
                 };
                 quote_offering(
                     api,
@@ -10486,6 +10529,17 @@ async fn execute_backup(cli: &Cli, api: &ApiClient, command: &BackupCommand) -> 
                 _ => api.read(&ListBackups, &backup_list_query(&query)).await?,
             };
             to_value(backups)
+        }
+        BackupCommand::MeshHosts { backup_id } => {
+            let hosts: MeshHostsView = api
+                .read(
+                    &ListBackupMeshHosts {
+                        backup_id: *backup_id,
+                    },
+                    "",
+                )
+                .await?;
+            to_value(hosts.hosts)
         }
         BackupCommand::Get { backup_id } => {
             let backup: BackupView = api
@@ -14907,18 +14961,13 @@ impl OfferingFilters {
 
     /// The filters as the catalog's query string. `backup` is the one
     /// --for-backup names: an instance created from it needs a root as large
-    /// as its disk and, for a local backup, runs on the backup's host. The
-    /// backend still checks the backup's architecture, which offerings do not
-    /// show.
+    /// as its disk and, for a local backup, runs on the backup's host, or on
+    /// the host --host names of its LAN mesh, where it is copied (item
+    /// 295a). The backend still checks the backup's architecture, which
+    /// offerings do not show, and that the host is of the mesh.
     fn query(&self, backup: Option<&BackupView>) -> Result<String> {
         let backup_host = backup.and_then(|backup| backup.host_id);
-        let host = match (self.placement.host, backup_host) {
-            (Some(host), Some(backup_host)) if host != backup_host => bail!(
-                "backup {} is stored on host {backup_host}, where an instance created from it runs; leave out --host or pass that host",
-                backup.map(|backup| backup.backup_id).unwrap_or_default()
-            ),
-            (host, backup_host) => host.or(backup_host),
-        };
+        let host = self.placement.host.or(backup_host);
         // An instance from a backup is of the backup's kind: only the
         // offerings that take that kind.
         let backup_kind = match backup.map(|backup| backup.kind) {
@@ -18365,6 +18414,7 @@ mod tests {
             instance_id,
             offering_id: "offering".to_owned(),
             restored_from_backup_id: None,
+            copied_from_instance_id: None,
             hostname: "vm".to_owned(),
             tags: Vec::new(),
             redundant_tags: Vec::new(),
@@ -25631,6 +25681,68 @@ mod tests {
             "sla_credit_multiplier": 1, "available_hosts": host_ids.len()})
     }
 
+    /// A clone (item 295a) is a source of its own, as an image or a backup
+    /// is, and the hosts that can take one are read by ID.
+    #[test]
+    fn a_clone_is_a_source_of_its_own() {
+        let id = Uuid::now_v7().to_string();
+        let create = |more: &[&str]| {
+            let mut line = vec!["ghost", "instance", "create", "--offering", "o"];
+            line.extend_from_slice(more);
+            Cli::try_parse_from(line)
+        };
+        assert!(create(&["--clone", &id]).is_ok());
+        assert!(create(&["--clone", "web-1"]).is_ok());
+        assert!(create(&["--clone", &id, "--backup", &id]).is_err());
+        assert!(create(&["--clone", &id, "--image", "debian-13"]).is_err());
+        assert!(Cli::try_parse_from(["ghost", "instance", "mesh-hosts", &id]).is_ok());
+        assert!(Cli::try_parse_from(["ghost", "backup", "mesh-hosts", &id]).is_ok());
+    }
+
+    #[tokio::test]
+    async fn mesh_hosts_are_read_for_an_instance_and_a_backup() {
+        let directory = tempfile::tempdir().unwrap();
+        let seed = directory.path().join("account.seed");
+        keys::generate_seed(&seed).unwrap();
+        let (instance_id, backup_id, host_id) = (Uuid::now_v7(), Uuid::now_v7(), Uuid::now_v7());
+        let (url, received) = canned_server(vec![
+            (
+                200,
+                json!({"hosts": [{"host_id": host_id, "provider_name": "Lan", "location": "de-x"}]})
+                    .to_string(),
+            ),
+            // A later backend may add fields, an older one none.
+            (200, json!({"hosts": [], "later": true}).to_string()),
+        ])
+        .await;
+        let instance = instance_id.to_string();
+        let hosts = execute(&account_command(
+            &url,
+            &seed,
+            &["instance", "mesh-hosts", &instance],
+        ))
+        .await
+        .unwrap();
+        assert_eq!(hosts[0]["host_id"], host_id.to_string());
+        assert_eq!(hosts[0]["location"], "de-x");
+        let backup = backup_id.to_string();
+        let none = execute(&account_command(
+            &url,
+            &seed,
+            &["backup", "mesh-hosts", &backup],
+        ))
+        .await
+        .unwrap();
+        assert_eq!(none, json!([]));
+        assert_eq!(
+            request_lines(&received),
+            [
+                format!("GET /v1/instances/{instance_id}/mesh-hosts"),
+                format!("GET /v1/backups/{backup_id}/mesh-hosts"),
+            ]
+        );
+    }
+
     #[tokio::test]
     async fn offering_filter_for_backup_asks_the_server_for_its_host_and_disk() {
         let directory = tempfile::tempdir().unwrap();
@@ -25651,6 +25763,7 @@ mod tests {
             (200, hosted.to_string()),
             (200, offerings.clone()),
             (200, local.to_string()),
+            (200, offerings.clone()),
             (200, local.to_string()),
             (200, offerings),
         ])
@@ -25668,16 +25781,11 @@ mod tests {
         listed(&["--for-backup", &backup, "--host", &other.to_string()])
             .await
             .unwrap();
-        // An instance from a local backup runs on the backup's host.
-        let error = listed(&["--for-backup", &backup, "--host", &other.to_string()])
+        // A local backup restores on its own host, or on another host of
+        // its LAN mesh that --host names, copied there (item 295a).
+        listed(&["--for-backup", &backup, "--host", &other.to_string()])
             .await
-            .unwrap_err();
-        assert_eq!(
-            error.to_string(),
-            format!(
-                "backup {backup_id} is stored on host {home}, where an instance created from it runs; leave out --host or pass that host"
-            )
-        );
+            .unwrap();
         listed(&["--for-backup", &backup, "--host", &home.to_string()])
             .await
             .unwrap();
@@ -25694,6 +25802,7 @@ mod tests {
                 format!("GET /v1/backups/{backup_id}"),
                 filtered(other),
                 format!("GET /v1/backups/{backup_id}"),
+                filtered(other),
                 format!("GET /v1/backups/{backup_id}"),
                 filtered(home),
             ]
