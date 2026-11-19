@@ -6043,7 +6043,15 @@ pub fn error_output(error: &anyhow::Error) -> Value {
 /// server-supplied string is passed through this before it is printed.
 #[must_use]
 pub fn escape_control(text: &str) -> Cow<'_, str> {
-    escape_matching(text, char::is_control)
+    escape_matching(text, |character| {
+        character.is_control() || is_bidi_control(character)
+    })
+}
+
+/// A Unicode direction mark, embedding, override or isolate, which reorders
+/// how the text around it displays.
+fn is_bidi_control(character: char) -> bool {
+    matches!(character, '\u{61c}' | '\u{200e}' | '\u{200f}' | '\u{202a}'..='\u{202e}' | '\u{2066}'..='\u{2069}')
 }
 
 /// [`escape_control`] for a message that spans lines: the line feed stays,
@@ -6051,7 +6059,7 @@ pub fn escape_control(text: &str) -> Cow<'_, str> {
 /// carriage return too, is escaped.
 fn escape_control_keeping_lines(text: &str) -> Cow<'_, str> {
     escape_matching(text, |character| {
-        character.is_control() && character != '\n'
+        character != '\n' && (character.is_control() || is_bidi_control(character))
     })
 }
 
@@ -9054,10 +9062,18 @@ fn approval_title(
 /// The SSH keys an instance action installs, as its approval screen shows
 /// them ([`approval_key_lines`]), with the account's saved keys read now.
 async fn approval_keys(api: &ApiClient, ids: Option<&[Uuid]>, pasted: &[String]) -> Vec<String> {
-    let saved: Vec<ghostrack_client_api::website::AccountSshKeyView> = api
+    let Ok(saved) = api
         .read(&ghostrack_client_api::api::ListAccountSshKeys, "")
         .await
-        .unwrap_or_default();
+    else {
+        // The saved keys cannot be named, but "none" would be wrong.
+        if ids.is_some() {
+            return approval_key_lines(&[], ids, pasted);
+        }
+        let mut lines = vec!["every saved key (could not be read)".to_owned()];
+        lines.extend(pasted.iter().map(|line| pasted_key_line(line)));
+        return lines;
+    };
     approval_key_lines(&saved, ids, pasted)
 }
 
@@ -15948,6 +15964,11 @@ mod tests {
             r"[run\u{1b}[2J] done\u{1b}]52;c;cm0gLXJmIH4=\u{7}\n\u{9b}31m"
         );
         assert!(matches!(escape_control("plain text"), Cow::Borrowed(_)));
+        assert_eq!(
+            escape_control("a\u{202e}b\u{2066}c"),
+            "a\\u{202e}b\\u{2066}c"
+        );
+        assert!(matches!(escape_control("e\u{200d}f"), Cow::Borrowed(_)));
 
         let error = anyhow::anyhow!("API returned 409: conflict: \u{1b}]0;owned\u{7}")
             .context("send \u{9d}mutation");
