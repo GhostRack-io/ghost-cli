@@ -17174,7 +17174,7 @@ mod tests {
         ]);
         assert!(
             create.contains(
-                "Usage: ghost instance create [OPTIONS] --offering <OFFERING> <--image <IMAGE>|--backup <BACKUP_ID>|--container <IMAGE>|--stock-image <SLUG>>"
+                "Usage: ghost instance create [OPTIONS] --offering <OFFERING> <--image <IMAGE>|--backup <BACKUP_ID>|--clone <INSTANCE>|--container <IMAGE>|--stock-image <SLUG>>"
             ),
             "{create}"
         );
