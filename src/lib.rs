@@ -5310,8 +5310,9 @@ impl Summary {
                         ("ended", Some(reason)) => format!("ended ({})", reason.replace('_', " ")),
                         (state, _) => state.to_owned(),
                     };
-                    // A size that fits the reserve is kept (item 298 of
-                    // the platform).
+                    // The newest snapshot, when it fits the reserve, is
+                    // kept (item 298 of the platform); the backend says so
+                    // of it alone.
                     let size = snapshot.size_bytes.map(|size| {
                         let size = pretty::binary_size(size);
                         if snapshot.fits_reserve == Some(true) {

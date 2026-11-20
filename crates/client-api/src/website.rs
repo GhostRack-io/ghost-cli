@@ -4203,8 +4203,10 @@ pub struct InstanceSnapshotView {
     /// holds; absent while it is being taken, and from older backends.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub size_bytes: Option<u64>,
-    /// Whether it fits the disk's snapshot reserve: one that does is never
-    /// evicted. Absent with `size_bytes`.
+    /// Of the newest snapshot that stays (creating or ready), once it has a
+    /// size: whether it fits the disk's snapshot reserve, which keeps it
+    /// from eviction. Older snapshots are evicted first whatever their size,
+    /// and have none.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub fits_reserve: Option<bool>,
 }
