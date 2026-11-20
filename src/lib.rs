@@ -3926,7 +3926,9 @@ async fn execute_command(cli: &Cli) -> Result<Value> {
         }
         Command::Instance { command } => {
             let api = api_client(cli)?;
-            execute_instance(cli, &api, command, !cli.globals.compact).await
+            // The instance commands' future is most of a command's: boxed,
+            // it stays out of every caller's (clippy's large_futures).
+            Box::pin(execute_instance(cli, &api, command, !cli.globals.compact)).await
         }
         // Offline: no backend is asked anything.
         Command::Backup {
@@ -9245,7 +9247,7 @@ async fn approve_browser_operation(
                 tags,
                 lan_mesh_id,
             } => {
-                execute_instance(
+                Box::pin(execute_instance(
                     cli,
                     api,
                     &InstanceCommand::Create(Box::new(CreateInstanceArgs {
@@ -9271,7 +9273,7 @@ async fn approve_browser_operation(
                         mutation,
                     })),
                     !cli.globals.compact,
-                )
+                ))
                 .await?
             }
             // Exactly the request approved: the backend refuses another
