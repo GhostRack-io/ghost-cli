@@ -4476,6 +4476,7 @@ impl Summary {
                         Some("user_reserve") => json!("reserved"),
                         Some("user_provider_credit") => json!("credit"),
                         Some("user_trial_credit") => json!("trial"),
+                        Some("user_trial_reserve") => json!("trial reserved"),
                         _ => entry["account_kind"].clone(),
                     };
                     json!({
@@ -6148,7 +6149,7 @@ fn provider_terms_line() -> String {
 }
 
 /// What a trial may rent, said once the trial is made and in `account show`.
-const TRIAL_LIMITS: &str = "A trial rents instances of 1 vCPU with a shared IP on the platform's own hosts, sends no outgoing mail and cannot offer hosts; a deposit lifts these limits, and the trial credit still ends on its date.";
+const TRIAL_LIMITS: &str = "A trial rents instances with a shared IP on the platform's own hosts, sends no outgoing mail and cannot offer hosts; a deposit lifts these limits, and the trial credit still ends on its date.";
 
 /// How long a GitHub claim lives, as the notice says: the longest the
 /// backend lets a link wait for its GitHub sign-in.
@@ -6384,7 +6385,6 @@ fn signup_without_credit(status: &TrialClaimStatusView, deposit_memo: &str) -> S
 fn trial_limit_lines() -> String {
     [
         "A trial account:",
-        "  rents instances of 1 vCPU only",
         "  rents with a shared IP, on the platform's own hosts only",
         "  sends no outgoing mail",
         "  cannot offer hosts",
@@ -26739,6 +26739,7 @@ mod tests {
                 "credit_left_microusd": 4_500_000,
                 "expires_at": "2026-11-01T10:00:00Z",
                 "limited": true,
+                "lift_needs_microusd": 6_000_000,
             },
         });
         let (url, _) =
@@ -26756,6 +26757,9 @@ mod tests {
         assert!(shown["trial_note"].as_str().unwrap().contains("deposit"));
         let text = render_result(&cli, &shown, Terminal::plain());
         assert!(text.contains("$4.50"), "{text}");
+        // What a deposit must leave to lift the limits (backlog item 297).
+        assert_eq!(shown["trial"]["lift_needs_microusd"], 6_000_000);
+        assert!(text.contains("$6.00"), "{text}");
         assert!(text.contains("@octocat (linked 2026-10-12)"), "{text}");
         let json_cli = account_command(&url, &seed, &["--json", "account", "show"]);
         let text = render_result(&json_cli, &shown, Terminal::plain());
@@ -26779,13 +26783,12 @@ mod tests {
             "{text}"
         );
 
-        let refusal =
-            json!({"code": "trial_limit", "message": "a trial rents only 1 vCPU instances"});
+        let refusal = json!({"code": "trial_limit", "message": "a trial account has at most 2 instances at once"});
         let api = canned_api(vec![(403, refusal.to_string())]).await;
         let error = api.read(&GetAccount, "").await.unwrap_err();
         let text = format!("{error:#}");
         assert!(
-            text.contains("a trial rents only 1 vCPU instances"),
+            text.contains("a trial account has at most 2 instances at once"),
             "{text}"
         );
         assert!(
@@ -27895,7 +27898,9 @@ mod tests {
             "{text}"
         );
         let limits = trial_limit_lines();
-        assert!(limits.starts_with("A trial account:\n  rents instances of 1 vCPU only\n"));
+        assert!(limits.starts_with(
+            "A trial account:\n  rents with a shared IP, on the platform's own hosts only\n"
+        ));
         assert!(
             limits.ends_with(
                 "A deposit lifts these limits.\nThe trial credit still ends on its date."

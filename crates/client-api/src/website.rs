@@ -251,6 +251,13 @@ pub struct AccountTrialView {
     /// the platform). `None` from older backends.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub github_credit_given: Option<bool>,
+    /// While the limits hold: the spendable balance a deposit must leave to
+    /// lift them, which is what the account's instances and VPN connections
+    /// hold of its trial credit, taken over by the balance then (backlog
+    /// item 297 of the platform). `None` once the limits are lifted, and
+    /// from older backends.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub lift_needs_microusd: Option<u64>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -307,7 +314,7 @@ pub struct AccountSessionView {
     /// signed with an account key, which has none.
     pub session: Option<WebsiteSessionView>,
     /// Whether the account is a trial whose limits hold (no deposit yet):
-    /// it rents only 1 vCPU instances with a shared IP on the trial hosts.
+    /// it rents only instances with a shared IP on the trial hosts.
     /// Absent from older backends.
     #[serde(default)]
     pub trial_limited: bool,
@@ -461,6 +468,14 @@ pub enum LedgerKind {
     SecurityDepositReturn,
     /// That deposit, kept by the platform when cheating was proven.
     SecurityDepositForfeit,
+    /// A limited trial's hold of its trial credit for an instance or a VPN
+    /// connection (backlog item 297 of the platform).
+    TrialReservation,
+    /// That hold's credit back in the trial credit.
+    TrialReservationRelease,
+    /// A deposit that lifted the trial's limits, holding the balance in
+    /// the trial credit's place.
+    TrialReservationTransfer,
     /// A variant of a newer release, which this one does not know.
     #[serde(other)]
     #[cfg_attr(feature = "clap", value(skip))]
@@ -2689,8 +2704,8 @@ pub struct OfferingView {
     /// holds its gateway tier's monthly base charge.
     #[serde(default)]
     pub balance_reservation_microusd: u64,
-    /// Whether a trial account whose limits hold may rent it: a 1 vCPU
-    /// size with a shared IP on a host the operator lists for trials. The
+    /// Whether a trial account whose limits hold may rent it: a size with a
+    /// shared IP on a host the operator lists for trials. The
     /// rental's admission decides; this tells the website to offer it.
     /// Absent from older backends.
     #[serde(default)]
