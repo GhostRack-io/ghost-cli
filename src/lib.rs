@@ -10360,6 +10360,8 @@ async fn execute_instance(
                 }
                 _ => api.read(&GetHttpProxy { instance_id }, "").await?,
             };
+            // The view is printed as parsed: a status or protocol this
+            // client does not know shows as `unknown` in `--json`.
             to_value(view)
         }
         InstanceCommand::RotateGatewayKeys(args) => {
@@ -17356,9 +17358,11 @@ mod tests {
         waiting.ready = false;
         waiting.error = Some("node is starting".to_owned());
         assert!(proxy_readable(&waiting, None, Terminal::plain()).contains("node is starting"));
-        let again: HttpProxyView =
-            serde_json::from_value(serde_json::to_value(&view).unwrap()).unwrap();
+        // `--json` prints the view as it parses: the same JSON comes back.
+        let json = serde_json::to_value(&view).unwrap();
+        let again: HttpProxyView = serde_json::from_value(json.clone()).unwrap();
         assert_eq!(again.entries.len(), 3);
+        assert_eq!(serde_json::to_value(&again).unwrap(), json);
     }
 
     #[test]
