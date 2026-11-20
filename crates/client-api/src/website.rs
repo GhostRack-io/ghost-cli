@@ -4001,6 +4001,18 @@ pub struct UpgradeInstanceRequest {
     pub offering_id: String,
 }
 
+/// Move an instance to another host of its LAN mesh (item 295b): it is
+/// stopped for the copy of its disk and keeps its ID, its address and its
+/// backups, which stay on its present host.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct MoveInstanceRequest {
+    /// An offering of another host of the instance's LAN mesh, as
+    /// `ListInstanceMeshHosts` lists the hosts, whose root disk is at least
+    /// the instance's.
+    pub offering_id: String,
+}
+
 /// A size the instance can be upgraded to: a larger offering of its host.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub struct InstanceUpgradeView {
@@ -5806,6 +5818,9 @@ pub enum JobKind {
     /// The renter changed a cloud instance between its Shared IP and a Dedicated IP. Older
     /// releases read it as [`Self::Unknown`].
     ChangeCloudAddress,
+    /// The renter moved an instance to another host of its LAN mesh (item
+    /// 295b). Older releases read it as [`Self::Unknown`].
+    MoveInstance,
     /// A variant of a newer release, which this one does not know.
     #[serde(other)]
     #[cfg_attr(feature = "clap", value(skip))]

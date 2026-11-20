@@ -65,14 +65,14 @@ use ghostrack_client_api::{
         ListInstances, ListIpPools, ListJobs, ListLocations, ListNotifications, ListOfferings,
         ListPayouts, ListPrivateRenters, ListProviderConversions, ListProviderHosts,
         ListProviderOutages, ListProviderReviews, ListSessions, ListTickets, MigrateAccountSeed,
-        MoveGatewayLocation, RedeployInstance, ReinstallInstance, RemoveHttpProxyEntry,
-        RemoveIpAddress, RemovePrivateRenter, RemoveWebsitePassword, RenameInstance,
-        RequestProviderDisplayName, RescueInstance, ResetInstanceAccess, RestoreBackup, RetireHost,
-        RetryHostAgentUpdate, RevokeSession, RevokeSessions, RotateGatewayKeys, SaveHttpProxyEntry,
-        ScheduleHostRetirement, ScheduleInstanceRetirement, SetBackupSchedule,
-        SetHostAgentUpdatePolicy, SetHostPrivate, SetHostRentalAdmission, SetHostUplink,
-        SetIncidentState, SetInstanceBandwidthLimit, SetInstancePower, SetPayoutAddress,
-        SetPortForwards, SetTagRedundant, SetTicketState, SetWebsitePassword,
+        MoveGatewayLocation, MoveInstance, RedeployInstance, ReinstallInstance,
+        RemoveHttpProxyEntry, RemoveIpAddress, RemovePrivateRenter, RemoveWebsitePassword,
+        RenameInstance, RequestProviderDisplayName, RescueInstance, ResetInstanceAccess,
+        RestoreBackup, RetireHost, RetryHostAgentUpdate, RevokeSession, RevokeSessions,
+        RotateGatewayKeys, SaveHttpProxyEntry, ScheduleHostRetirement, ScheduleInstanceRetirement,
+        SetBackupSchedule, SetHostAgentUpdatePolicy, SetHostPrivate, SetHostRentalAdmission,
+        SetHostUplink, SetIncidentState, SetInstanceBandwidthLimit, SetInstancePower,
+        SetPayoutAddress, SetPortForwards, SetTagRedundant, SetTicketState, SetWebsitePassword,
         StartAgentUpdateSequence, StopAgentUpdateSequence, TagInstance, UnlinkGithub,
         UpdateHostPricing, UpdateInstance, UpgradeInstance, WithdrawProviderDisplayName,
         WriteProviderReview,
@@ -102,9 +102,9 @@ use ghostrack_client_api::{
         InstanceTagView, InstanceUpgradeView, InstanceView, IpChoice, JobAccepted, JobEventView,
         JobKind, JobPage, JobState, JobStateFilter, JobStepState, JobView, KindChoice, LedgerKind,
         LocationView, LoginGrant, MAX_SSH_PUBLIC_KEYS, MemoryChoice, MeshHostsView,
-        MigrateAccountSeedRequest, MoveGatewayLocationRequest, OfferingView, PortForwardChange,
-        PrivateRenterView, ProviderAgentsView, ProviderBalanceView, ProviderConversionView,
-        ProviderDisplayNameView, ProviderHostDetailView, ProviderHostView,
+        MigrateAccountSeedRequest, MoveGatewayLocationRequest, MoveInstanceRequest, OfferingView,
+        PortForwardChange, PrivateRenterView, ProviderAgentsView, ProviderBalanceView,
+        ProviderConversionView, ProviderDisplayNameView, ProviderHostDetailView, ProviderHostView,
         ProviderIncidentSeverity, ProviderIncidentState, ProviderIncidentView,
         ProviderOutageDetailView, ProviderOutagePage, ProviderPayoutAddressView,
         ProviderPayoutView, ProviderReliabilityView, ProviderUptimeView, RedeployInstanceRequest,
@@ -1508,8 +1508,9 @@ enum InstanceCommand {
         #[arg(value_name = "INSTANCE", value_parser = parse_instance_reference)]
         instance_id: InstanceReference,
     },
-    /// List the hosts of the VM's LAN mesh that can take a clone of it now
-    /// (`ghost instance create --clone`), of any provider. Whether one has
+    /// List the hosts of the instance's LAN mesh that can take a clone of it
+    /// (`ghost instance create --clone`) or the instance itself (`ghost
+    /// instance move`) now, of any provider. Whether one has
     /// room is its offering's: `ghost catalog offerings --host HOST_ID`.
     MeshHosts {
         /// Instance ID or name, from `ghost instance list`.
@@ -1745,6 +1746,15 @@ enum InstanceCommand {
     /// filesystem grows into a larger disk on the next boot where cloud-init
     /// runs; grow it yourself on other systems.
     Upgrade(UpgradeArgs),
+    /// Move an instance to another host of its LAN mesh, at that host's
+    /// offering.
+    ///
+    /// The instance is stopped for the copy of its disk and started on the
+    /// new host if it ran. It keeps its ID, its address and its backups,
+    /// which stay on its present host. It pays the offering's price from
+    /// the move on, and the copy as LAN mesh traffic. `ghost instance
+    /// mesh-hosts` lists the hosts that can take it.
+    Move(MoveArgs),
     /// Give an instance another name, which the website and `ghost` show.
     ///
     /// The name follows the rules of a hostname. Only the platform shows it:
@@ -2204,6 +2214,22 @@ struct UpgradeArgs {
     #[arg(long, value_name = "OFFERING")]
     offering: String,
     /// Confirm the shutdown and restart of the instance.
+    #[arg(long)]
+    yes: bool,
+    #[command(flatten)]
+    mutation: MutationArgs,
+}
+
+#[derive(Args)]
+struct MoveArgs {
+    /// Instance ID or name, from `ghost instance list`.
+    #[arg(value_name = "INSTANCE", value_parser = parse_instance_reference)]
+    instance_id: InstanceReference,
+    /// An offering of another host of the instance's LAN mesh, from `ghost
+    /// catalog offerings --host HOST_ID`.
+    #[arg(long, value_name = "OFFERING")]
+    offering: String,
+    /// Confirm the stop of the instance for the copy.
     #[arg(long)]
     yes: bool,
     #[command(flatten)]
@@ -10202,6 +10228,35 @@ async fn execute_instance(
                 .await?;
             mutation_result(api, accepted, &args.mutation, show_progress).await
         }
+        InstanceCommand::Move(args) => {
+            let instance_id = resolve_instance(api, &args.instance_id, InstanceUse::Change).await?;
+            if !cli.globals.compact {
+                quote_move(api, instance_id, &args.offering).await;
+            }
+            if !args.yes {
+                return Err(Preview::new(
+                    instance_preview_title("Move", &args.instance_id, Some(instance_id), None),
+                    format!(
+                        "a move stops the instance for the copy of its disk.\nTo move: ghost instance move {} --offering {} --yes",
+                        escape_control(&instance_reference_text(&args.instance_id)),
+                        escape_control(&args.offering)
+                    ),
+                )
+                .row("Offering", Some(args.offering.clone()))
+                .effect("a move stops the instance for the copy of its disk")
+                .refusal());
+            }
+            let accepted: JobAccepted = api
+                .write_retryable(
+                    &MoveInstance { instance_id },
+                    &MoveInstanceRequest {
+                        offering_id: args.offering.clone(),
+                    },
+                    &retried_by_id(args.mutation.key(), &args.instance_id, instance_id),
+                )
+                .await?;
+            mutation_result(api, accepted, &args.mutation, show_progress).await
+        }
         InstanceCommand::Tag(TagArgs {
             command:
                 Some(TagCommand::Redundant {
@@ -12725,6 +12780,7 @@ fn job_kind_words(kind: JobKind) -> String {
         JobKind::RescueInstance => "booting into rescue",
         JobKind::EndInstanceRescue => "ending the rescue",
         JobKind::ChangeCloudAddress => "changing its address",
+        JobKind::MoveInstance => "moving to another host",
         JobKind::UpgradeInstance => "upgrading",
         JobKind::RotateGatewayKeys => "rotating gateway keys",
         JobKind::MoveGatewayLease => "moving the gateway",
@@ -13029,6 +13085,95 @@ fn upgrade_quote(
     lines.extend(quote_block(&rows, colors));
     lines.push("  The instance shuts down and starts again with the new size.".to_owned());
     Ok(lines)
+}
+
+/// What a move of `instance` to `offering` changes: the host it goes to,
+/// its size and its price.
+fn move_quote(instance: &InstanceView, offering: &OfferingView, colors: bool) -> Vec<String> {
+    let new_size = size_text(
+        offering.vcpu_count,
+        offering.memory_bytes,
+        offering.root_disk_bytes,
+    );
+    let size = if instance.vcpu_count == 0 {
+        new_size
+    } else {
+        format!(
+            "{}  →  {new_size}",
+            size_text(
+                instance.vcpu_count,
+                instance.memory_bytes,
+                instance.root_disk_bytes
+            )
+        )
+    };
+    let place = if offering.location_name.is_empty() {
+        escape_control(&offering.location).into_owned()
+    } else {
+        escape_control(&offering.location_name).into_owned()
+    };
+    let current = instance.pricing.as_ref().map(|pricing| &pricing.current);
+    let rows = vec![
+        QuoteRow::Fact(
+            "Host",
+            format!("{}, {place}", escape_control(&offering.provider_name)),
+        ),
+        QuoteRow::Fact("Size", size),
+        QuoteRow::Money(
+            "Monthly",
+            price_change(
+                current.map(|prices| prices.base_price_microusd_per_month),
+                offering.base_price_microusd_per_month,
+            ),
+            "base".to_owned(),
+        ),
+        QuoteRow::Money(
+            "",
+            price_change(
+                current.map(|prices| prices.full_utilization_price_microusd_per_month),
+                offering.full_utilization_price_microusd_per_month,
+            ),
+            "at full CPU".to_owned(),
+        ),
+    ];
+    let mut lines = vec![format!(
+        "Moving {} ({}):",
+        escape_control(instance.display_name()),
+        instance.instance_id
+    )];
+    lines.extend(quote_block(&rows, colors));
+    lines.push(
+        "  The instance stops for the copy of its disk; the copy is billed as LAN mesh traffic."
+            .to_owned(),
+    );
+    lines
+}
+
+/// Print what a move changes before it is asked for. A read that fails
+/// only costs the quote.
+async fn quote_move(api: &ApiClient, instance_id: Uuid, offering_id: &str) {
+    let colors = Terminal::stderr().colors;
+    let read = async {
+        let instance: InstanceView = api.read(&GetInstance { instance_id }, "").await?;
+        let offering: OfferingView = api
+            .read(
+                &GetOffering {
+                    offering_id: offering_id.to_owned(),
+                },
+                "",
+            )
+            .await?;
+        Ok::<_, anyhow::Error>((instance, offering))
+    };
+    match read.await {
+        Ok((instance, offering)) => {
+            for line in move_quote(&instance, &offering, colors) {
+                notice(&line);
+            }
+            notice("");
+        }
+        Err(error) => notice(&prices_unread_notice(&error)),
+    }
 }
 
 /// Print what an upgrade changes before it is asked for. A read that fails
@@ -29526,6 +29671,52 @@ mod tests {
         assert_eq!(result["job_id"], job_id.to_string());
         assert_eq!(request_lines(&received).len(), 3);
         assert!(request_lines(&received)[2].starts_with("POST /api/mut/v1/instances"));
+
+        // A move to another host without --yes: the instance and the
+        // offering read, no write, the command in the error.
+        let (url, received) =
+            canned_server(vec![(200, instance.clone()), (200, offering.clone())]).await;
+        let error = execute(&account_command(
+            &url,
+            &seed,
+            &["instance", "move", &id, "--offering", "of2_there"],
+        ))
+        .await
+        .unwrap_err();
+        assert!(
+            error.to_string().starts_with(&format!("Move {id}\n"))
+                && error
+                    .to_string()
+                    .contains("A move stops the instance for the copy of its disk.")
+                && ends_with_go_ahead(&error.to_string()),
+            "{error}"
+        );
+        assert_eq!(
+            request_lines(&received),
+            [
+                format!("GET /v1/instances/{id}"),
+                "GET /v1/catalog/offerings/of2_there".to_owned()
+            ]
+        );
+        // With --yes, the write follows the reads.
+        let (url, received) = canned_server(vec![
+            (200, instance.clone()),
+            (200, offering.clone()),
+            (200, accepted.clone()),
+        ])
+        .await;
+        let result = execute(&account_command(
+            &url,
+            &seed,
+            &["instance", "move", &id, "--offering", "of2_there", "--yes"],
+        ))
+        .await
+        .unwrap();
+        assert_eq!(result["job_id"], job_id.to_string());
+        assert_eq!(
+            request_lines(&received)[2],
+            format!("POST /api/mut/v1/instances/{id}/move")
+        );
 
         // Move with a failed offering read: the write is still sent.
         let (url, received) = canned_server(vec![
