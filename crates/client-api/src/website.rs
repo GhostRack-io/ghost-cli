@@ -1491,9 +1491,11 @@ pub struct HistoryTotalsQuery {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub limit: Option<u32>,
     /// `true`: without a `kind`, leaves out reservation hold and release
-    /// totals (`reservation_hold`, `reservation_release`); forfeits stay.
-    /// Ignored with a `kind`. False by default. Field order preserves the
-    /// API's unknown-parameter diagnostic.
+    /// totals (`reservation_hold`, `reservation_release`, and a limited
+    /// trial's `trial_reservation`, `trial_reservation_release` and
+    /// `trial_reservation_transfer`); forfeits stay. Ignored with a
+    /// `kind`. False by default. Field order preserves the API's
+    /// unknown-parameter diagnostic.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub hide_reservations: bool,
     /// Leaves out totals whose credit or charge is less than this many
