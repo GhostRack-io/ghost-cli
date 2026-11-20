@@ -5991,6 +5991,11 @@ pub struct JobSummaryView {
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,
     pub completed_at: Option<DateTime<Utc>>,
+    /// Of a snapshot's job (`instance_snapshot_create`, `_reset`, `_delete`,
+    /// item 298 of the platform), the snapshot's name. Absent for other
+    /// jobs and from older responses.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub snapshot_name: Option<String>,
 }
 
 /// A page of the account job list, newest first.
