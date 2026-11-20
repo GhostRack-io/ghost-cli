@@ -13692,7 +13692,7 @@ fn move_quote(
     )];
     lines.extend(quote_block(&rows, colors));
     lines.push(
-        "  The instance stops for the copy of its disk, which gets a new ID and the instance's address."
+        "  The instance stops for the copy of its disk; the copy is a new instance with a new ID and the instance's address."
             .to_owned(),
     );
     lines.push("  The copy is billed as LAN mesh traffic.".to_owned());
