@@ -96,18 +96,19 @@ use ghostrack_client_api::{
         DeclareHostEmergencyRequest, DepositLookupView, DiskChoice, DownloadBackupRequest,
         GatewayTier, GatewayTrafficView, GithubUnlinked, HandOverCloudIpPoolRequest,
         HostAgentUpdateView, HostEnrollmentToken, HostModeFilter, HostPrivacyView, HttpProxyEntry,
-        HttpProxyProtocol, HttpProxyView, ImageView, InstanceConsoleLogView, InstanceEgressLevel,
-        InstanceKind, InstanceListQuery, InstanceMeshView, InstanceProjectionView, InstanceSort,
-        InstanceSource, InstanceState, InstanceStateFilter, InstanceTagView, InstanceUpgradeView,
-        InstanceView, IpChoice, JobAccepted, JobEventView, JobKind, JobPage, JobState,
-        JobStateFilter, JobStepState, JobView, KindChoice, LedgerKind, LocationView, LoginGrant,
-        MAX_SSH_PUBLIC_KEYS, MemoryChoice, MeshHostsView, MigrateAccountSeedRequest,
-        MoveGatewayLocationRequest, OfferingView, PortForwardChange, PrivateRenterView,
-        ProviderAgentsView, ProviderBalanceView, ProviderConversionView, ProviderDisplayNameView,
-        ProviderHostDetailView, ProviderHostView, ProviderIncidentSeverity, ProviderIncidentState,
-        ProviderIncidentView, ProviderOutageDetailView, ProviderOutagePage,
-        ProviderPayoutAddressView, ProviderPayoutView, ProviderReliabilityView, ProviderUptimeView,
-        RedeployInstanceRequest, RedeploySetting, ReinstallInstanceRequest, RenameInstanceRequest,
+        HttpProxyEntryView, HttpProxyProtocol, HttpProxyView, ImageView, InstanceConsoleLogView,
+        InstanceEgressLevel, InstanceKind, InstanceListQuery, InstanceMeshView,
+        InstanceProjectionView, InstanceSort, InstanceSource, InstanceState, InstanceStateFilter,
+        InstanceTagView, InstanceUpgradeView, InstanceView, IpChoice, JobAccepted, JobEventView,
+        JobKind, JobPage, JobState, JobStateFilter, JobStepState, JobView, KindChoice, LedgerKind,
+        LocationView, LoginGrant, MAX_SSH_PUBLIC_KEYS, MemoryChoice, MeshHostsView,
+        MigrateAccountSeedRequest, MoveGatewayLocationRequest, OfferingView, PortForwardChange,
+        PrivateRenterView, ProviderAgentsView, ProviderBalanceView, ProviderConversionView,
+        ProviderDisplayNameView, ProviderHostDetailView, ProviderHostView,
+        ProviderIncidentSeverity, ProviderIncidentState, ProviderIncidentView,
+        ProviderOutageDetailView, ProviderOutagePage, ProviderPayoutAddressView,
+        ProviderPayoutView, ProviderReliabilityView, ProviderUptimeView, RedeployInstanceRequest,
+        RedeploySetting, ReinstallInstanceRequest, RenameInstanceRequest,
         RequestProviderDisplayNameRequest, RescueInstanceRequest, ResetInstanceAccessRequest,
         RestoreBackupRequest, RotateGatewayKeysRequest, SSH_PUBLIC_KEY_TYPES,
         SaveHttpProxyEntryRequest, ScheduleHostRetirementRequest,
@@ -2508,14 +2509,29 @@ fn proxy_add_entry(args: &ProxyAddArgs) -> Result<HttpProxyEntry> {
     })
 }
 
-/// The route `ghost instance proxy INSTANCE set` sends: the saved route's
-/// port and protocol, and only the fields `args` names.
-fn proxy_set_entry(saved: &HttpProxyView, args: &ProxySetArgs) -> Result<HttpProxyEntry> {
-    let Some(route) = saved
+/// The saved route called `name`. The backend lowercases a route's name,
+/// so a name typed with capitals finds it.
+fn proxy_route<'a>(saved: &'a HttpProxyView, name: &str) -> Option<&'a HttpProxyEntryView> {
+    saved
         .entries
         .iter()
-        .find(|entry| entry.subdomain == args.subdomain)
-    else {
+        .find(|entry| entry.subdomain.eq_ignore_ascii_case(name))
+}
+
+/// The route `ghost instance proxy INSTANCE set` sends: the saved route's
+/// port and protocol, and only the fields `args` names.
+///
+/// A retry with the same `--idempotency-key` of a `--rename` whose answer
+/// was lost finds the route under its new name: the request is built from
+/// that route, which makes the body the first one, and the backend replays
+/// its answer.
+fn proxy_set_entry(saved: &HttpProxyView, args: &ProxySetArgs) -> Result<HttpProxyEntry> {
+    let renamed = args
+        .rename
+        .as_deref()
+        .filter(|_| args.idempotency.has_key())
+        .and_then(|name| proxy_route(saved, name));
+    let Some(route) = proxy_route(saved, &args.subdomain).or(renamed) else {
         let names: Vec<String> = saved
             .entries
             .iter()
@@ -2614,7 +2630,7 @@ fn proxy_readable(view: &HttpProxyView, only: Option<&str>, terminal: Terminal) 
     let routes = view
         .entries
         .iter()
-        .filter(|entry| only.is_none_or(|name| entry.subdomain == name));
+        .filter(|entry| only.is_none_or(|name| entry.subdomain.eq_ignore_ascii_case(name)));
     let (mut rows, mut dns, mut errors) = (Vec::new(), Vec::new(), Vec::new());
     for entry in routes {
         let passthrough = entry.protocol == HttpProxyProtocol::Https;
@@ -17225,6 +17241,89 @@ mod tests {
         assert!(set(&["app", "--proxy-protocol"]).is_err());
         assert!(set(&["pass", "--origin-host", "x.test"]).is_err());
         assert!(set(&["pass", "--no-redirect"]).is_err());
+    }
+
+    fn proxy_set(view: &HttpProxyView, arguments: &[&str]) -> Result<HttpProxyEntry> {
+        let mut line = vec!["set"];
+        line.extend(arguments);
+        match proxy_parse(&line).expect("parses") {
+            Some(ProxyAction::Set(set)) => proxy_set_entry(view, &set),
+            _ => panic!("not set"),
+        }
+    }
+
+    /// The backend lowercases a route's name: a name typed with capitals
+    /// still finds the saved route, to change it and to show it.
+    #[test]
+    fn proxy_names_are_found_whatever_their_case() {
+        let view = proxy_view();
+        let entry = proxy_set(&view, &["App", "--port", "81"]).unwrap();
+        assert_eq!((entry.subdomain.as_str(), entry.port), ("App", 81));
+        assert_eq!(entry.protocol, Some(HttpProxyProtocol::Http));
+        let renamed = proxy_set(&view, &["SECURE", "--rename", "Site"]).unwrap();
+        assert_eq!(
+            (renamed.subdomain.as_str(), renamed.port, renamed.protocol),
+            ("Site", 8080, Some(HttpProxyProtocol::HttpsTerminated))
+        );
+        let error = proxy_set(&view, &["Nope", "--port", "80"])
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("app, secure, pass"), "{error}");
+        // `add MyApp` saves `myapp`: the saved route is shown, with the DNS
+        // lines a name that needs them asks for.
+        let mut saved = proxy_view();
+        saved.entries.truncate(2);
+        saved.entries[1].subdomain = "myapp".to_owned();
+        let text = proxy_readable(&saved, Some("MyApp"), Terminal::plain());
+        assert!(
+            text.contains("myapp") && !text.contains("app.node.example.test"),
+            "{text}"
+        );
+        assert!(
+            text.contains("CNAME") && text.contains("secure.node.example.test"),
+            "{text}"
+        );
+    }
+
+    /// A retry with the key of a `--rename` whose answer was lost finds the
+    /// route under its new name, and sends the first request again so that
+    /// the backend replays its answer.
+    #[test]
+    fn a_renaming_retry_sends_the_first_request_again() {
+        let key = ["--idempotency-key", "retry-key-0123456789"];
+        let first_view = proxy_view();
+        let mut renamed_view = proxy_view();
+        renamed_view.entries[0].subdomain = "site".to_owned();
+        for arguments in [
+            &["app", "--rename", "site"][..],
+            &["app", "--rename", "site", "--port", "1021"],
+            &["app", "--rename", "site", "--protocol", "http"],
+        ] {
+            let first = proxy_set(&first_view, arguments).unwrap();
+            let mut retry = arguments.to_vec();
+            retry.extend(key);
+            assert_eq!(
+                proxy_set(&renamed_view, &retry).unwrap(),
+                first,
+                "{arguments:?}"
+            );
+        }
+        // Without the key, or when the new name is no saved route either, the
+        // route is unknown, and the error names the routes there are.
+        let error = proxy_set(&renamed_view, &["app", "--rename", "site"])
+            .unwrap_err()
+            .to_string();
+        assert!(
+            error.contains("no route named app") && error.contains("site"),
+            "{error}"
+        );
+        let mut other = vec!["app", "--rename", "elsewhere"];
+        other.extend(key);
+        let error = proxy_set(&renamed_view, &other).unwrap_err().to_string();
+        assert!(error.contains("no route named app"), "{error}");
+        let mut port = vec!["app", "--port", "81"];
+        port.extend(key);
+        assert!(proxy_set(&renamed_view, &port).is_err());
     }
 
     #[test]
