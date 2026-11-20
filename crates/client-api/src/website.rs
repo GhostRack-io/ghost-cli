@@ -180,11 +180,15 @@ pub struct ActivateWithCreditLinkRequest {
 }
 
 /// Redeems a credit link for the account (`RedeemCreditLink`): the link
-/// as pasted, or its token.
+/// as pasted, or its token, and the sign-up's reservation of it this
+/// browser holds, if any, which the redemption takes instead of another
+/// (the website's, from its cookie).
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct RedeemCreditLinkRequest {
     pub token: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reservation_id: Option<Uuid>,
 }
 
 /// The trial credit a redemption added and the date it expires.
@@ -242,6 +246,11 @@ pub struct AccountTrialView {
     /// When the credit ended: expired, or ended by the operator.
     #[serde(default)]
     pub ended_at: Option<DateTime<Utc>>,
+    /// Whether the account was given the GitHub trial credit, which it is
+    /// given once; a credit link's credit is not it (backlog item 294 of
+    /// the platform). `None` from older backends.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub github_credit_given: Option<bool>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
