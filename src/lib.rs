@@ -54,10 +54,10 @@ use ghostrack_client_api::{
         DeleteBackup, DeleteInstance, DeleteIpPool, DownloadBackup, EndInstanceRescue, GetAccount,
         GetAccountBalance, GetActivationTerms, GetBackup, GetBackupPricing, GetBackupSchedule,
         GetDepositLookup, GetGithubClaim, GetHostAgentUpdate, GetHostNetworkTests, GetHostPricing,
-        GetHostPrivacy, GetIncident, GetInstance, GetInstanceConsoleLog, GetInstanceGatewayTraffic,
-        GetInstanceLogs, GetInstanceMesh, GetInstanceMeshUsage, GetInstanceUsage, GetJob,
-        GetOffering, GetOperationIntent, GetProviderAgents, GetProviderBalance,
-        GetProviderDisplayName, GetProviderHost, GetProviderHostInstanceUsage,
+        GetHostPrivacy, GetHttpProxy, GetIncident, GetInstance, GetInstanceConsoleLog,
+        GetInstanceGatewayTraffic, GetInstanceLogs, GetInstanceMesh, GetInstanceMeshUsage,
+        GetInstanceUsage, GetJob, GetOffering, GetOperationIntent, GetProviderAgents,
+        GetProviderBalance, GetProviderDisplayName, GetProviderHost, GetProviderHostInstanceUsage,
         GetProviderHostMetrics, GetProviderOutage, GetProviderReliability, GetProviderUptime,
         GetTicket, HandOverIpPool, ListAuthKeys, ListBackupMeshHosts, ListBackups,
         ListContainerImages, ListImages, ListIncidents, ListInstanceAddressChanges,
@@ -65,16 +65,17 @@ use ghostrack_client_api::{
         ListInstances, ListIpPools, ListJobs, ListLocations, ListNotifications, ListOfferings,
         ListPayouts, ListPrivateRenters, ListProviderConversions, ListProviderHosts,
         ListProviderOutages, ListProviderReviews, ListSessions, ListTickets, MigrateAccountSeed,
-        MoveGatewayLocation, RedeployInstance, ReinstallInstance, RemoveIpAddress,
-        RemovePrivateRenter, RemoveWebsitePassword, RenameInstance, RequestProviderDisplayName,
-        RescueInstance, ResetInstanceAccess, RestoreBackup, RetireHost, RetryHostAgentUpdate,
-        RevokeSession, RevokeSessions, RotateGatewayKeys, ScheduleHostRetirement,
-        ScheduleInstanceRetirement, SetBackupSchedule, SetHostAgentUpdatePolicy, SetHostPrivate,
-        SetHostRentalAdmission, SetHostUplink, SetIncidentState, SetInstanceBandwidthLimit,
-        SetInstancePower, SetPayoutAddress, SetPortForwards, SetTagRedundant, SetTicketState,
-        SetWebsitePassword, StartAgentUpdateSequence, StopAgentUpdateSequence, TagInstance,
-        UnlinkGithub, UpdateHostPricing, UpdateInstance, UpgradeInstance,
-        WithdrawProviderDisplayName, WriteProviderReview,
+        MoveGatewayLocation, RedeployInstance, ReinstallInstance, RemoveHttpProxyEntry,
+        RemoveIpAddress, RemovePrivateRenter, RemoveWebsitePassword, RenameInstance,
+        RequestProviderDisplayName, RescueInstance, ResetInstanceAccess, RestoreBackup, RetireHost,
+        RetryHostAgentUpdate, RevokeSession, RevokeSessions, RotateGatewayKeys, SaveHttpProxyEntry,
+        ScheduleHostRetirement, ScheduleInstanceRetirement, SetBackupSchedule,
+        SetHostAgentUpdatePolicy, SetHostPrivate, SetHostRentalAdmission, SetHostUplink,
+        SetIncidentState, SetInstanceBandwidthLimit, SetInstancePower, SetPayoutAddress,
+        SetPortForwards, SetTagRedundant, SetTicketState, SetWebsitePassword,
+        StartAgentUpdateSequence, StopAgentUpdateSequence, TagInstance, UnlinkGithub,
+        UpdateHostPricing, UpdateInstance, UpgradeInstance, WithdrawProviderDisplayName,
+        WriteProviderReview,
     },
     hypervisor::{GuestInitializationStatus, HostMode, PowerState, RestartPolicy},
     website::{
@@ -94,33 +95,34 @@ use ghostrack_client_api::{
         CreateInstanceRequest, CreateProviderPayoutRequest, CreateSupportTicketRequest,
         DeclareHostEmergencyRequest, DepositLookupView, DiskChoice, DownloadBackupRequest,
         GatewayTier, GatewayTrafficView, GithubUnlinked, HandOverCloudIpPoolRequest,
-        HostAgentUpdateView, HostEnrollmentToken, HostModeFilter, HostPrivacyView, ImageView,
-        InstanceConsoleLogView, InstanceEgressLevel, InstanceKind, InstanceListQuery,
-        InstanceMeshView, InstanceProjectionView, InstanceSort, InstanceSource, InstanceState,
-        InstanceStateFilter, InstanceTagView, InstanceUpgradeView, InstanceView, IpChoice,
-        JobAccepted, JobEventView, JobKind, JobPage, JobState, JobStateFilter, JobStepState,
-        JobView, KindChoice, LedgerKind, LocationView, LoginGrant, MAX_SSH_PUBLIC_KEYS,
-        MemoryChoice, MeshHostsView, MigrateAccountSeedRequest, MoveGatewayLocationRequest,
-        OfferingView, PortForwardChange, PrivateRenterView, ProviderAgentsView,
-        ProviderBalanceView, ProviderConversionView, ProviderDisplayNameView,
+        HostAgentUpdateView, HostEnrollmentToken, HostModeFilter, HostPrivacyView, HttpProxyEntry,
+        HttpProxyProtocol, HttpProxyView, ImageView, InstanceConsoleLogView, InstanceEgressLevel,
+        InstanceKind, InstanceListQuery, InstanceMeshView, InstanceProjectionView, InstanceSort,
+        InstanceSource, InstanceState, InstanceStateFilter, InstanceTagView, InstanceUpgradeView,
+        InstanceView, IpChoice, JobAccepted, JobEventView, JobKind, JobPage, JobState,
+        JobStateFilter, JobStepState, JobView, KindChoice, LedgerKind, LocationView, LoginGrant,
+        MAX_SSH_PUBLIC_KEYS, MemoryChoice, MeshHostsView, MigrateAccountSeedRequest,
+        MoveGatewayLocationRequest, OfferingView, PortForwardChange, PrivateRenterView,
+        ProviderAgentsView, ProviderBalanceView, ProviderConversionView, ProviderDisplayNameView,
         ProviderHostDetailView, ProviderHostView, ProviderIncidentSeverity, ProviderIncidentState,
         ProviderIncidentView, ProviderOutageDetailView, ProviderOutagePage,
         ProviderPayoutAddressView, ProviderPayoutView, ProviderReliabilityView, ProviderUptimeView,
         RedeployInstanceRequest, RedeploySetting, ReinstallInstanceRequest, RenameInstanceRequest,
         RequestProviderDisplayNameRequest, RescueInstanceRequest, ResetInstanceAccessRequest,
         RestoreBackupRequest, RotateGatewayKeysRequest, SSH_PUBLIC_KEY_TYPES,
-        ScheduleHostRetirementRequest, ScheduleInstanceRetirementRequest, SessionRevocationView,
-        SetAgentUpdatePolicyRequest, SetBackupScheduleRequest, SetHostPrivateRequest,
-        SetHostRentalPauseRequest, SetHostUplinkRequest, SetInstanceBandwidthLimitRequest,
-        SetPortForwardsRequest, SetPowerStateRequest, SetProviderIncidentStateRequest,
-        SetProviderPayoutAddressRequest, SetSupportTicketStateRequest, SetTagRedundantRequest,
-        SetWebsitePasswordRequest, SortOrder, StartAgentUpdateSequenceRequest,
-        SupportTicketCategory, SupportTicketPriority, SupportTicketResourceInput,
-        SupportTicketState, SupportTicketSummaryView, SupportTicketView, SupportWaitingOn,
-        TAG_RULE, TagInstanceRequest, TrialClaimStatus, TrialClaimStatusView, TrialClaimView,
-        UpdateInstanceRequest, UpgradeInstanceRequest, UserNotificationView,
-        WebsitePasswordRemoved, WebsitePasswordView, backup_byte_charge, readable_console_log,
-        readable_console_output, valid_hostname, valid_ssh_public_key, valid_tag,
+        SaveHttpProxyEntryRequest, ScheduleHostRetirementRequest,
+        ScheduleInstanceRetirementRequest, SessionRevocationView, SetAgentUpdatePolicyRequest,
+        SetBackupScheduleRequest, SetHostPrivateRequest, SetHostRentalPauseRequest,
+        SetHostUplinkRequest, SetInstanceBandwidthLimitRequest, SetPortForwardsRequest,
+        SetPowerStateRequest, SetProviderIncidentStateRequest, SetProviderPayoutAddressRequest,
+        SetSupportTicketStateRequest, SetTagRedundantRequest, SetWebsitePasswordRequest, SortOrder,
+        StartAgentUpdateSequenceRequest, SupportTicketCategory, SupportTicketPriority,
+        SupportTicketResourceInput, SupportTicketState, SupportTicketSummaryView,
+        SupportTicketView, SupportWaitingOn, TAG_RULE, TagInstanceRequest, TrialClaimStatus,
+        TrialClaimStatusView, TrialClaimView, UpdateInstanceRequest, UpgradeInstanceRequest,
+        UserNotificationView, WebsitePasswordRemoved, WebsitePasswordView, backup_byte_charge,
+        readable_console_log, readable_console_output, valid_hostname, valid_ssh_public_key,
+        valid_tag,
     },
     website_password,
 };
@@ -1812,6 +1814,15 @@ enum InstanceCommand {
     /// to another gateway gives the VM other ports, each going where the
     /// one in its place went.
     Ports(PortsArgs),
+    /// List a VM's or container's HTTP proxy routes, or add, change and remove them.
+    ///
+    /// The HTTP proxy publishes an app at `https://SUBDOMAIN.<node>.ghostrack.cloud/`,
+    /// the routes of the instance's Settings page. With a Shared IP, a route's
+    /// port is one of the instance's public TCP forwards (`ghost instance
+    /// ports`); with a Dedicated IP, it is the port of the instance. The DNS
+    /// records a custom hostname needs are listed under the routes; see
+    /// App domains in the networking documentation.
+    Proxy(ProxyArgs),
     /// Irreversibly enqueue instance deletion.
     ///
     /// An instance older than 10 days is turned off now and deleted after
@@ -2299,6 +2310,388 @@ enum PortsAction {
         #[command(flatten)]
         idempotency: IdempotencyArgs,
     },
+}
+
+#[derive(Args)]
+struct ProxyArgs {
+    /// Instance ID or name.
+    #[arg(value_name = "INSTANCE", value_parser = parse_instance_reference)]
+    instance_id: InstanceReference,
+    #[command(subcommand)]
+    action: Option<ProxyAction>,
+}
+
+#[derive(Subcommand)]
+enum ProxyAction {
+    /// Add a route.
+    Add(ProxyAddArgs),
+    /// Change a route; what is not named stays as it is.
+    Set(ProxySetArgs),
+    /// Remove a route.
+    Remove(ProxyRemoveArgs),
+}
+
+/// A route's protocol, in the website's words.
+#[derive(Clone, Copy, PartialEq, Eq, ValueEnum)]
+enum ProxyProtocolArg {
+    /// "HTTP": the proxy serves the managed HTTPS address and connects to
+    /// the instance over HTTP.
+    Http,
+    /// "HTTPS": the proxy serves a hostname of your own with a certificate
+    /// it issues, and connects to the instance over HTTP.
+    Https,
+    /// "HTTPS (passthrough)": the encrypted stream goes to the instance,
+    /// which serves the certificate of your hostname.
+    Passthrough,
+}
+
+impl ProxyProtocolArg {
+    const fn wire(self) -> HttpProxyProtocol {
+        match self {
+            Self::Http => HttpProxyProtocol::Http,
+            Self::Https => HttpProxyProtocol::HttpsTerminated,
+            Self::Passthrough => HttpProxyProtocol::Https,
+        }
+    }
+
+    const fn word(protocol: HttpProxyProtocol) -> &'static str {
+        match protocol {
+            HttpProxyProtocol::Http => "http",
+            HttpProxyProtocol::HttpsTerminated => "https",
+            HttpProxyProtocol::Https => "passthrough",
+            HttpProxyProtocol::Unknown => "unknown",
+        }
+    }
+}
+
+fn parse_proxy_text(value: &str) -> Result<String, String> {
+    if value.trim().is_empty() {
+        Err("must not be empty".to_owned())
+    } else {
+        Ok(value.to_owned())
+    }
+}
+
+#[derive(Args)]
+struct ProxyAddArgs {
+    /// The route's name: `SUBDOMAIN` of `SUBDOMAIN.<node>.ghostrack.cloud`.
+    #[arg(value_parser = parse_proxy_text)]
+    subdomain: String,
+    /// The instance's public TCP port with a Shared IP, or its port with a
+    /// Dedicated IP (1 to 65535).
+    #[arg(long, value_parser = clap::value_parser!(u16).range(1..))]
+    port: u16,
+    /// `http` (the default), `https` or `passthrough`.
+    #[arg(long, value_enum, default_value = "http")]
+    protocol: ProxyProtocolArg,
+    /// The hostname of your own: Hostname with `https` and `passthrough`,
+    /// the optional Hostname with `http` (a plain-HTTP name; needs
+    /// `--no-redirect`).
+    #[arg(long, value_parser = parse_proxy_text)]
+    hostname: Option<String>,
+    /// The Host header sent to the instance (Origin Host); `http` and
+    /// `https`.
+    #[arg(long, value_parser = parse_proxy_text)]
+    origin_host: Option<String>,
+    /// Serve plain HTTP too, without redirecting it to HTTPS; `http` and
+    /// `https`.
+    #[arg(long)]
+    no_redirect: bool,
+    /// Send a PROXY protocol v2 header with the visitor's address;
+    /// `passthrough` only.
+    #[arg(long)]
+    proxy_protocol: bool,
+    #[command(flatten)]
+    idempotency: IdempotencyArgs,
+}
+
+#[derive(Args)]
+#[allow(clippy::struct_excessive_bools, reason = "command line switches")]
+struct ProxySetArgs {
+    /// The route to change.
+    #[arg(value_parser = parse_proxy_text)]
+    subdomain: String,
+    /// A new name for the route.
+    #[arg(long, value_name = "NEW", value_parser = parse_proxy_text)]
+    rename: Option<String>,
+    /// The instance's public TCP port with a Shared IP, or its port with a
+    /// Dedicated IP (1 to 65535).
+    #[arg(long, value_parser = clap::value_parser!(u16).range(1..))]
+    port: Option<u16>,
+    /// `http`, `https` or `passthrough`.
+    #[arg(long, value_enum)]
+    protocol: Option<ProxyProtocolArg>,
+    /// The hostname of your own, as `add --hostname`.
+    #[arg(long, value_parser = parse_proxy_text, conflicts_with = "no_hostname")]
+    hostname: Option<String>,
+    /// Clear the hostname.
+    #[arg(long)]
+    no_hostname: bool,
+    /// The Host header sent to the instance; `http` and `https`.
+    #[arg(long, value_parser = parse_proxy_text, conflicts_with = "no_origin_host")]
+    origin_host: Option<String>,
+    /// Clear the Origin Host.
+    #[arg(long)]
+    no_origin_host: bool,
+    /// Redirect plain HTTP to HTTPS; `http` and `https`.
+    #[arg(long, conflicts_with = "no_redirect")]
+    redirect: bool,
+    /// Serve plain HTTP too, without redirecting it; `http` and `https`.
+    #[arg(long)]
+    no_redirect: bool,
+    /// Send a PROXY protocol v2 header; `passthrough` only.
+    #[arg(long, conflicts_with = "no_proxy_protocol")]
+    proxy_protocol: bool,
+    /// Stop sending the PROXY protocol v2 header; `passthrough` only.
+    #[arg(long)]
+    no_proxy_protocol: bool,
+    #[command(flatten)]
+    idempotency: IdempotencyArgs,
+}
+
+#[derive(Args)]
+struct ProxyRemoveArgs {
+    /// The route to remove.
+    #[arg(value_parser = parse_proxy_text)]
+    subdomain: String,
+    #[command(flatten)]
+    idempotency: IdempotencyArgs,
+}
+
+/// Refuse the flags that do not fit `protocol`, with the reason.
+fn proxy_fit(
+    protocol: HttpProxyProtocol,
+    origin_host: bool,
+    redirect: bool,
+    proxy_protocol: bool,
+) -> Result<()> {
+    let passthrough = protocol == HttpProxyProtocol::Https;
+    if passthrough && origin_host {
+        bail!(
+            "an Origin Host applies to http and https; passthrough sends the stream to the instance as it is"
+        );
+    }
+    if passthrough && redirect {
+        bail!(
+            "passthrough always redirects plain HTTP to HTTPS: --redirect and --no-redirect apply to http and https"
+        );
+    }
+    if !passthrough && proxy_protocol {
+        bail!("the PROXY protocol header applies to passthrough only");
+    }
+    Ok(())
+}
+
+/// The route `ghost instance proxy INSTANCE add` asks for.
+fn proxy_add_entry(args: &ProxyAddArgs) -> Result<HttpProxyEntry> {
+    let protocol = args.protocol.wire();
+    proxy_fit(
+        protocol,
+        args.origin_host.is_some(),
+        args.no_redirect,
+        args.proxy_protocol,
+    )?;
+    let passthrough = protocol == HttpProxyProtocol::Https;
+    let hostname = args.hostname.clone().map(Some);
+    Ok(HttpProxyEntry {
+        subdomain: args.subdomain.clone(),
+        port: args.port,
+        protocol: Some(protocol),
+        custom_hostname: if passthrough {
+            hostname.clone()
+        } else {
+            args.origin_host.clone().map(Some)
+        },
+        routing_hostname: if passthrough { None } else { hostname },
+        redirect_http_to_https: args.no_redirect.then_some(false),
+        send_proxy_protocol: args.proxy_protocol.then_some(true),
+    })
+}
+
+/// The route `ghost instance proxy INSTANCE set` sends: the saved route's
+/// port and protocol, and only the fields `args` names.
+fn proxy_set_entry(saved: &HttpProxyView, args: &ProxySetArgs) -> Result<HttpProxyEntry> {
+    let Some(route) = saved
+        .entries
+        .iter()
+        .find(|entry| entry.subdomain == args.subdomain)
+    else {
+        let names: Vec<String> = saved
+            .entries
+            .iter()
+            .map(|entry| escape_control(&entry.subdomain).into_owned())
+            .collect();
+        if names.is_empty() {
+            bail!(
+                "no route named {}: the instance has none",
+                escape_control(&args.subdomain)
+            );
+        }
+        bail!(
+            "no route named {}; the instance's routes are {}",
+            escape_control(&args.subdomain),
+            names.join(", ")
+        );
+    };
+    let protocol = match args.protocol {
+        Some(protocol) => protocol.wire(),
+        None if route.protocol == HttpProxyProtocol::Unknown => {
+            bail!("this route's protocol is not known to this ghost: name --protocol")
+        }
+        None => route.protocol,
+    };
+    proxy_fit(
+        protocol,
+        args.origin_host.is_some() || args.no_origin_host,
+        args.redirect || args.no_redirect,
+        args.proxy_protocol || args.no_proxy_protocol,
+    )?;
+    let named = args.rename.is_some()
+        || args.port.is_some()
+        || args.protocol.is_some()
+        || args.hostname.is_some()
+        || args.no_hostname
+        || args.origin_host.is_some()
+        || args.no_origin_host
+        || args.redirect
+        || args.no_redirect
+        || args.proxy_protocol
+        || args.no_proxy_protocol;
+    if !named {
+        bail!("nothing to change: name what to change, such as --port or --hostname");
+    }
+    let passthrough = protocol == HttpProxyProtocol::Https;
+    let hostname = if args.no_hostname {
+        Some(None)
+    } else {
+        args.hostname.clone().map(Some)
+    };
+    let origin_host = if args.no_origin_host {
+        Some(None)
+    } else {
+        args.origin_host.clone().map(Some)
+    };
+    Ok(HttpProxyEntry {
+        subdomain: args
+            .rename
+            .clone()
+            .unwrap_or_else(|| args.subdomain.clone()),
+        port: args.port.unwrap_or(route.port),
+        protocol: Some(protocol),
+        custom_hostname: if passthrough {
+            hostname.clone()
+        } else {
+            origin_host
+        },
+        routing_hostname: if passthrough { None } else { hostname },
+        redirect_http_to_https: if args.redirect {
+            Some(true)
+        } else if args.no_redirect {
+            Some(false)
+        } else {
+            None
+        },
+        send_proxy_protocol: if args.proxy_protocol {
+            Some(true)
+        } else if args.no_proxy_protocol {
+            Some(false)
+        } else {
+            None
+        },
+    })
+}
+
+/// What `ghost instance proxy` shows of `view` for reading: the routes
+/// (only `only`, when named), and under them the DNS records the routes
+/// that need one ask for, their errors, and the proxy's own when it is not
+/// ready.
+fn proxy_readable(view: &HttpProxyView, only: Option<&str>, terminal: Terminal) -> String {
+    let mut map = serde_json::Map::new();
+    if !view.ready {
+        map.insert("ready".to_owned(), json!(false));
+        map.insert("error".to_owned(), json!(view.error));
+    }
+    let routes = view
+        .entries
+        .iter()
+        .filter(|entry| only.is_none_or(|name| entry.subdomain == name));
+    let (mut rows, mut dns, mut errors) = (Vec::new(), Vec::new(), Vec::new());
+    for entry in routes {
+        let passthrough = entry.protocol == HttpProxyProtocol::Https;
+        let (hostname, origin_host) = if passthrough {
+            (entry.custom_hostname.as_ref(), None)
+        } else {
+            (
+                entry.routing_hostname.as_ref(),
+                entry.custom_hostname.as_ref(),
+            )
+        };
+        let port = match entry.guest_port {
+            Some(guest) if guest != entry.port => json!(format!("{} → {guest}", entry.port)),
+            _ => json!(entry.port),
+        };
+        rows.push(json!({
+            "subdomain": entry.subdomain,
+            "protocol": ProxyProtocolArg::word(entry.protocol),
+            "port": port,
+            "url": entry.url,
+            "hostname": hostname,
+            "origin_host": origin_host,
+            "redirect": (!passthrough).then_some(entry.redirect_http_to_https),
+            "status": entry.status,
+        }));
+        if entry.cname_setup_required == Some(true) {
+            let name = if passthrough {
+                entry.custom_hostname.as_ref()
+            } else {
+                entry.routing_hostname.as_ref()
+            };
+            if let Some(target) = &entry.cname_target {
+                dns.push(json!({
+                    "subdomain": entry.subdomain, "record": "CNAME",
+                    "name": name, "value": target,
+                }));
+            }
+            if let (Some(txt_name), Some(txt_value)) = (&entry.txt_name, &entry.txt_value) {
+                dns.push(json!({
+                    "subdomain": entry.subdomain, "record": "TXT",
+                    "name": txt_name, "value": txt_value,
+                }));
+            }
+        }
+        if let Some(error) = &entry.error {
+            errors.push(json!({"subdomain": entry.subdomain, "error": error}));
+        }
+    }
+    let mut sections = vec![(
+        "routes",
+        pretty::Section::Rows(
+            vec![
+                "subdomain",
+                "protocol",
+                "port",
+                "url",
+                "hostname",
+                "origin_host",
+                "redirect",
+                "status",
+            ],
+            rows,
+        ),
+    )];
+    if !dns.is_empty() {
+        sections.push((
+            "dns",
+            pretty::Section::Rows(vec!["subdomain", "record", "name", "value"], dns),
+        ));
+    }
+    if !errors.is_empty() {
+        sections.push((
+            "errors",
+            pretty::Section::Rows(vec!["subdomain", "error"], errors),
+        ));
+    }
+    pretty::render_sections(&map, &sections, terminal)
 }
 
 #[derive(Args)]
@@ -5516,6 +5909,20 @@ fn readable_sections(command: &Command, output: &Value, terminal: Terminal) -> O
             &[(PROJECTION_HEADING, pretty::Section::Fields(rows))],
             terminal,
         ));
+    }
+    // An instance's routes: a table of them, then the DNS records and
+    // errors. `add` and `set` show the route they saved.
+    if let Command::Instance {
+        command: InstanceCommand::Proxy(args),
+    } = command
+    {
+        let view: HttpProxyView = serde_json::from_value(output.clone()).ok()?;
+        let saved = match &args.action {
+            Some(ProxyAction::Add(add)) => Some(add.subdomain.as_str()),
+            Some(ProxyAction::Set(set)) => Some(set.rename.as_deref().unwrap_or(&set.subdomain)),
+            _ => None,
+        };
+        return Some(proxy_readable(&view, saved, terminal));
     }
     // An instance's usage, then its projection under a heading of its own.
     if matches!(
@@ -9887,6 +10294,57 @@ async fn execute_instance(
                 );
             }
             Ok(port_forwards_output(&instance))
+        }
+        InstanceCommand::Proxy(args) => {
+            let add = match &args.action {
+                Some(ProxyAction::Add(add)) => Some(proxy_add_entry(add)?),
+                _ => None,
+            };
+            let used = if args.action.is_some() {
+                InstanceUse::Change
+            } else {
+                InstanceUse::Read
+            };
+            let instance_id = resolve_instance(api, &args.instance_id, used).await?;
+            let view: HttpProxyView = match (&args.action, add) {
+                (Some(ProxyAction::Add(add)), Some(entry)) => {
+                    api.write_retryable(
+                        &SaveHttpProxyEntry { instance_id },
+                        &SaveHttpProxyEntryRequest {
+                            previous_subdomain: None,
+                            entry,
+                        },
+                        &retried_by_id(add.idempotency.key(), &args.instance_id, instance_id),
+                    )
+                    .await?
+                }
+                (Some(ProxyAction::Set(set)), _) => {
+                    let saved: HttpProxyView = api.read(&GetHttpProxy { instance_id }, "").await?;
+                    let entry = proxy_set_entry(&saved, set)?;
+                    api.write_retryable(
+                        &SaveHttpProxyEntry { instance_id },
+                        &SaveHttpProxyEntryRequest {
+                            previous_subdomain: Some(set.subdomain.clone()),
+                            entry,
+                        },
+                        &retried_by_id(set.idempotency.key(), &args.instance_id, instance_id),
+                    )
+                    .await?
+                }
+                (Some(ProxyAction::Remove(remove)), _) => {
+                    api.write_retryable(
+                        &RemoveHttpProxyEntry {
+                            instance_id,
+                            subdomain: remove.subdomain.clone(),
+                        },
+                        &(),
+                        &retried_by_id(remove.idempotency.key(), &args.instance_id, instance_id),
+                    )
+                    .await?
+                }
+                _ => api.read(&GetHttpProxy { instance_id }, "").await?,
+            };
+            to_value(view)
         }
         InstanceCommand::RotateGatewayKeys(args) => {
             let instance_id = resolve_instance(api, &args.instance_id, InstanceUse::Change).await?;
@@ -16547,6 +17005,261 @@ mod tests {
                 "outgoing_ports": "11100-11199",
             })
         );
+    }
+
+    fn proxy_parse(arguments: &[&str]) -> Result<Option<ProxyAction>, clap::Error> {
+        let mut line = vec!["ghost", "instance", "proxy", "web-1"];
+        line.extend(arguments);
+        Cli::try_parse_from(line).map(|cli| match cli.command {
+            Command::Instance {
+                command: InstanceCommand::Proxy(args),
+            } => args.action,
+            _ => panic!("not instance proxy"),
+        })
+    }
+
+    fn proxy_add(arguments: &[&str]) -> Result<HttpProxyEntry> {
+        let mut line = vec!["add"];
+        line.extend(arguments);
+        match proxy_parse(&line).expect("parses") {
+            Some(ProxyAction::Add(add)) => proxy_add_entry(&add),
+            _ => panic!("not add"),
+        }
+    }
+
+    fn proxy_view() -> HttpProxyView {
+        serde_json::from_value(json!({
+            "capacity": 10, "node_domain": "node.example.test", "ready": true, "error": null,
+            "entries": [
+                {"subdomain": "app", "port": 1021, "guest_port": 80, "protocol": "http",
+                 "url": "https://app.node.example.test/", "status": "active", "error": null,
+                 "redirect_http_to_https": true, "custom_hostname": "origin.example.test",
+                 "routing_hostname": null},
+                {"subdomain": "secure", "port": 8080, "guest_port": 8080,
+                 "protocol": "https_terminated", "url": "https://www.example.test/",
+                 "status": "pending_dns", "error": null, "redirect_http_to_https": true,
+                 "routing_hostname": "www.example.test", "cname_setup_required": true,
+                 "cname_target": "secure.node.example.test",
+                 "txt_name": "_ghostrack.www.example.test", "txt_value": "ghostrack-verify=abc"},
+                {"subdomain": "pass", "port": 443, "guest_port": 443, "protocol": "https",
+                 "url": null, "status": "unavailable", "error": "no route to the instance",
+                 "redirect_http_to_https": true, "custom_hostname": "tls.example.test",
+                 "send_proxy_protocol": true}
+            ],
+        }))
+        .unwrap()
+    }
+
+    #[test]
+    fn proxy_commands_parse_and_map_protocols() {
+        assert!(proxy_parse(&[]).unwrap().is_none());
+        assert!(matches!(
+            proxy_parse(&["remove", "app"]).unwrap(),
+            Some(ProxyAction::Remove(_))
+        ));
+        assert!(proxy_parse(&["add", "app"]).is_err(), "--port is needed");
+        assert!(proxy_parse(&["add", "app", "--port", "0"]).is_err());
+        assert!(proxy_parse(&["add", "app", "--port", "65536"]).is_err());
+        assert!(proxy_parse(&["add", "app", "--port", "80", "--protocol", "tls"]).is_err());
+        for (word, wire) in [
+            ("http", HttpProxyProtocol::Http),
+            ("https", HttpProxyProtocol::HttpsTerminated),
+            ("passthrough", HttpProxyProtocol::Https),
+        ] {
+            let entry = proxy_add(&["app", "--port", "80", "--protocol", word]).unwrap();
+            assert_eq!(entry.protocol, Some(wire), "{word}");
+        }
+        let default = proxy_add(&["app", "--port", "1021"]).unwrap();
+        assert_eq!(
+            default,
+            HttpProxyEntry {
+                subdomain: "app".to_owned(),
+                port: 1021,
+                protocol: Some(HttpProxyProtocol::Http),
+                custom_hostname: None,
+                routing_hostname: None,
+                redirect_http_to_https: None,
+                send_proxy_protocol: None,
+            }
+        );
+        assert!(proxy_parse(&["set", "app", "--hostname", "a.test", "--no-hostname"]).is_err());
+        assert!(proxy_parse(&["set", "app", "--redirect", "--no-redirect"]).is_err());
+        assert!(proxy_parse(&["set", "app", "--proxy-protocol", "--no-proxy-protocol"]).is_err());
+    }
+
+    #[test]
+    fn proxy_add_sends_the_fields_of_its_protocol() {
+        let http = proxy_add(&[
+            "app",
+            "--port",
+            "80",
+            "--hostname",
+            "in.test",
+            "--origin-host",
+            "www.test",
+            "--no-redirect",
+        ])
+        .unwrap();
+        assert_eq!(http.routing_hostname, Some(Some("in.test".to_owned())));
+        assert_eq!(http.custom_hostname, Some(Some("www.test".to_owned())));
+        assert_eq!(http.redirect_http_to_https, Some(false));
+        let terminated = proxy_add(&[
+            "app",
+            "--port",
+            "80",
+            "--protocol",
+            "https",
+            "--hostname",
+            "www.test",
+        ])
+        .unwrap();
+        assert_eq!(
+            terminated.routing_hostname,
+            Some(Some("www.test".to_owned()))
+        );
+        assert_eq!(terminated.custom_hostname, None);
+        let passthrough = proxy_add(&[
+            "app",
+            "--port",
+            "443",
+            "--protocol",
+            "passthrough",
+            "--hostname",
+            "tls.test",
+            "--proxy-protocol",
+        ])
+        .unwrap();
+        assert_eq!(
+            passthrough.custom_hostname,
+            Some(Some("tls.test".to_owned()))
+        );
+        assert_eq!(passthrough.routing_hostname, None);
+        assert_eq!(passthrough.send_proxy_protocol, Some(true));
+        for refused in [
+            &["app", "--port", "80", "--proxy-protocol"][..],
+            &[
+                "app",
+                "--port",
+                "80",
+                "--protocol",
+                "https",
+                "--proxy-protocol",
+            ],
+            &[
+                "app",
+                "--port",
+                "80",
+                "--protocol",
+                "passthrough",
+                "--origin-host",
+                "x.test",
+            ],
+            &[
+                "app",
+                "--port",
+                "80",
+                "--protocol",
+                "passthrough",
+                "--no-redirect",
+            ],
+        ] {
+            assert!(proxy_add(refused).is_err(), "{refused:?}");
+        }
+    }
+
+    #[test]
+    fn proxy_set_changes_only_what_is_named() {
+        let view = proxy_view();
+        let set = |arguments: &[&str]| {
+            let mut line = vec!["set"];
+            line.extend(arguments);
+            match proxy_parse(&line).expect("parses") {
+                Some(ProxyAction::Set(set)) => proxy_set_entry(&view, &set),
+                _ => panic!("not set"),
+            }
+        };
+        let port = set(&["app", "--port", "1020"]).unwrap();
+        assert_eq!(
+            port,
+            HttpProxyEntry {
+                subdomain: "app".to_owned(),
+                port: 1020,
+                protocol: Some(HttpProxyProtocol::Http),
+                custom_hostname: None,
+                routing_hostname: None,
+                redirect_http_to_https: None,
+                send_proxy_protocol: None,
+            }
+        );
+        let renamed = set(&["app", "--rename", "site"]).unwrap();
+        assert_eq!((renamed.subdomain.as_str(), renamed.port), ("site", 1021));
+        let cleared = set(&["app", "--no-origin-host", "--no-hostname"]).unwrap();
+        assert_eq!(cleared.custom_hostname, Some(None));
+        assert_eq!(cleared.routing_hostname, Some(None));
+        let body = serde_json::to_value(&cleared).unwrap();
+        assert!(body["custom_hostname"].is_null() && body.get("custom_hostname").is_some());
+        assert!(
+            serde_json::to_value(&port)
+                .unwrap()
+                .get("custom_hostname")
+                .is_none()
+        );
+        let hostname = set(&["pass", "--hostname", "new.test"]).unwrap();
+        assert_eq!(hostname.custom_hostname, Some(Some("new.test".to_owned())));
+        assert_eq!(hostname.routing_hostname, None);
+        assert_eq!(hostname.protocol, Some(HttpProxyProtocol::Https));
+        let off = set(&["pass", "--no-proxy-protocol"]).unwrap();
+        assert_eq!(off.send_proxy_protocol, Some(false));
+        let switched = set(&["app", "--protocol", "passthrough", "--hostname", "t.test"]).unwrap();
+        assert_eq!(switched.custom_hostname, Some(Some("t.test".to_owned())));
+        assert_eq!(
+            set(&["secure", "--redirect"])
+                .unwrap()
+                .redirect_http_to_https,
+            Some(true)
+        );
+        let error = set(&["app"]).unwrap_err().to_string();
+        assert!(error.contains("nothing to change"), "{error}");
+        let error = set(&["nope", "--port", "80"]).unwrap_err().to_string();
+        assert!(error.contains("app, secure, pass"), "{error}");
+        assert!(set(&["app", "--proxy-protocol"]).is_err());
+        assert!(set(&["pass", "--origin-host", "x.test"]).is_err());
+        assert!(set(&["pass", "--no-redirect"]).is_err());
+    }
+
+    #[test]
+    fn proxy_routes_read_as_a_table_with_dns_and_errors() {
+        let view = proxy_view();
+        let text = proxy_readable(&view, None, Terminal::plain());
+        for expected in [
+            "1021 → 80",
+            "passthrough",
+            "https://app.node.example.test/",
+            "origin.example.test",
+            "pending_dns",
+            "CNAME",
+            "secure.node.example.test",
+            "TXT",
+            "_ghostrack.www.example.test",
+            "ghostrack-verify=abc",
+            "no route to the instance",
+        ] {
+            assert!(text.contains(expected), "{expected} in\n{text}");
+        }
+        assert_eq!(text.matches("CNAME").count(), 1, "{text}");
+        assert!(!text.contains("8080 →"), "{text}");
+        let saved = proxy_readable(&view, Some("secure"), Terminal::plain());
+        assert!(
+            saved.contains("secure") && !saved.contains("origin.example.test"),
+            "{saved}"
+        );
+        let mut waiting = view.clone();
+        waiting.ready = false;
+        waiting.error = Some("node is starting".to_owned());
+        assert!(proxy_readable(&waiting, None, Terminal::plain()).contains("node is starting"));
+        let again: HttpProxyView =
+            serde_json::from_value(serde_json::to_value(&view).unwrap()).unwrap();
+        assert_eq!(again.entries.len(), 3);
     }
 
     #[test]
