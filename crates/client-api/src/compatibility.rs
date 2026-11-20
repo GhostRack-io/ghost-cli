@@ -78,6 +78,7 @@ pub const CLIENT_DECODED_ENUMS: &[&str] = &[
     "ImageCacheState",
     "PowerState",
     "StorageBackend",
+    "DriveKind",
     "RestartPolicy",
     "PendingAccountActionKind",
     "PendingAccountActionState",
@@ -168,6 +169,7 @@ fallback!(
     crate::hypervisor::ImageCacheState,
     crate::hypervisor::PowerState,
     crate::hypervisor::StorageBackend,
+    crate::hypervisor::DriveKind,
     crate::hypervisor::RestartPolicy,
     crate::website::PendingAccountActionKind,
     crate::website::PendingAccountActionState
