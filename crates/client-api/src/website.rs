@@ -1,7 +1,7 @@
 use crate::compatibility::{known, known_option};
 use crate::hypervisor::{
-    CpuTier, GuestFirmware, GuestInitializationStatus, HostMode, ImageCacheState, PowerState,
-    RestartPolicy, StorageBackend, StorageDeviceInventory,
+    CpuTier, DriveKind, GuestFirmware, GuestInitializationStatus, HostMode, ImageCacheState,
+    PowerState, RestartPolicy, StorageBackend, StorageDeviceInventory,
 };
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -4501,6 +4501,11 @@ pub struct InstanceView {
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub memory_restart_pending: bool,
     pub root_disk_bytes: u64,
+    /// The kind of drive below the instance's root disk: its own root
+    /// pool's ([`crate::hypervisor::drive_kind`]). Absent where the pool's
+    /// devices are not known, and from older backends.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub root_disk_kind: Option<DriveKind>,
     #[serde(default)]
     pub firmware: Option<GuestFirmware>,
     /// `Provisioning` also while a restore rebuilds the root: from when its
@@ -6386,6 +6391,16 @@ pub struct ProviderHostView {
     /// inventory names none.
     #[serde(default)]
     pub installed_storage_bytes: u64,
+    /// Its saleable vCPUs: its CPU limit per NUMA node times its allowed
+    /// NUMA nodes. 0 before its first inventory, and from a backend of
+    /// before.
+    #[serde(default)]
+    pub saleable_vcpus: u32,
+    /// The kind of drive below its primary capacity profile's root pool
+    /// ([`crate::hypervisor::drive_kind`]); absent while that pool names
+    /// no device, and from a backend of before.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub root_disk_kind: Option<DriveKind>,
     /// The release its agent reported last and where it stands in the
     /// support window: when the backend stops serving it, and whether it is
     /// below the oldest release the platform serves. Absent from a backend

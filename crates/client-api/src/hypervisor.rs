@@ -309,6 +309,50 @@ pub fn drive_kinds(devices: &[StorageDeviceInventory]) -> Option<String> {
     (!kinds.is_empty()).then(|| kinds.join("/"))
 }
 
+/// The kind of drive a storage pool's devices draw as, for a size's picture:
+/// the whole pool, whatever its layout. Unknown kinds a later backend adds
+/// decode as [`DriveKind::Unknown`].
+#[derive(Clone, Copy, Debug, Deserialize, Eq, Hash, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum DriveKind {
+    /// Every device is a solid-state drive on the `nvme` transport.
+    Nvme,
+    /// Solid state that is not all `NVMe`: SATA or SAS SSDs, a hardware
+    /// RAID's logical disk that does not rotate, or a virtual disk.
+    Ssd,
+    /// A hard disk somewhere in the pool.
+    Hdd,
+    #[serde(other)]
+    Unknown,
+}
+
+/// The [`DriveKind`] of a pool's devices: `Hdd` when any device is a hard
+/// disk (of class [`StorageClass::Hdd`], or a RAID or other device that
+/// [`StorageDeviceInventory::rotates`]), `Nvme` when every device is `NVMe`,
+/// else `Ssd`; `None` for no devices. A cloud host's virtual disk counts as
+/// flash.
+#[must_use]
+pub fn drive_kind(devices: &[StorageDeviceInventory]) -> Option<DriveKind> {
+    if devices.is_empty() {
+        return None;
+    }
+    let hard_disk = devices.iter().any(|device| match device.class() {
+        StorageClass::Hdd => true,
+        StorageClass::Raid | StorageClass::Other => device.rotates(),
+        StorageClass::Nvme | StorageClass::Ssd => false,
+    });
+    Some(if hard_disk {
+        DriveKind::Hdd
+    } else if devices
+        .iter()
+        .all(|device| device.class() == StorageClass::Nvme)
+    {
+        DriveKind::Nvme
+    } else {
+        DriveKind::Ssd
+    })
+}
+
 #[cfg(test)]
 mod drive_kind_tests {
     use super::*;
@@ -332,5 +376,50 @@ mod drive_kind_tests {
             .as_deref(),
             Some("NVMe/SSD/HDD")
         );
+    }
+
+    #[test]
+    fn a_pool_draws_as_one_drive_kind() {
+        let device = |transport: &str, rotational| StorageDeviceInventory {
+            model: "disk".to_owned(),
+            capacity_bytes: 1,
+            transport: transport.to_owned(),
+            rotational,
+        };
+        assert_eq!(drive_kind(&[]), None);
+        assert_eq!(
+            drive_kind(&[device("nvme", false), device("nvme", false)]),
+            Some(DriveKind::Nvme)
+        );
+        assert_eq!(drive_kind(&[device("sata", false)]), Some(DriveKind::Ssd));
+        assert_eq!(drive_kind(&[device("sas", true)]), Some(DriveKind::Hdd));
+        // mixed pools: any hard disk makes the pool a hard disk's, flash
+        // that is not all NVMe is an SSD's
+        assert_eq!(
+            drive_kind(&[device("nvme", false), device("sata", true)]),
+            Some(DriveKind::Hdd)
+        );
+        assert_eq!(
+            drive_kind(&[device("nvme", false), device("sata", false)]),
+            Some(DriveKind::Ssd)
+        );
+        // a hardware RAID's logical disk by its rotation
+        assert_eq!(drive_kind(&[device("raid", false)]), Some(DriveKind::Ssd));
+        assert_eq!(drive_kind(&[device("raid", true)]), Some(DriveKind::Hdd));
+        // a virtual disk is flash whatever its flag says
+        assert_eq!(drive_kind(&[device("virtio", false)]), Some(DriveKind::Ssd));
+        assert_eq!(drive_kind(&[device("virtio", true)]), Some(DriveKind::Ssd));
+        assert_eq!(drive_kind(&[device("unknown", true)]), Some(DriveKind::Ssd));
+        // a USB hard disk rotates although its class is Other
+        assert_eq!(drive_kind(&[device("usb", true)]), Some(DriveKind::Hdd));
+    }
+
+    #[test]
+    fn a_later_drive_kind_decodes_as_unknown() {
+        assert_eq!(
+            serde_json::from_str::<DriveKind>("\"optane\"").unwrap(),
+            DriveKind::Unknown
+        );
+        assert_eq!(serde_json::to_string(&DriveKind::Nvme).unwrap(), "\"nvme\"");
     }
 }

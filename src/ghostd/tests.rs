@@ -349,6 +349,7 @@ fn instance_fixture() -> InstanceView {
         vcpu_count: 1,
         memory_bytes: 1 << 30,
         memory_restart_pending: false,
+        root_disk_kind: None,
         firmware: None,
         active_job: None,
         last_restore: None,
