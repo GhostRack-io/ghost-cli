@@ -526,10 +526,16 @@ endpoints! {
         "/api/mut/v1/instances/{instance_id}/upgrade" (UpgradeInstanceRequest) => JobAccepted;
     /// Move the instance to another host of its LAN mesh (item 295b), at
     /// the offering's size and price: it is stopped for the copy of its
-    /// disk and keeps its ID, its address and its backups.
+    /// disk, and the copy, a new instance with a new ID, takes over its
+    /// address, port forwards and HTTP proxy names; the instance is then
+    /// deleted, its backups kept.
     MoveInstance { instance_id: Uuid } = user POST
         "/api/mut/v1/instances/{instance_id}/move"
-        (crate::website::MoveInstanceRequest) => JobAccepted;
+        (crate::website::MoveInstanceRequest) => crate::website::MoveInstanceAccepted;
+    /// What a move of the instance to an offering would do (query
+    /// `offering_id`): whether the guest keeps its identity.
+    GetInstanceMovePreview { instance_id: Uuid } = user GET
+        "/v1/instances/{instance_id}/move-preview" => crate::website::InstanceMovePreview;
     /// Move a shared bandwidth instance to a shared gateway at another
     /// location, where it gets a new public address.
     MoveGatewayLocation { instance_id: Uuid } = user POST

@@ -4063,14 +4063,45 @@ pub struct UpgradeInstanceRequest {
 }
 
 /// Move an instance to another host of its LAN mesh (item 295b): it is
-/// stopped for the copy of its disk and keeps its ID, its address and its
-/// backups, which stay on its present host.
+/// stopped for the copy of its disk, which a new instance on the other host
+/// takes, with a new ID, the instance's address, port forwards and HTTP
+/// proxy names; the instance is then deleted, and its backups stay.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct MoveInstanceRequest {
     /// An offering of another host of the instance's LAN mesh, as
     /// `ListInstanceMeshHosts` lists the hosts, whose root disk is at least
     /// the instance's.
+    pub offering_id: String,
+}
+
+/// The answer to a move (item 295b): its job, whose resource is the new
+/// instance, and whether the guest keeps its identity.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct MoveInstanceAccepted {
+    #[serde(flatten)]
+    pub job: JobAccepted,
+    /// The guest keeps its cloud-init identity: its first boot does not run
+    /// again. Otherwise its hostname and the network settings cloud-init
+    /// manages are written again, and its SSH host keys stay. False from a
+    /// backend of before.
+    #[serde(default)]
+    pub keeps_guest_identity: bool,
+}
+
+/// What a move of an instance to an offering would do (item 295b): whether
+/// the guest keeps its identity on every host of the offering that could
+/// take it. The move's answer says what it did.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct InstanceMovePreview {
+    #[serde(default)]
+    pub keeps_guest_identity: bool,
+}
+
+/// The query of `GetInstanceMovePreview`.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct MovePreviewQuery {
     pub offering_id: String,
 }
 
@@ -6005,7 +6036,8 @@ pub enum JobKind {
     /// releases read it as [`Self::Unknown`].
     ChangeCloudAddress,
     /// The renter moved an instance to another host of its LAN mesh (item
-    /// 295b). Older releases read it as [`Self::Unknown`].
+    /// 295b): the job of the new instance that takes over its address.
+    /// Older releases read it as [`Self::Unknown`].
     MoveInstance,
     /// The renter took a snapshot of an instance's root disk (item 298 of the platform). Older
     /// releases read it as [`Self::Unknown`].
