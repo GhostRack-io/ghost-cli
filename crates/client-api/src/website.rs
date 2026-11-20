@@ -4098,9 +4098,9 @@ pub struct InstanceMovePreview {
     pub keeps_guest_identity: bool,
 }
 
-/// The query of `GetInstanceMovePreview`.
+/// The query of `GetInstanceMovePreview`: the backend ignores a parameter
+/// it does not know.
 #[derive(Clone, Debug, Deserialize, Serialize)]
-#[serde(deny_unknown_fields)]
 pub struct MovePreviewQuery {
     pub offering_id: String,
 }
