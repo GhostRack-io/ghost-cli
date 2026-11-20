@@ -50,32 +50,33 @@ use ghostrack_client_api::{
         CancelBackup, CancelHostAgentUpdate, CancelInstanceDelete, ChangeGateway,
         CheckHostPublicPath, CheckIpAddress, CompleteOperationIntent, CreateBackup,
         CreateGithubLink, CreateGithubSignup, CreateHostEnrollmentToken, CreateInstance,
-        CreateIpPool, CreateLoginGrant, CreatePayout, CreateTicket, DeclareHostEmergency,
-        DeleteBackup, DeleteInstance, DeleteIpPool, DownloadBackup, EndInstanceRescue, GetAccount,
-        GetAccountBalance, GetActivationTerms, GetBackup, GetBackupPricing, GetBackupSchedule,
-        GetDepositLookup, GetGithubClaim, GetHostAgentUpdate, GetHostNetworkTests, GetHostPricing,
-        GetHostPrivacy, GetHttpProxy, GetIncident, GetInstance, GetInstanceConsoleLog,
-        GetInstanceGatewayTraffic, GetInstanceLogs, GetInstanceMesh, GetInstanceMeshUsage,
-        GetInstanceUsage, GetJob, GetOffering, GetOperationIntent, GetProviderAgents,
-        GetProviderBalance, GetProviderDisplayName, GetProviderHost, GetProviderHostInstanceUsage,
+        CreateInstanceSnapshot, CreateIpPool, CreateLoginGrant, CreatePayout, CreateTicket,
+        DeclareHostEmergency, DeleteBackup, DeleteInstance, DeleteInstanceSnapshot, DeleteIpPool,
+        DownloadBackup, EndInstanceRescue, GetAccount, GetAccountBalance, GetActivationTerms,
+        GetBackup, GetBackupPricing, GetBackupSchedule, GetDepositLookup, GetGithubClaim,
+        GetHostAgentUpdate, GetHostNetworkTests, GetHostPricing, GetHostPrivacy, GetHttpProxy,
+        GetIncident, GetInstance, GetInstanceConsoleLog, GetInstanceGatewayTraffic,
+        GetInstanceLogs, GetInstanceMesh, GetInstanceMeshUsage, GetInstanceUsage, GetJob,
+        GetOffering, GetOperationIntent, GetProviderAgents, GetProviderBalance,
+        GetProviderDisplayName, GetProviderHost, GetProviderHostInstanceUsage,
         GetProviderHostMetrics, GetProviderOutage, GetProviderReliability, GetProviderUptime,
         GetTicket, HandOverIpPool, ListAuthKeys, ListBackupMeshHosts, ListBackups,
         ListContainerImages, ListImages, ListIncidents, ListInstanceAddressChanges,
-        ListInstanceBackups, ListInstanceMeshHosts, ListInstanceTags, ListInstanceUpgrades,
-        ListInstances, ListIpPools, ListJobs, ListLocations, ListNotifications, ListOfferings,
-        ListPayouts, ListPrivateRenters, ListProviderConversions, ListProviderHosts,
-        ListProviderOutages, ListProviderReviews, ListSessions, ListTickets, MigrateAccountSeed,
-        MoveGatewayLocation, MoveInstance, RedeployInstance, ReinstallInstance,
+        ListInstanceBackups, ListInstanceMeshHosts, ListInstanceSnapshots, ListInstanceTags,
+        ListInstanceUpgrades, ListInstances, ListIpPools, ListJobs, ListLocations,
+        ListNotifications, ListOfferings, ListPayouts, ListPrivateRenters, ListProviderConversions,
+        ListProviderHosts, ListProviderOutages, ListProviderReviews, ListSessions, ListTickets,
+        MigrateAccountSeed, MoveGatewayLocation, MoveInstance, RedeployInstance, ReinstallInstance,
         RemoveHttpProxyEntry, RemoveIpAddress, RemovePrivateRenter, RemoveWebsitePassword,
         RenameInstance, RequestProviderDisplayName, RescueInstance, ResetInstanceAccess,
-        RestoreBackup, RetireHost, RetryHostAgentUpdate, RevokeSession, RevokeSessions,
-        RotateGatewayKeys, SaveHttpProxyEntry, ScheduleHostRetirement, ScheduleInstanceRetirement,
-        SetBackupSchedule, SetHostAgentUpdatePolicy, SetHostPrivate, SetHostRentalAdmission,
-        SetHostUplink, SetIncidentState, SetInstanceBandwidthLimit, SetInstancePower,
-        SetPayoutAddress, SetPortForwards, SetTagRedundant, SetTicketState, SetWebsitePassword,
-        StartAgentUpdateSequence, StopAgentUpdateSequence, TagInstance, UnlinkGithub,
-        UpdateHostPricing, UpdateInstance, UpgradeInstance, WithdrawProviderDisplayName,
-        WriteProviderReview,
+        ResetInstanceSnapshot, RestoreBackup, RetireHost, RetryHostAgentUpdate, RevokeSession,
+        RevokeSessions, RotateGatewayKeys, SaveHttpProxyEntry, ScheduleHostRetirement,
+        ScheduleInstanceRetirement, SetBackupSchedule, SetHostAgentUpdatePolicy, SetHostPrivate,
+        SetHostRentalAdmission, SetHostUplink, SetIncidentState, SetInstanceBandwidthLimit,
+        SetInstancePower, SetPayoutAddress, SetPortForwards, SetTagRedundant, SetTicketState,
+        SetWebsitePassword, StartAgentUpdateSequence, StopAgentUpdateSequence, TagInstance,
+        UnlinkGithub, UpdateHostPricing, UpdateInstance, UpgradeInstance,
+        WithdrawProviderDisplayName, WriteProviderReview,
     },
     hypervisor::{GuestInitializationStatus, HostMode, PowerState, RestartPolicy},
     website::{
@@ -92,19 +93,20 @@ use ghostrack_client_api::{
         CloudIpAddressInput, CloudIpAddressView, CloudIpPoolScope, CloudIpPoolView,
         ContainerEnvVar, ContainerImageView, ContainerLogView, CreateBackupRequest,
         CreateCloudIpPoolRequest, CreateContainerRequest, CreateHostEnrollmentTokenRequest,
-        CreateInstanceRequest, CreateProviderPayoutRequest, CreateSupportTicketRequest,
-        DeclareHostEmergencyRequest, DepositLookupView, DiskChoice, DownloadBackupRequest,
-        GatewayTier, GatewayTrafficView, GithubUnlinked, HandOverCloudIpPoolRequest,
-        HostAgentUpdateView, HostEnrollmentToken, HostModeFilter, HostPrivacyView, HttpProxyEntry,
-        HttpProxyEntryView, HttpProxyProtocol, HttpProxyView, ImageView, InstanceConsoleLogView,
-        InstanceEgressLevel, InstanceKind, InstanceListQuery, InstanceMeshView,
-        InstanceProjectionView, InstanceSort, InstanceSource, InstanceState, InstanceStateFilter,
-        InstanceTagView, InstanceUpgradeView, InstanceView, IpChoice, JobAccepted, JobEventView,
-        JobKind, JobPage, JobState, JobStateFilter, JobStepState, JobView, KindChoice, LedgerKind,
-        LocationView, LoginGrant, MAX_SSH_PUBLIC_KEYS, MemoryChoice, MeshHostsView,
-        MigrateAccountSeedRequest, MoveGatewayLocationRequest, MoveInstanceRequest, OfferingView,
-        PortForwardChange, PrivateRenterView, ProviderAgentsView, ProviderBalanceView,
-        ProviderConversionView, ProviderDisplayNameView, ProviderHostDetailView, ProviderHostView,
+        CreateInstanceRequest, CreateInstanceSnapshotRequest, CreateProviderPayoutRequest,
+        CreateSupportTicketRequest, DeclareHostEmergencyRequest, DepositLookupView, DiskChoice,
+        DownloadBackupRequest, GatewayTier, GatewayTrafficView, GithubUnlinked,
+        HandOverCloudIpPoolRequest, HostAgentUpdateView, HostEnrollmentToken, HostModeFilter,
+        HostPrivacyView, HttpProxyEntry, HttpProxyEntryView, HttpProxyProtocol, HttpProxyView,
+        ImageView, InstanceConsoleLogView, InstanceEgressLevel, InstanceKind, InstanceListQuery,
+        InstanceMeshView, InstanceProjectionView, InstanceSnapshotsView, InstanceSort,
+        InstanceSource, InstanceState, InstanceStateFilter, InstanceTagView, InstanceUpgradeView,
+        InstanceView, IpChoice, JobAccepted, JobEventView, JobKind, JobPage, JobState,
+        JobStateFilter, JobStepState, JobView, KindChoice, LedgerKind, LocationView, LoginGrant,
+        MAX_SSH_PUBLIC_KEYS, MemoryChoice, MeshHostsView, MigrateAccountSeedRequest,
+        MoveGatewayLocationRequest, MoveInstanceRequest, OfferingView, PortForwardChange,
+        PrivateRenterView, ProviderAgentsView, ProviderBalanceView, ProviderConversionView,
+        ProviderDisplayNameView, ProviderHostDetailView, ProviderHostView,
         ProviderIncidentSeverity, ProviderIncidentState, ProviderIncidentView,
         ProviderOutageDetailView, ProviderOutagePage, ProviderPayoutAddressView,
         ProviderPayoutView, ProviderReliabilityView, ProviderUptimeView, RedeployInstanceRequest,
@@ -1834,6 +1836,16 @@ enum InstanceCommand {
     /// records a custom hostname needs are listed under the routes; see
     /// App domains in the networking documentation.
     Proxy(ProxyArgs),
+    /// Take, list, reset to and delete snapshots of an instance's root disk
+    /// on its host.
+    ///
+    /// Set an instance up once, take a snapshot, and after each run reset
+    /// it to the snapshot: `ghost instance snapshot reset INSTANCE SNAPSHOT
+    /// --wait` returns once it runs again. A snapshot is not a backup: its
+    /// host keeps it, and removes it when it needs the space; a reset of
+    /// one removed fails as `evicted_for_space`. A reinstall, a redeploy, an
+    /// upgrade of the disk and the instance's deletion delete its snapshots.
+    Snapshot(SnapshotArgs),
     /// Irreversibly enqueue instance deletion.
     ///
     /// An instance older than 10 days is turned off now and deleted after
@@ -2120,6 +2132,64 @@ struct ResetAccessArgs {
     #[command(flatten)]
     mutation: MutationArgs,
 }
+
+#[derive(Args)]
+struct SnapshotArgs {
+    #[command(subcommand)]
+    command: SnapshotCommand,
+}
+
+#[derive(Subcommand)]
+enum SnapshotCommand {
+    /// Take a snapshot of the instance's root disk, running or stopped;
+    /// past the limit the oldest is replaced.
+    Create {
+        /// Instance ID or name, from `ghost instance list`.
+        #[arg(value_name = "INSTANCE", value_parser = parse_instance_reference)]
+        instance_id: InstanceReference,
+        /// 1 to 64 letters, digits, dots, dashes and underscores, unique
+        /// among its live snapshots; `snapshot-N` without it.
+        #[arg(long)]
+        name: Option<String>,
+        #[command(flatten)]
+        mutation: MutationArgs,
+    },
+    /// List the instance's snapshots: the live ones and those that ended
+    /// in the last 7 days, newest first, and what they hold on the host.
+    List {
+        /// Instance ID or name, from `ghost instance list`.
+        #[arg(value_name = "INSTANCE", value_parser = parse_instance_reference)]
+        instance_id: InstanceReference,
+    },
+    /// Return the instance's root disk to a snapshot: the instance is
+    /// forced off, anything written since the snapshot is lost, and it
+    /// starts again. The snapshot stays.
+    Reset {
+        /// Instance ID or name, from `ghost instance list`.
+        #[arg(value_name = "INSTANCE", value_parser = parse_instance_reference)]
+        instance_id: InstanceReference,
+        /// Snapshot ID or name, from `ghost instance snapshot list`.
+        #[arg(value_name = "SNAPSHOT")]
+        snapshot: String,
+        #[command(flatten)]
+        mutation: MutationArgs,
+    },
+    /// Delete a snapshot.
+    Delete {
+        /// Instance ID or name, from `ghost instance list`.
+        #[arg(value_name = "INSTANCE", value_parser = parse_instance_reference)]
+        instance_id: InstanceReference,
+        /// Snapshot ID or name, from `ghost instance snapshot list`.
+        #[arg(value_name = "SNAPSHOT")]
+        snapshot: String,
+        #[command(flatten)]
+        mutation: MutationArgs,
+    },
+}
+
+/// What `ghost instance snapshot create` says of every snapshot.
+const SNAPSHOT_NOT_A_BACKUP: &str =
+    "Not a backup: kept on the host, removed when it needs the space.";
 
 #[derive(Args)]
 struct RescueArgs {
@@ -4580,6 +4650,12 @@ impl Summary {
             Command::Instance {
                 command: InstanceCommand::Upgrades { .. },
             } => parsed(output).map(Self::upgrades),
+            Command::Instance {
+                command:
+                    InstanceCommand::Snapshot(SnapshotArgs {
+                        command: SnapshotCommand::List { .. },
+                    }),
+            } => parsed(output).map(Self::snapshots),
             _ => None,
         }
     }
@@ -5152,6 +5228,36 @@ impl Summary {
                 .collect(),
             next_cursor: page.next_cursor,
             note: None,
+        }
+    }
+
+    /// An instance's snapshots, newest first, and what the live ones hold
+    /// on the host.
+    fn snapshots(snapshots: InstanceSnapshotsView) -> Self {
+        let held = snapshots
+            .held_bytes
+            .map(|bytes| format!("Held {} on the host.", pretty::binary_size(bytes)));
+        Self {
+            columns: vec!["name", "snapshot_id", "taken", "state"],
+            rows: snapshots
+                .snapshots
+                .into_iter()
+                .map(|snapshot| {
+                    let state = match (snapshot.state.as_str(), snapshot.ended_reason.as_deref()) {
+                        ("ended", Some("evicted_for_space")) => "evicted for space".to_owned(),
+                        ("ended", Some(reason)) => format!("ended ({})", reason.replace('_', " ")),
+                        (state, _) => state.to_owned(),
+                    };
+                    json!({
+                        "name": snapshot.name,
+                        "snapshot_id": snapshot.snapshot_id,
+                        "taken": snapshot.taken_at,
+                        "state": state,
+                    })
+                })
+                .collect(),
+            next_cursor: None,
+            note: held,
         }
     }
 
@@ -8434,7 +8540,12 @@ async fn execute_account(cli: &Cli, api: &ApiClient, command: &AccountCommand) -
             intent_id,
             yes,
             show_data,
-        } => approve_browser_operation(cli, api, *intent_id, *yes, *show_data).await,
+        } => {
+            Box::pin(approve_browser_operation(
+                cli, api, *intent_id, *yes, *show_data,
+            ))
+            .await
+        }
         AccountCommand::History(LedgerHistoryArgs {
             instance,
             kind,
@@ -8993,7 +9104,10 @@ async fn approve_browser_operation(
             // key once it started: it is completed below.
             BrowserOperation::ReinstallInstance { .. }
             | BrowserOperation::ResetInstanceAccess { .. }
-            | BrowserOperation::RescueInstance { .. } => None,
+            | BrowserOperation::RescueInstance { .. }
+            | BrowserOperation::CreateInstanceSnapshot { .. }
+            | BrowserOperation::ResetInstanceSnapshot { .. }
+            | BrowserOperation::DeleteInstanceSnapshot { .. } => None,
             BrowserOperation::Unknown => refuse!("invalid_request", "{UNKNOWN_OPERATION}"),
         };
         if let Some((destination_instance_id, backup_id)) = restore
@@ -9126,6 +9240,53 @@ async fn approve_browser_operation(
                 ghostd::forget_instance(instance_id);
                 mutation_result(api, accepted, &mutation, !cli.globals.compact).await?
             }
+            BrowserOperation::CreateInstanceSnapshot {
+                instance_id,
+                request,
+            } => {
+                let accepted: JobAccepted = api
+                    .write_retryable(
+                        &CreateInstanceSnapshot { instance_id },
+                        &request,
+                        &mutation.key(),
+                    )
+                    .await?;
+                mutation_result(api, accepted, &mutation, !cli.globals.compact).await?
+            }
+            BrowserOperation::ResetInstanceSnapshot {
+                instance_id,
+                snapshot_id,
+            } => {
+                let accepted: JobAccepted = api
+                    .write_retryable(
+                        &ResetInstanceSnapshot {
+                            instance_id,
+                            snapshot_id,
+                        },
+                        &(),
+                        &mutation.key(),
+                    )
+                    .await?;
+                #[cfg(unix)]
+                ghostd::forget_instance(instance_id);
+                mutation_result(api, accepted, &mutation, !cli.globals.compact).await?
+            }
+            BrowserOperation::DeleteInstanceSnapshot {
+                instance_id,
+                snapshot_id,
+            } => {
+                let accepted: JobAccepted = api
+                    .write_retryable(
+                        &DeleteInstanceSnapshot {
+                            instance_id,
+                            snapshot_id,
+                        },
+                        &(),
+                        &mutation.key(),
+                    )
+                    .await?;
+                mutation_result(api, accepted, &mutation, !cli.globals.compact).await?
+            }
             BrowserOperation::Unknown => refuse!("invalid_request", "{UNKNOWN_OPERATION}"),
         }
     };
@@ -9185,6 +9346,24 @@ fn approval_notice(
         }
         (BrowserOperation::RescueInstance { .. }, false) => {
             "Approving boots the instance into the rescue system, where root logs in with the request's SSH keys. Inspect the request before approving."
+        }
+        (BrowserOperation::CreateInstanceSnapshot { .. }, true) => {
+            "Approving takes the snapshot as shown above."
+        }
+        (BrowserOperation::CreateInstanceSnapshot { .. }, false) => {
+            "Approving takes a snapshot of the instance's disk on its host, which replaces its oldest past the limit. Inspect the request before approving."
+        }
+        (BrowserOperation::ResetInstanceSnapshot { .. }, true) => {
+            "Approving resets the instance to the snapshot as shown above."
+        }
+        (BrowserOperation::ResetInstanceSnapshot { .. }, false) => {
+            "Approving forces the instance off and returns its disk to the snapshot, losing anything written since, then starts it. Inspect the request before approving."
+        }
+        (BrowserOperation::DeleteInstanceSnapshot { .. }, true) => {
+            "Approving deletes the snapshot as shown above."
+        }
+        (BrowserOperation::DeleteInstanceSnapshot { .. }, false) => {
+            "Approving deletes the instance's snapshot. Inspect the request before approving."
         }
         (BrowserOperation::Unknown, _) => UNKNOWN_OPERATION,
     }
@@ -9331,7 +9510,11 @@ async fn quote_operation(
             }
             notice("");
         }
-        BrowserOperation::ResetInstanceAccess { .. } | BrowserOperation::RescueInstance { .. } => {
+        BrowserOperation::ResetInstanceAccess { .. }
+        | BrowserOperation::RescueInstance { .. }
+        | BrowserOperation::CreateInstanceSnapshot { .. }
+        | BrowserOperation::ResetInstanceSnapshot { .. }
+        | BrowserOperation::DeleteInstanceSnapshot { .. } => {
             if let Some(review) = review {
                 for line in review.preview.lines() {
                     notice(&line);
@@ -9496,6 +9679,82 @@ async fn instance_action_review(
             )
             .row("Instance", instance_preview_row(instance.as_ref()))
             .rows("SSH keys", keys);
+            (instance, preview)
+        }
+        BrowserOperation::CreateInstanceSnapshot {
+            instance_id,
+            request,
+        } => {
+            let instance = approval_instance(api, *instance_id).await;
+            let preview = Preview::new(
+                approval_title(
+                    intent_id,
+                    "take a snapshot of",
+                    *instance_id,
+                    instance.as_ref(),
+                ),
+                String::new(),
+            )
+            .row("Instance", instance_preview_row(instance.as_ref()))
+            .row(
+                "Name",
+                Some(request.name.as_deref().map_or_else(
+                    || "numbered".to_owned(),
+                    |name| escape_control(name).into_owned(),
+                )),
+            )
+            .effect(SNAPSHOT_NOT_A_BACKUP);
+            (instance, preview)
+        }
+        BrowserOperation::ResetInstanceSnapshot {
+            instance_id,
+            snapshot_id,
+        }
+        | BrowserOperation::DeleteInstanceSnapshot {
+            instance_id,
+            snapshot_id,
+        } => {
+            let reset = matches!(operation, BrowserOperation::ResetInstanceSnapshot { .. });
+            let instance = approval_instance(api, *instance_id).await;
+            let name = api
+                .read(
+                    &ListInstanceSnapshots {
+                        instance_id: *instance_id,
+                    },
+                    "",
+                )
+                .await
+                .ok()
+                .and_then(|snapshots: InstanceSnapshotsView| {
+                    snapshots
+                        .snapshots
+                        .into_iter()
+                        .find(|snapshot| snapshot.snapshot_id == *snapshot_id)
+                })
+                .map_or_else(
+                    || snapshot_id.to_string(),
+                    |snapshot| format!("{} ({snapshot_id})", escape_control(&snapshot.name)),
+                );
+            let mut preview = Preview::new(
+                approval_title(
+                    intent_id,
+                    if reset {
+                        "reset"
+                    } else {
+                        "delete a snapshot of"
+                    },
+                    *instance_id,
+                    instance.as_ref(),
+                ),
+                String::new(),
+            )
+            .row("Instance", instance_preview_row(instance.as_ref()))
+            .row("Snapshot", Some(name));
+            if reset {
+                preview = preview.effect(
+                    "the instance is forced off, its disk returns to the snapshot and it starts again",
+                );
+            }
             (instance, preview)
         }
         BrowserOperation::RestoreBackup { .. }
@@ -9951,6 +10210,8 @@ async fn execute_instance(
                 // nothing is sent.
                 let (instance_id, instance) = preview_instance(api, &args.instance_id).await?;
                 let forced = forced_backup_of(api, instance.as_ref(), None).await;
+                // Its snapshots go with its disk (item 298).
+                let dropped = snapshots_dropped_line(api, instance.as_ref()).await;
                 let image = image_preview_name(api, &args.image).await?;
                 let keys = login_keys_preview(
                     api,
@@ -9981,6 +10242,7 @@ async fn execute_instance(
                 )
                 .said(REINSTALL_SAID)
                 .effect(forced.as_deref().unwrap_or_default())
+                .effect(dropped.as_deref().unwrap_or_default())
                 .refusal());
             }
             let instance_id = resolve_instance(api, &args.instance_id, InstanceUse::Change).await?;
@@ -10015,6 +10277,9 @@ async fn execute_instance(
             }
             if let Some(note) = instance.as_ref().and_then(reinstall_start_note) {
                 notice(&note);
+            }
+            if let Some(line) = snapshots_dropped_line(api, instance.as_ref()).await {
+                notice(&line);
             }
             let accepted: JobAccepted = api
                 .write_retryable(
@@ -10052,6 +10317,16 @@ async fn execute_instance(
                 )
                 .await?;
             mutation_result(api, accepted, &args.mutation, show_progress).await
+        }
+        // Boxed: its future would make the command's larger for all.
+        InstanceCommand::Snapshot(args) => {
+            Box::pin(execute_snapshot(
+                api,
+                &args.command,
+                show_progress,
+                !cli.globals.compact,
+            ))
+            .await
         }
         InstanceCommand::Rescue(args) if args.exit => {
             let instance_id = resolve_instance(api, &args.instance_id, InstanceUse::Change).await?;
@@ -10134,6 +10409,8 @@ async fn execute_instance(
             if !args.yes {
                 let (instance_id, instance) = preview_instance(api, &args.instance_id).await?;
                 let sentence = redeploy_confirmation(&request, instance.as_ref());
+                // Its snapshots go with its disk (item 298).
+                let dropped = snapshots_dropped_line(api, instance.as_ref()).await;
                 let keys = if request.stock_image.is_some() {
                     login_keys_preview(
                         api,
@@ -10165,6 +10442,7 @@ async fn execute_instance(
                 )
                 .row("SSH keys", keys)
                 .said(&sentence)
+                .effect(dropped.as_deref().unwrap_or_default())
                 .refusal());
             }
             let instance_id = resolve_instance(api, &args.instance_id, InstanceUse::Change).await?;
@@ -10205,6 +10483,21 @@ async fn execute_instance(
                 quote_upgrade(api, instance_id, &args.offering).await;
             }
             if !args.yes {
+                // A larger disk drops the instance's snapshots (item 298).
+                let instance: Option<InstanceView> =
+                    api.read(&GetInstance { instance_id }, "").await.ok();
+                let dropped = if let Some(instance) = instance
+                    .as_ref()
+                    .filter(|instance| instance.snapshots_supported)
+                    && let Ok(upgrades) = api.read(&ListInstanceUpgrades { instance_id }, "").await
+                    && upgrades.iter().any(|upgrade: &InstanceUpgradeView| {
+                        upgrade.offering_id == args.offering
+                            && upgrade.root_disk_bytes > instance.root_disk_bytes
+                    }) {
+                    snapshots_dropped_line(api, Some(instance)).await
+                } else {
+                    None
+                };
                 return Err(Preview::new(
                     instance_preview_title("Upgrade", &args.instance_id, Some(instance_id), None),
                     format!(
@@ -10215,6 +10508,7 @@ async fn execute_instance(
                 )
                 .row("Offering", Some(args.offering.clone()))
                 .effect("an upgrade shuts the instance down and starts it again")
+                .effect(dropped.as_deref().unwrap_or_default())
                 .refusal());
             }
             let accepted: JobAccepted = api
@@ -12172,6 +12466,150 @@ async fn execute_support(api: &ApiClient, command: &SupportCommand) -> Result<Va
     }
 }
 
+/// `ghost instance snapshot`: its four commands.
+async fn execute_snapshot(
+    api: &ApiClient,
+    command: &SnapshotCommand,
+    show_progress: bool,
+    readable: bool,
+) -> Result<Value> {
+    match command {
+        SnapshotCommand::List { instance_id } => {
+            let instance_id = resolve_instance(api, instance_id, InstanceUse::Read).await?;
+            let snapshots: InstanceSnapshotsView =
+                api.read(&ListInstanceSnapshots { instance_id }, "").await?;
+            to_value(snapshots)
+        }
+        SnapshotCommand::Create {
+            instance_id: reference,
+            name,
+            mutation,
+        } => {
+            let instance_id = resolve_instance(api, reference, InstanceUse::Change).await?;
+            let accepted: JobAccepted = api
+                .write_retryable(
+                    &CreateInstanceSnapshot { instance_id },
+                    &CreateInstanceSnapshotRequest { name: name.clone() },
+                    &retried_by_id(mutation.key(), reference, instance_id),
+                )
+                .await?;
+            let snapshot_id = accepted.resource_id;
+            let result = mutation_result(api, accepted, mutation, show_progress).await?;
+            if readable {
+                notice(SNAPSHOT_NOT_A_BACKUP);
+            }
+            // Waited for: the snapshot as the list shows it.
+            if mutation.wait
+                && let Ok(snapshots) = api.read(&ListInstanceSnapshots { instance_id }, "").await
+                && let Some(snapshot) = snapshots
+                    .snapshots
+                    .into_iter()
+                    .find(|snapshot| snapshot.snapshot_id == snapshot_id)
+            {
+                return to_value(snapshot);
+            }
+            Ok(result)
+        }
+        SnapshotCommand::Reset {
+            instance_id: reference,
+            snapshot,
+            mutation,
+        } => {
+            let instance_id = resolve_instance(api, reference, InstanceUse::Change).await?;
+            let snapshot_id = resolve_snapshot(api, instance_id, snapshot).await?;
+            let accepted: JobAccepted = api
+                .write_retryable(
+                    &ResetInstanceSnapshot {
+                        instance_id,
+                        snapshot_id,
+                    },
+                    &(),
+                    &retried_by_id(mutation.key(), reference, instance_id),
+                )
+                .await?;
+            #[cfg(unix)]
+            ghostd::forget_instance(instance_id);
+            mutation_result(api, accepted, mutation, show_progress).await
+        }
+        SnapshotCommand::Delete {
+            instance_id: reference,
+            snapshot,
+            mutation,
+        } => {
+            let instance_id = resolve_instance(api, reference, InstanceUse::Change).await?;
+            let snapshot_id = resolve_snapshot(api, instance_id, snapshot).await?;
+            let accepted: JobAccepted = api
+                .write_retryable(
+                    &DeleteInstanceSnapshot {
+                        instance_id,
+                        snapshot_id,
+                    },
+                    &(),
+                    &retried_by_id(mutation.key(), reference, instance_id),
+                )
+                .await?;
+            mutation_result(api, accepted, mutation, show_progress).await
+        }
+    }
+}
+
+/// The snapshot of `instance_id` that `reference` names: its ID, or the
+/// name of one of its live snapshots, in any case.
+async fn resolve_snapshot(api: &ApiClient, instance_id: Uuid, reference: &str) -> Result<Uuid> {
+    if let Ok(id) = Uuid::parse_str(reference) {
+        return Ok(id);
+    }
+    let snapshots: InstanceSnapshotsView =
+        api.read(&ListInstanceSnapshots { instance_id }, "").await?;
+    snapshots
+        .snapshots
+        .iter()
+        .find(|snapshot| {
+            matches!(snapshot.state.as_str(), "creating" | "ready" | "deleting")
+                && snapshot.name.eq_ignore_ascii_case(reference)
+        })
+        .map(|snapshot| snapshot.snapshot_id)
+        .map_or_else(
+            || {
+                refuse!(
+                    "snapshot_not_found",
+                    "instance {instance_id} has no snapshot named {}; `ghost instance snapshot list` lists them",
+                    escape_control(reference)
+                )
+            },
+            Ok,
+        )
+}
+
+/// "Deletes N snapshots." for an action that drops the live snapshots of
+/// `instance`, when it has any: none when it has none, when its host takes
+/// no snapshots, or when the backend cannot list them (an older one).
+async fn snapshots_dropped_line(
+    api: &ApiClient,
+    instance: Option<&InstanceView>,
+) -> Option<String> {
+    let instance = instance.filter(|instance| instance.snapshots_supported)?;
+    let snapshots: InstanceSnapshotsView = api
+        .read(
+            &ListInstanceSnapshots {
+                instance_id: instance.instance_id,
+            },
+            "",
+        )
+        .await
+        .ok()?;
+    let live = snapshots
+        .snapshots
+        .iter()
+        .filter(|snapshot| matches!(snapshot.state.as_str(), "creating" | "ready"))
+        .count();
+    match live {
+        0 => None,
+        1 => Some("Deletes 1 snapshot.".to_owned()),
+        many => Some(format!("Deletes {many} snapshots.")),
+    }
+}
+
 async fn mutation_result(
     api: &ApiClient,
     accepted: JobAccepted,
@@ -12786,6 +13224,9 @@ fn job_kind_words(kind: JobKind) -> String {
         JobKind::MoveGatewayLease => "moving the gateway",
         JobKind::TuneBandwidth => "tuning bandwidth",
         JobKind::RedeployContainerInstance => "updating",
+        JobKind::InstanceSnapshotCreate => "taking a snapshot",
+        JobKind::InstanceSnapshotReset => "resetting to a snapshot",
+        JobKind::InstanceSnapshotDelete => "deleting a snapshot",
         JobKind::Unknown => return wire_name(kind),
     }
     .to_owned()
@@ -19370,6 +19811,7 @@ mod tests {
             delete_at: None,
             deletion_safety: None,
             bandwidth_limits: None,
+            snapshots_supported: false,
             kind: ghostrack_client_api::website::InstanceKind::Vm,
             container: None,
             instance_id,
@@ -28447,6 +28889,79 @@ mod tests {
                 Cli::try_parse_from(["ghost", "instance", "update", &id, option, "x"]).is_err()
             );
         }
+    }
+
+    /// `instance snapshot`: a creation sends its name; a reset and a
+    /// deletion name the snapshot by its name, which the list resolves, or
+    /// by its ID; a reset with --wait ends with its job, and one that
+    /// failed as evicted fails; the list shows its rows and what they hold.
+    #[tokio::test]
+    async fn snapshots_are_taken_reset_to_and_deleted_by_name() {
+        let directory = tempfile::tempdir().unwrap();
+        let seed = directory.path().join("account.seed");
+        keys::generate_seed(&seed).unwrap();
+        let (instance, job, snapshot) = (Uuid::now_v7(), Uuid::now_v7(), Uuid::now_v7());
+        let accepted = json!({"job_id": job, "resource_id": snapshot, "status_url": format!("/v1/jobs/{job}")});
+        let list = json!({"snapshots": [
+                {"snapshot_id": snapshot, "name": "ci-base", "sequence": 2, "state": "ready",
+                 "taken_at": Utc::now()},
+                {"snapshot_id": Uuid::now_v7(), "name": "old", "sequence": 1, "state": "ended",
+                 "ended_reason": "evicted_for_space", "ended_at": Utc::now()}],
+            "held_bytes": 3_u64 << 30, "maximum_snapshots": 3, "snapshots_supported": true});
+        let done = job_json(JobState::Succeeded, &[], json!({}));
+        let failed = job_json(JobState::Failed, &[], json!({}));
+        let (url, received) = canned_server(vec![
+            (202, accepted.to_string()),
+            (200, list.to_string()),
+            (202, accepted.to_string()),
+            (200, done),
+            (200, list.to_string()),
+            (202, accepted.to_string()),
+            (202, accepted.to_string()),
+            (200, failed),
+            (200, list.to_string()),
+        ])
+        .await;
+        let id = instance.to_string();
+        let run = async |arguments: &[&str]| {
+            let mut line = vec!["--compact", "instance", "snapshot"];
+            line.extend_from_slice(arguments);
+            execute(&account_command(&url, &seed, &line)).await
+        };
+        let created = run(&["create", &id, "--name", "ci-base"]).await.unwrap();
+        assert_eq!(created["resource_id"], snapshot.to_string());
+        let reset = run(&["reset", &id, "CI-BASE", "--wait"]).await.unwrap();
+        assert_eq!(reset["state"], "succeeded");
+        assert!(run(&["delete", &id, "nope"]).await.is_err(), "no such name");
+        run(&["delete", &id, &snapshot.to_string()]).await.unwrap();
+        assert!(
+            run(&["reset", &id, &snapshot.to_string(), "--wait"])
+                .await
+                .is_err(),
+            "a failed reset fails"
+        );
+        let listed = run(&["list", &id]).await.unwrap();
+        let view: InstanceSnapshotsView = serde_json::from_value(listed).unwrap();
+        let summary = Summary::snapshots(view);
+        assert_eq!(summary.rows[0]["name"], "ci-base");
+        assert_eq!(summary.rows[1]["state"], "evicted for space");
+        assert_eq!(summary.note.as_deref(), Some("Held 3 GiB on the host."));
+        assert_eq!(
+            request_lines(&received),
+            [
+                format!("POST /api/mut/v1/instances/{instance}/snapshots"),
+                format!("GET /v1/instances/{instance}/snapshots"),
+                format!("POST /api/mut/v1/instances/{instance}/snapshots/{snapshot}/reset"),
+                format!("GET /v1/jobs/{job}"),
+                format!("GET /v1/instances/{instance}/snapshots"),
+                format!("DELETE /api/mut/v1/instances/{instance}/snapshots/{snapshot}"),
+                format!("POST /api/mut/v1/instances/{instance}/snapshots/{snapshot}/reset"),
+                format!("GET /v1/jobs/{job}"),
+                format!("GET /v1/instances/{instance}/snapshots"),
+            ]
+        );
+        let first: Value = serde_json::from_slice(&received.lock().unwrap()[0].1).unwrap();
+        assert_eq!(first, json!({"name": "ci-base"}));
     }
 
     /// `instance redeploy` says what it replaces and keeps before it asks,

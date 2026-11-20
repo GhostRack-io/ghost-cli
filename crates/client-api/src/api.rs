@@ -500,6 +500,23 @@ endpoints! {
     /// End a VM's rescue: it boots its own system again.
     EndInstanceRescue { instance_id: Uuid } = user POST
         "/api/mut/v1/instances/{instance_id}/rescue/exit" => JobAccepted;
+    /// An instance's snapshots of its root disk on its host: the live ones
+    /// and those that ended in the last 7 days, newest first.
+    ListInstanceSnapshots { instance_id: Uuid } = user GET
+        "/v1/instances/{instance_id}/snapshots" => crate::website::InstanceSnapshotsView;
+    /// Take a snapshot of an instance's root disk on its host, running or
+    /// stopped; past the limit the oldest is replaced. The job's resource
+    /// is the snapshot.
+    CreateInstanceSnapshot { instance_id: Uuid } = wallet POST
+        "/api/mut/v1/instances/{instance_id}/snapshots"
+        (crate::website::CreateInstanceSnapshotRequest) => JobAccepted;
+    /// Return an instance's root disk to a snapshot: the instance is forced
+    /// off and started again; the snapshot stays.
+    ResetInstanceSnapshot { instance_id: Uuid, snapshot_id: Uuid } = wallet POST
+        "/api/mut/v1/instances/{instance_id}/snapshots/{snapshot_id}/reset" => JobAccepted;
+    /// Delete a snapshot of an instance's root disk.
+    DeleteInstanceSnapshot { instance_id: Uuid, snapshot_id: Uuid } = wallet DELETE
+        "/api/mut/v1/instances/{instance_id}/snapshots/{snapshot_id}" => JobAccepted;
     ListInstanceUpgrades { instance_id: Uuid } =
         user GET "/v1/instances/{instance_id}/upgrades" => Vec<InstanceUpgradeView>;
     /// What changing a cloud instance's public address costs, and whether its host has room.

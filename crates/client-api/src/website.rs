@@ -486,8 +486,8 @@ pub enum LedgerKind {
 /// seed can carry out, a hosted backup's restore over its instance or into
 /// a new one, since only the seed's recovery key decrypts a hosted backup,
 /// and the instance actions only an account key may sign (item 262):
-/// reinstall, reset access and rescue (item 296). A website session does
-/// everything else itself.
+/// reinstall, reset access and rescue (item 296), and the snapshots' (item
+/// 298). A website session does everything else itself.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum BrowserOperation {
@@ -529,6 +529,21 @@ pub enum BrowserOperation {
         instance_id: Uuid,
         request: RescueInstanceRequest,
     },
+    /// Take a snapshot of an instance with exactly this request (item 298).
+    CreateInstanceSnapshot {
+        instance_id: Uuid,
+        request: CreateInstanceSnapshotRequest,
+    },
+    /// Return an instance's root disk to its snapshot (item 298).
+    ResetInstanceSnapshot {
+        instance_id: Uuid,
+        snapshot_id: Uuid,
+    },
+    /// Delete an instance's snapshot (item 298).
+    DeleteInstanceSnapshot {
+        instance_id: Uuid,
+        snapshot_id: Uuid,
+    },
     /// A variant of a newer release, which this one does not know.
     #[serde(other)]
     Unknown,
@@ -568,6 +583,18 @@ pub enum BrowserOperationInput {
     RescueInstance {
         instance_id: Uuid,
         request: RescueInstanceRequest,
+    },
+    CreateInstanceSnapshot {
+        instance_id: Uuid,
+        request: CreateInstanceSnapshotRequest,
+    },
+    ResetInstanceSnapshot {
+        instance_id: Uuid,
+        snapshot_id: Uuid,
+    },
+    DeleteInstanceSnapshot {
+        instance_id: Uuid,
+        snapshot_id: Uuid,
     },
 }
 
@@ -618,6 +645,27 @@ impl From<BrowserOperationInput> for BrowserOperation {
             } => Self::RescueInstance {
                 instance_id,
                 request,
+            },
+            BrowserOperationInput::CreateInstanceSnapshot {
+                instance_id,
+                request,
+            } => Self::CreateInstanceSnapshot {
+                instance_id,
+                request,
+            },
+            BrowserOperationInput::ResetInstanceSnapshot {
+                instance_id,
+                snapshot_id,
+            } => Self::ResetInstanceSnapshot {
+                instance_id,
+                snapshot_id,
+            },
+            BrowserOperationInput::DeleteInstanceSnapshot {
+                instance_id,
+                snapshot_id,
+            } => Self::DeleteInstanceSnapshot {
+                instance_id,
+                snapshot_id,
             },
         }
     }
@@ -4100,6 +4148,58 @@ pub struct ResetInstanceAccessRequest {
     pub firewall: bool,
 }
 
+/// Take a snapshot of an instance's root disk on its host (`CreateInstanceSnapshot`, item 298 of
+/// the platform). Not a backup: the host keeps it, and removes it when it needs the space.
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct CreateInstanceSnapshotRequest {
+    /// 1 to 64 of `A-Z a-z 0-9 . _ -`, unique among the instance's live
+    /// snapshots; `snapshot-<sequence>` when absent.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub name: Option<String>,
+}
+
+/// One snapshot of an instance's root disk (item 298 of the platform).
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct InstanceSnapshotView {
+    pub snapshot_id: Uuid,
+    pub name: String,
+    /// Its number among the instance's snapshots, 1 and up, never used again.
+    pub sequence: u32,
+    /// `creating`, `ready`, `deleting`, `ended` or `failed`; a later release
+    /// may add others.
+    pub state: String,
+    /// When the host took it; absent while it is being taken.
+    #[serde(default)]
+    pub taken_at: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub ended_at: Option<DateTime<Utc>>,
+    /// Why it ended: `deleted`, `replaced` (by a newer one past the limit),
+    /// `evicted_for_space` (its host needed the space), `reinstall`,
+    /// `redeploy`, `upgrade`, `instance_deleted`, `move`, `lost` or
+    /// `dropped`; a later release may add others.
+    #[serde(default)]
+    pub ended_reason: Option<String>,
+}
+
+/// An instance's snapshots (`ListInstanceSnapshots`, item 298 of the platform): the live ones and
+/// those that ended in the last 7 days, newest first, with what they hold on the host.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct InstanceSnapshotsView {
+    pub snapshots: Vec<InstanceSnapshotView>,
+    /// What the instance's snapshots hold on its host beyond its root's
+    /// own data, as last measured; absent before the first measuring.
+    #[serde(default)]
+    pub held_bytes: Option<u64>,
+    #[serde(default)]
+    pub measured_at: Option<DateTime<Utc>>,
+    /// The live snapshots the instance keeps: a new one past it replaces
+    /// the oldest.
+    pub maximum_snapshots: u32,
+    /// Whether the instance's host takes snapshots.
+    pub snapshots_supported: bool,
+}
+
 /// Boot an instance into the platform's rescue system (`RescueInstance`): root logs in over SSH
 /// with these keys, by key only. A VM only.
 #[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
@@ -4658,6 +4758,10 @@ pub struct InstanceView {
     /// older backends.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bandwidth_limits: Option<InstanceBandwidthLimitsView>,
+    /// Whether the instance's host takes snapshots of its root disk (item
+    /// 298 of the platform). False from older backends.
+    #[serde(default)]
+    pub snapshots_supported: bool,
 }
 
 /// An instance's bandwidth limit as its offering gives it, and the lower one
@@ -5826,6 +5930,13 @@ pub enum JobKind {
     /// The renter moved an instance to another host of its LAN mesh (item
     /// 295b). Older releases read it as [`Self::Unknown`].
     MoveInstance,
+    /// The renter took a snapshot of an instance's root disk (item 298 of the platform). Older
+    /// releases read it as [`Self::Unknown`].
+    InstanceSnapshotCreate,
+    /// The renter reset an instance to a snapshot. Older releases read it as [`Self::Unknown`].
+    InstanceSnapshotReset,
+    /// The renter deleted a snapshot. Older releases read it as [`Self::Unknown`].
+    InstanceSnapshotDelete,
     /// A variant of a newer release, which this one does not know.
     #[serde(other)]
     #[cfg_attr(feature = "clap", value(skip))]
