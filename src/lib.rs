@@ -10605,6 +10605,10 @@ async fn execute_instance(
                 quote_move(api, instance_id, &args.offering).await;
             }
             if !args.yes {
+                // The copy it leaves takes its snapshots with it (item 298).
+                let instance: Option<InstanceView> =
+                    api.read(&GetInstance { instance_id }, "").await.ok();
+                let dropped = snapshots_dropped_line(api, instance.as_ref()).await;
                 return Err(Preview::new(
                     instance_preview_title("Move", &args.instance_id, Some(instance_id), None),
                     format!(
@@ -10615,6 +10619,7 @@ async fn execute_instance(
                 )
                 .row("Offering", Some(args.offering.clone()))
                 .effect("a move stops the instance for the copy of its disk")
+                .effect(dropped.as_deref().unwrap_or_default())
                 .refusal());
             }
             let accepted: JobAccepted = api
@@ -30383,6 +30388,47 @@ mod tests {
             [
                 format!("GET /v1/instances/{id}"),
                 "GET /v1/catalog/offerings/of2_there".to_owned()
+            ]
+        );
+        // A move without --yes of an instance whose host takes snapshots
+        // names the live ones it deletes; an ended one is not counted.
+        let mut snapshotted = quoted_instance(true);
+        snapshotted.snapshots_supported = true;
+        let snapshotted = serde_json::to_string(&snapshotted).unwrap();
+        let snapshot = |state: &str, sequence: u32| {
+            json!({"snapshot_id": Uuid::now_v7(), "name": format!("snapshot-{sequence}"),
+                "sequence": sequence, "state": state})
+        };
+        let snapshots = json!({"snapshots": [snapshot("ended", 1), snapshot("ready", 2),
+                snapshot("creating", 3)],
+            "maximum_snapshots": 3, "snapshots_supported": true})
+        .to_string();
+        let (url, received) = canned_server(vec![
+            (200, snapshotted.clone()),
+            (200, offering.clone()),
+            (200, snapshotted),
+            (200, snapshots),
+        ])
+        .await;
+        let error = execute(&account_command(
+            &url,
+            &seed,
+            &["instance", "move", &id, "--offering", "of2_there"],
+        ))
+        .await
+        .unwrap_err();
+        assert!(
+            error.to_string().contains("Deletes 2 snapshots.")
+                && ends_with_go_ahead(&error.to_string()),
+            "{error}"
+        );
+        assert_eq!(
+            request_lines(&received),
+            [
+                format!("GET /v1/instances/{id}"),
+                "GET /v1/catalog/offerings/of2_there".to_owned(),
+                format!("GET /v1/instances/{id}"),
+                format!("GET /v1/instances/{id}/snapshots"),
             ]
         );
         // With --yes, the write follows the reads.
