@@ -30398,7 +30398,7 @@ mod tests {
 
         // A move to another host without --yes: the instance, the offering
         // and the move's preview read, no write, the command in the error.
-        let preview = json!({"keeps_guest_identity": false});
+        let preview = json!({"keeps_guest_identity": false}).to_string();
         let (url, received) = canned_server(vec![
             (200, instance.clone()),
             (200, offering.clone()),
@@ -30473,8 +30473,9 @@ mod tests {
         );
         // With --yes, the write follows the reads; its answer names the new
         // instance and whether the guest kept its identity.
-        let mut moved = accepted.clone();
+        let mut moved: Value = serde_json::from_str(&accepted).unwrap();
         moved["keeps_guest_identity"] = json!(true);
+        let moved = moved.to_string();
         let (url, received) = canned_server(vec![
             (200, instance.clone()),
             (200, offering.clone()),
