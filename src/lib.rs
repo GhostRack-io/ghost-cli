@@ -99,11 +99,11 @@ use ghostrack_client_api::{
         HandOverCloudIpPoolRequest, HostAgentUpdateView, HostEnrollmentToken, HostModeFilter,
         HostPrivacyView, HttpProxyEntry, HttpProxyEntryView, HttpProxyProtocol, HttpProxyView,
         ImageView, InstanceConsoleLogView, InstanceEgressLevel, InstanceKind, InstanceListQuery,
-        InstanceMeshView, InstanceProjectionView, InstanceSnapshotsView, InstanceSort,
-        InstanceSource, InstanceState, InstanceStateFilter, InstanceTagView, InstanceUpgradeView,
-        InstanceView, IpChoice, JobAccepted, JobEventView, JobKind, JobPage, JobState,
-        JobStateFilter, JobStepState, JobView, KindChoice, LedgerKind, LocationView, LoginGrant,
-        MAX_SSH_PUBLIC_KEYS, MemoryChoice, MeshHostsView, MigrateAccountSeedRequest,
+        InstanceMeshView, InstanceProjectionView, InstanceSnapshotView, InstanceSnapshotsView,
+        InstanceSort, InstanceSource, InstanceState, InstanceStateFilter, InstanceTagView,
+        InstanceUpgradeView, InstanceView, IpChoice, JobAccepted, JobEventView, JobKind, JobPage,
+        JobState, JobStateFilter, JobStepState, JobView, KindChoice, LedgerKind, LocationView,
+        LoginGrant, MAX_SSH_PUBLIC_KEYS, MemoryChoice, MeshHostsView, MigrateAccountSeedRequest,
         MoveGatewayLocationRequest, MoveInstanceRequest, OfferingView, PortForwardChange,
         PrivateRenterView, ProviderAgentsView, ProviderBalanceView, ProviderConversionView,
         ProviderDisplayNameView, ProviderHostDetailView, ProviderHostView,
@@ -1955,6 +1955,11 @@ struct CreateInstanceArgs {
     /// `ghost catalog offerings --lan-mesh` takes it.
     #[arg(long, value_name = "LAN_MESH_ID")]
     lan_mesh: Option<Uuid>,
+    /// The part of the disk kept for snapshots, in percent, 0 to 50: the
+    /// guest sees the rest, and 0 takes no snapshots. Without it, the
+    /// platform's default.
+    #[arg(long, value_name = "PERCENT", value_parser = clap::value_parser!(u8).range(0..=50))]
+    snapshot_space: Option<u8>,
     /// One-time shell program run by cloud-init on first boot.
     #[arg(long)]
     startup_command: Option<String>,
@@ -2096,6 +2101,11 @@ struct ReinstallArgs {
     /// omitted.
     #[arg(long, value_parser = parse_hostname)]
     hostname: Option<String>,
+    /// The part of the new disk kept for snapshots, in percent, 0 to 50:
+    /// the guest sees the rest, and 0 takes no snapshots. Without it, the
+    /// instance keeps its setting.
+    #[arg(long, value_name = "PERCENT", value_parser = clap::value_parser!(u8).range(0..=50))]
+    snapshot_space: Option<u8>,
     /// One-time shell program run by cloud-init on first boot.
     #[arg(long)]
     startup_command: Option<String>,
@@ -4038,7 +4048,8 @@ pub async fn closing_notes(cli: &Cli, output: &Value) -> Vec<String> {
         InstanceCommand::Get { .. } if cli.output_format() == OutputFormat::Readable => {
             serde_json::from_value::<InstanceView>(output.clone())
                 .map(|instance| {
-                    let mut notes = egress_notes(&instance);
+                    let mut notes = disk_usage_notes(&instance);
+                    notes.extend(egress_notes(&instance));
                     notes.extend(access_reset_notes(&instance));
                     notes.extend(rescue_notes(&instance));
                     notes
@@ -4083,6 +4094,51 @@ pub async fn closing_notes(cli: &Cli, output: &Value) -> Vec<String> {
         }
         _ => Vec::new(),
     }
+}
+
+/// A size in GiB with one decimal, as the disk's usage reads it.
+fn gib_text(bytes: u64) -> String {
+    #[allow(clippy::cast_precision_loss, reason = "a size shown in GiB")]
+    let gib = bytes as f64 / f64::from(1_u32 << 30);
+    format!("{gib:.1}\u{a0}GiB")
+}
+
+/// What the instance's disk and snapshots use (item 298 of the platform):
+/// "Disk 12.3 of 47.5 GiB", what the guest wrote of what it sees, and,
+/// with a snapshot reserve, "Snapshots 0.8 GiB", which may pass the
+/// reserve. Nothing before the first measuring, or from an older backend.
+fn disk_usage_notes(instance: &InstanceView) -> Vec<String> {
+    let (Some(used), Some(disk)) = (instance.disk_used_bytes, instance.disk_bytes) else {
+        return Vec::new();
+    };
+    let used = gib_text(used);
+    let mut notes = vec![format!(
+        "Disk {} of {}",
+        used.trim_end_matches("\u{a0}GiB"),
+        gib_text(disk)
+    )];
+    if instance.snapshot_reserve_bytes.unwrap_or(0) > 0
+        && let Some(snapshots) = instance.snapshot_bytes
+    {
+        notes.push(format!("Snapshots {}", gib_text(snapshots)));
+    }
+    notes
+}
+
+/// What `ghost instance snapshot create --wait` says of the snapshot it
+/// took: kept, as no larger than the reserve, or that it may be evicted,
+/// with its size and the reserve. Nothing without them.
+fn snapshot_fit_line(snapshot: &InstanceSnapshotView, reserve: Option<u64>) -> Option<String> {
+    let (size, fits, reserve) = (snapshot.size_bytes?, snapshot.fits_reserve?, reserve?);
+    Some(if fits {
+        format!("Kept: fits the {} reserve.", gib_text(reserve))
+    } else {
+        format!(
+            "May be evicted: {}, reserve {}.",
+            gib_text(size),
+            gib_text(reserve)
+        )
+    })
 }
 
 /// How long `instance create --wait` waits, after the creation ended with
@@ -5237,8 +5293,14 @@ impl Summary {
         let held = snapshots
             .held_bytes
             .map(|bytes| format!("Held {} on the host.", pretty::binary_size(bytes)));
+        let note = match (held, snapshots.snapshot_reserve_bytes) {
+            (Some(held), Some(reserve)) if reserve > 0 => {
+                Some(format!("{held} Reserve {}.", pretty::binary_size(reserve)))
+            }
+            (held, _) => held,
+        };
         Self {
-            columns: vec!["name", "snapshot_id", "taken", "state"],
+            columns: vec!["name", "snapshot_id", "taken", "size", "state"],
             rows: snapshots
                 .snapshots
                 .into_iter()
@@ -5248,16 +5310,27 @@ impl Summary {
                         ("ended", Some(reason)) => format!("ended ({})", reason.replace('_', " ")),
                         (state, _) => state.to_owned(),
                     };
+                    // A size that fits the reserve is kept (item 298 of
+                    // the platform).
+                    let size = snapshot.size_bytes.map(|size| {
+                        let size = pretty::binary_size(size);
+                        if snapshot.fits_reserve == Some(true) {
+                            format!("{size}, fits")
+                        } else {
+                            size
+                        }
+                    });
                     json!({
                         "name": snapshot.name,
                         "snapshot_id": snapshot.snapshot_id,
                         "taken": snapshot.taken_at,
+                        "size": size,
                         "state": state,
                     })
                 })
                 .collect(),
             next_cursor: None,
-            note: held,
+            note,
         }
     }
 
@@ -9190,6 +9263,7 @@ async fn approve_browser_operation(
                         no_tags: tags.as_ref().is_some_and(Vec::is_empty),
                         tags: tags.unwrap_or_default(),
                         lan_mesh: lan_mesh_id,
+                        snapshot_space: None,
                         startup_command: None,
                         startup_command_file: None,
                         authorization_timeout_seconds: 300,
@@ -10136,6 +10210,7 @@ async fn execute_instance(
                 },
                 lan_mesh_id: args.lan_mesh,
                 host_id: None,
+                snapshot_reserve_percent: args.snapshot_space,
             };
             let accepted = accepted_job(
                 api.write_retryable_answered(&CreateInstance, &request, &key)
@@ -10292,6 +10367,7 @@ async fn execute_instance(
                         hostname: args.hostname.clone(),
                         startup_command,
                         accept_forced_backup: forced.is_some(),
+                        snapshot_reserve_percent: args.snapshot_space,
                     },
                     &retried_by_id(args.mutation.key(), &args.instance_id, instance_id),
                 )
@@ -11966,19 +12042,18 @@ async fn backup_creation_terms(
     let prices = pricing
         .prices(destination.into())
         .context("the backend gave no prices for the backup's destination")?;
-    let (_, maximum) = backup_byte_charge(
-        instance.root_disk_bytes,
-        prices.creation_charge_microusd_per_gib,
-    )
-    .with_context(|| {
-        format!(
-            "{} backup creation charge overflow",
-            match destination {
-                BackupDestinationArg::Hosted => "hosted",
-                BackupDestinationArg::Local => "local",
-            }
-        )
-    })?;
+    // A backup holds the disk its guest sees (item 298 of the platform).
+    let disk_bytes = instance.disk_bytes.unwrap_or(instance.root_disk_bytes);
+    let (_, maximum) = backup_byte_charge(disk_bytes, prices.creation_charge_microusd_per_gib)
+        .with_context(|| {
+            format!(
+                "{} backup creation charge overflow",
+                match destination {
+                    BackupDestinationArg::Hosted => "hosted",
+                    BackupDestinationArg::Local => "local",
+                }
+            )
+        })?;
     Ok(BackupCreationTerms {
         pricing_revision: pricing.pricing_revision,
         maximum_charge_microusd: maximum,
@@ -11993,7 +12068,7 @@ async fn backup_creation_terms(
                     format!(
                         "of the finished backup, at most {} for the {} disk, charged when it is published, nothing if it fails or is cancelled",
                         pretty::dollars(maximum),
-                        pretty::binary_size(instance.root_disk_bytes),
+                        pretty::binary_size(disk_bytes),
                     ),
                 ),
                 QuoteRow::Money(
@@ -12498,14 +12573,22 @@ async fn execute_snapshot(
             if readable {
                 notice(SNAPSHOT_NOT_A_BACKUP);
             }
-            // Waited for: the snapshot as the list shows it.
+            // Waited for: the snapshot as the list shows it, and whether
+            // it fits the reserve.
             if mutation.wait
-                && let Ok(snapshots) = api.read(&ListInstanceSnapshots { instance_id }, "").await
+                && let Ok::<InstanceSnapshotsView, _>(snapshots) =
+                    api.read(&ListInstanceSnapshots { instance_id }, "").await
                 && let Some(snapshot) = snapshots
                     .snapshots
-                    .into_iter()
+                    .iter()
                     .find(|snapshot| snapshot.snapshot_id == snapshot_id)
             {
+                if readable
+                    && let Some(line) =
+                        snapshot_fit_line(snapshot, snapshots.snapshot_reserve_bytes)
+                {
+                    notice(&line);
+                }
                 return to_value(snapshot);
             }
             Ok(result)
@@ -19812,6 +19895,12 @@ mod tests {
             deletion_safety: None,
             bandwidth_limits: None,
             snapshots_supported: false,
+            snapshot_reserve_percent: None,
+            snapshot_reserve_bytes: None,
+            disk_bytes: None,
+            disk_used_bytes: None,
+            snapshot_bytes: None,
+            usage_measured_at: None,
             kind: ghostrack_client_api::website::InstanceKind::Vm,
             container: None,
             instance_id,
@@ -20202,6 +20291,7 @@ mod tests {
             startup_command: None,
             ssh_key_ids: Some(Vec::new()),
             accept_forced_backup: true,
+            snapshot_reserve_percent: None,
         };
         let intent = |started_job_id, completed_job_id| {
             serde_json::to_string(&BrowserOperationView {
@@ -24283,6 +24373,40 @@ mod tests {
                 "Migrate the account key\n\nIt migrates.\nTo go ahead:  ghost account"
             ) && ends_with_go_ahead(&text),
             "{text}"
+        );
+    }
+
+    /// `ghost instance get` says what the guest wrote of the disk it sees
+    /// and, with a snapshot reserve, what the snapshots hold; nothing
+    /// before the first measuring or from an older backend (item 298 of
+    /// the platform).
+    #[test]
+    fn an_instance_says_its_disks_use() {
+        let view = |usage: Value| -> InstanceView {
+            let mut instance = json!({"instance_id": Uuid::nil(), "offering_id": "o",
+                "hostname": "vm", "root_disk_bytes": 50_u64 << 30, "state": "running",
+                "desired_power_state": "running", "holds_capacity": true,
+                "network_microusd_per_tib": 0, "created_at": Utc::now(),
+                "balance_reservation_microusd": 0});
+            instance
+                .as_object_mut()
+                .unwrap()
+                .extend(usage.as_object().unwrap().clone());
+            serde_json::from_value(instance).unwrap()
+        };
+        assert!(disk_usage_notes(&view(json!({}))).is_empty());
+        let measured = json!({"disk_bytes": (95_u64 << 30) / 2,
+            "disk_used_bytes": (123_u64 << 30) / 10, "snapshot_bytes": (8_u64 << 30) / 10,
+            "snapshot_reserve_bytes": (5_u64 << 30) / 2, "usage_measured_at": Utc::now()});
+        assert_eq!(
+            disk_usage_notes(&view(measured.clone())),
+            ["Disk 12.3 of 47.5\u{a0}GiB", "Snapshots 0.8\u{a0}GiB"]
+        );
+        let mut without = measured;
+        without["snapshot_reserve_bytes"] = json!(0);
+        assert_eq!(
+            disk_usage_notes(&view(without)),
+            ["Disk 12.3 of 47.5\u{a0}GiB"]
         );
     }
 
@@ -28456,6 +28580,7 @@ mod tests {
         let (url, received) = canned_server(vec![
             (202, accepted.to_string()),
             (202, accepted.to_string()),
+            (202, accepted.to_string()),
         ])
         .await;
         let mesh_text = mesh.to_string();
@@ -28470,7 +28595,11 @@ mod tests {
             "--ssh-key",
             TEST_PUBLIC_KEY,
         ];
-        for extra in [&["--lan-mesh", &mesh_text][..], &[]] {
+        for extra in [
+            &["--lan-mesh", &mesh_text][..],
+            &[],
+            &["--snapshot-space", "20"],
+        ] {
             execute(&account_command(&url, &seed, &[&base[..], extra].concat()))
                 .await
                 .unwrap();
@@ -28483,6 +28612,27 @@ mod tests {
             .collect();
         assert_eq!(bodies[0]["lan_mesh_id"], json!(mesh));
         assert!(bodies[1].get("lan_mesh_id").is_none(), "{}", bodies[1]);
+        // The snapshot space (item 298 of the platform): sent as asked,
+        // left to the backend's default without, 0 to 50.
+        assert!(
+            bodies[1].get("snapshot_reserve_percent").is_none(),
+            "{}",
+            bodies[1]
+        );
+        assert_eq!(bodies[2]["snapshot_reserve_percent"], 20);
+        for (space, ok) in [("0", true), ("50", true), ("51", false)] {
+            let parsed = Cli::try_parse_from([
+                "ghost",
+                "instance",
+                "reinstall",
+                "vm",
+                "--image",
+                "debian-13",
+                "--snapshot-space",
+                space,
+            ]);
+            assert_eq!(parsed.is_ok(), ok, "{space}");
+        }
     }
 
     /// `instance create --container` sends the image and every override,
@@ -28904,10 +29054,11 @@ mod tests {
         let accepted = json!({"job_id": job, "resource_id": snapshot, "status_url": format!("/v1/jobs/{job}")});
         let list = json!({"snapshots": [
                 {"snapshot_id": snapshot, "name": "ci-base", "sequence": 2, "state": "ready",
-                 "taken_at": Utc::now()},
+                 "taken_at": Utc::now(), "size_bytes": 512_u64 << 20, "fits_reserve": true},
                 {"snapshot_id": Uuid::now_v7(), "name": "old", "sequence": 1, "state": "ended",
                  "ended_reason": "evicted_for_space", "ended_at": Utc::now()}],
-            "held_bytes": 3_u64 << 30, "maximum_snapshots": 3, "snapshots_supported": true});
+            "held_bytes": 3_u64 << 30, "maximum_snapshots": 3, "snapshots_supported": true,
+            "snapshot_reserve_bytes": 1_u64 << 30});
         let done = job_json(JobState::Succeeded, &[], json!({}));
         let failed = job_json(JobState::Failed, &[], json!({}));
         let (url, received) = canned_server(vec![
@@ -28942,10 +29093,29 @@ mod tests {
         );
         let listed = run(&["list", &id]).await.unwrap();
         let view: InstanceSnapshotsView = serde_json::from_value(listed).unwrap();
-        let summary = Summary::snapshots(view);
+        let summary = Summary::snapshots(view.clone());
         assert_eq!(summary.rows[0]["name"], "ci-base");
+        assert_eq!(summary.rows[0]["size"], "512 MiB, fits");
         assert_eq!(summary.rows[1]["state"], "evicted for space");
-        assert_eq!(summary.note.as_deref(), Some("Held 3 GiB on the host."));
+        assert_eq!(summary.rows[1]["size"], Value::Null);
+        assert_eq!(
+            summary.note.as_deref(),
+            Some("Held 3 GiB on the host. Reserve 1 GiB.")
+        );
+        // What `create --wait` says of the snapshot it took.
+        let mut taken = view.snapshots[0].clone();
+        assert_eq!(
+            snapshot_fit_line(&taken, Some(10 << 30)).as_deref(),
+            Some("Kept: fits the 10.0\u{a0}GiB reserve.")
+        );
+        taken.size_bytes = Some(12 * (1 << 30) + (3 << 30) / 10);
+        taken.fits_reserve = Some(false);
+        assert_eq!(
+            snapshot_fit_line(&taken, Some(5 << 29)).as_deref(),
+            Some("May be evicted: 12.3\u{a0}GiB, reserve 2.5\u{a0}GiB.")
+        );
+        taken.size_bytes = None;
+        assert_eq!(snapshot_fit_line(&taken, Some(1 << 30)), None);
         assert_eq!(
             request_lines(&received),
             [

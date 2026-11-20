@@ -3334,7 +3334,20 @@ pub struct CreateInstanceRequest {
     /// it, and a backend before it refuses the field.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub host_id: Option<Uuid>,
+    /// The part of the disk kept for the instance's snapshots, in percent,
+    /// 0 to [`MAXIMUM_SNAPSHOT_RESERVE_PERCENT`] (item 298 of the
+    /// platform): the guest sees the rest. 0 keeps none, and the instance
+    /// takes no snapshots. Absent, the platform's default rule, lowered so
+    /// that the image, backup or clone fits; a percentage that does not
+    /// fit is refused (422 `snapshot_reserve_too_large`). A host that takes
+    /// no snapshots keeps none. A backend before it refuses the field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub snapshot_reserve_percent: Option<u8>,
 }
+
+/// The largest snapshot reserve a renter may ask for, in percent of the
+/// disk ([`CreateInstanceRequest::snapshot_reserve_percent`]).
+pub const MAXIMUM_SNAPSHOT_RESERVE_PERCENT: u8 = 50;
 
 /// The initial contents for a newly rented instance. Backup restoration is a
 /// creation source, not an in-place mutation of the backup's original VM.
@@ -4125,6 +4138,12 @@ pub struct ReinstallInstanceRequest {
     /// 409 `forced_backup_required`, naming the backup and its cost.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub accept_forced_backup: bool,
+    /// The snapshot reserve of the disk the reinstall makes, as
+    /// [`CreateInstanceRequest::snapshot_reserve_percent`]. Absent keeps the
+    /// instance's setting: its percentage, or the default rule. A backend
+    /// before it refuses the field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub snapshot_reserve_percent: Option<u8>,
 }
 
 /// Reset an instance's SSH access through cloud-init (`ResetInstanceAccess`): at the guest's next
@@ -4180,6 +4199,14 @@ pub struct InstanceSnapshotView {
     /// `dropped`; a later release may add others.
     #[serde(default)]
     pub ended_reason: Option<String>,
+    /// What the root held when it was taken, the most the snapshot ever
+    /// holds; absent while it is being taken, and from older backends.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub size_bytes: Option<u64>,
+    /// Whether it fits the disk's snapshot reserve: one that does is never
+    /// evicted. Absent with `size_bytes`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub fits_reserve: Option<bool>,
 }
 
 /// An instance's snapshots (`ListInstanceSnapshots`, item 298 of the platform): the live ones and
@@ -4196,8 +4223,14 @@ pub struct InstanceSnapshotsView {
     /// The live snapshots the instance keeps: a new one past it replaces
     /// the oldest.
     pub maximum_snapshots: u32,
-    /// Whether the instance's host takes snapshots.
+    /// Whether the instance takes snapshots: its host does, and its disk
+    /// keeps a snapshot reserve.
     pub snapshots_supported: bool,
+    /// The disk's snapshot reserve (item 298 of the platform): 0 keeps
+    /// none, and the instance takes no snapshots. Absent from older
+    /// backends.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub snapshot_reserve_bytes: Option<u64>,
 }
 
 /// Boot an instance into the platform's rescue system (`RescueInstance`): root logs in over SSH
@@ -4758,10 +4791,52 @@ pub struct InstanceView {
     /// older backends.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub bandwidth_limits: Option<InstanceBandwidthLimitsView>,
-    /// Whether the instance's host takes snapshots of its root disk (item
-    /// 298 of the platform). False from older backends.
+    /// Whether the instance takes snapshots of its root disk (item 298 of
+    /// the platform): its host does, and its disk keeps a snapshot reserve.
+    /// False from older backends.
     #[serde(default)]
     pub snapshots_supported: bool,
+    /// The renter's snapshot reserve in percent of the disk
+    /// ([`CreateInstanceRequest::snapshot_reserve_percent`]); absent for the
+    /// platform's default rule, and from older backends.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub snapshot_reserve_percent: Option<u8>,
+    /// The part of [`Self::root_disk_bytes`] kept for snapshots, which the
+    /// guest does not see; 0 keeps none. Absent from older backends.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub snapshot_reserve_bytes: Option<u64>,
+    /// The disk as the guest sees it: [`Self::root_disk_bytes`] less the
+    /// snapshot reserve. Absent from older backends.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub disk_bytes: Option<u64>,
+    /// What the guest wrote of its disk, as its host last measured it,
+    /// once an hour; a file the guest deleted counts until the guest trims
+    /// it. Absent before the first measuring, and from older backends.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub disk_used_bytes: Option<u64>,
+    /// What the instance's snapshots hold on its host beyond its disk's own
+    /// data, measured with [`Self::disk_used_bytes`]; they may hold more
+    /// than the reserve while the guest has not written its disk.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub snapshot_bytes: Option<u64>,
+    /// When the usage was measured.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub usage_measured_at: Option<DateTime<Utc>>,
+}
+
+impl InstanceView {
+    /// The snapshot reserve in percent of the disk it came to, which the
+    /// default rule and a restore that had to lower it make other than the
+    /// renter's setting; none from older backends.
+    #[must_use]
+    pub fn snapshot_reserve_effective_percent(&self) -> Option<f64> {
+        let reserve = self.snapshot_reserve_bytes?;
+        (self.root_disk_bytes > 0).then(|| {
+            #[allow(clippy::cast_precision_loss, reason = "a share shown in percent")]
+            let percent = reserve as f64 * 100.0 / self.root_disk_bytes as f64;
+            percent
+        })
+    }
 }
 
 /// An instance's bandwidth limit as its offering gives it, and the lower one
