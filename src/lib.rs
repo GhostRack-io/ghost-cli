@@ -13712,7 +13712,8 @@ fn move_snapshot_space(instance: &InstanceView, preview: &InstanceMovePreview) -
         return Some("The host takes no snapshots.".to_owned());
     }
     if preview.snapshot_reserve_bytes == 0 {
-        return (preview.snapshot_reserve_lowered || instance.snapshot_reserve_percent != Some(0))
+        return preview
+            .snapshot_reserve_lowered
             .then(|| "No snapshot space: the disk has no room for it.".to_owned());
     }
     let gib = 1_u64 << 30;
