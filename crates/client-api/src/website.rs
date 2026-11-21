@@ -4542,6 +4542,12 @@ pub struct HttpProxyLimitsView {
     pub per_passthrough_app: u32,
     /// Per visitor address.
     pub per_visitor: u32,
+    /// The instance's own, across its apps and names (item 307): its
+    /// origin connections through the proxy. Absent from older backends,
+    /// and where the instance has no cap (a dedicated gateway's rental, a
+    /// home instance without a live lease).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub per_instance: Option<u32>,
 }
 
 /// Change where ports of a shared IP instance's slice are forwarded to:
