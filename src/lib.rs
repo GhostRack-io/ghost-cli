@@ -13716,7 +13716,7 @@ fn move_snapshot_space(instance: &InstanceView, preview: &InstanceMovePreview) -
             .then(|| "No snapshot space: the disk has no room for it.".to_owned());
     }
     let gib = 1_u64 << 30;
-    let size = if preview.snapshot_reserve_bytes % gib == 0 {
+    let size = if preview.snapshot_reserve_bytes.is_multiple_of(gib) {
         format!("{} GiB", preview.snapshot_reserve_bytes / gib)
     } else {
         gib_text(preview.snapshot_reserve_bytes).replace('\u{a0}', " ")
