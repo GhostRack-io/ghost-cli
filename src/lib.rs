@@ -13635,9 +13635,10 @@ const MOVE_NEW_IDENTITY: &str = "The guest's hostname and the network settings c
 fn move_quote(
     instance: &InstanceView,
     offering: &OfferingView,
-    keeps_identity: bool,
+    preview: &InstanceMovePreview,
     colors: bool,
 ) -> Vec<String> {
+    let keeps_identity = preview.keeps_guest_identity;
     let new_size = size_text(
         offering.vcpu_count,
         offering.memory_bytes,
@@ -13695,10 +13696,39 @@ fn move_quote(
             .to_owned(),
     );
     lines.push("  The copy is billed as LAN mesh traffic.".to_owned());
+    if let Some(line) = move_snapshot_space(instance, preview) {
+        lines.push(format!("  {line}"));
+    }
     if !keeps_identity {
         lines.push(format!("  {MOVE_NEW_IDENTITY}"));
     }
     lines
+}
+
+/// The snapshot space the moved instance gets, as the preview read it
+/// (item 295c). Nothing when the instance has asked for none.
+fn move_snapshot_space(instance: &InstanceView, preview: &InstanceMovePreview) -> Option<String> {
+    if !preview.snapshots_supported {
+        return Some("The host takes no snapshots.".to_owned());
+    }
+    if preview.snapshot_reserve_bytes == 0 {
+        return (preview.snapshot_reserve_lowered || instance.snapshot_reserve_percent != Some(0))
+            .then(|| "No snapshot space: the disk has no room for it.".to_owned());
+    }
+    let gib = 1_u64 << 30;
+    let size = if preview.snapshot_reserve_bytes % gib == 0 {
+        format!("{} GiB", preview.snapshot_reserve_bytes / gib)
+    } else {
+        gib_text(preview.snapshot_reserve_bytes).replace('\u{a0}', " ")
+    };
+    Some(if preview.snapshot_reserve_lowered {
+        match instance.snapshot_reserve_percent {
+            Some(percent) => format!("Snapshot space: {size}, lowered from {percent} % to fit."),
+            None => format!("Snapshot space: {size}, lowered to fit."),
+        }
+    } else {
+        format!("Snapshot space: {size}.")
+    })
 }
 
 /// Print what a move changes before it is asked for. A read that fails
@@ -13728,7 +13758,7 @@ async fn quote_move(api: &ApiClient, instance_id: Uuid, offering_id: &str) {
     };
     match read.await {
         Ok((instance, offering, preview)) => {
-            for line in move_quote(&instance, &offering, preview.keeps_guest_identity, colors) {
+            for line in move_quote(&instance, &offering, &preview, colors) {
                 notice(&line);
             }
             notice("");
@@ -29669,6 +29699,55 @@ mod tests {
                 "gateway_base_microusd_per_month": 500_000}});
         }
         serde_json::from_value(view).unwrap()
+    }
+
+    /// A move's quote names the snapshot space the instance gets.
+    #[test]
+    fn a_move_quote_names_the_snapshot_space() {
+        let preview = |value: serde_json::Value| -> InstanceMovePreview {
+            serde_json::from_value(value).unwrap()
+        };
+        let mut instance = quoted_instance(false);
+        let line = |instance: &InstanceView, preview: &InstanceMovePreview| {
+            move_snapshot_space(instance, preview)
+        };
+        let gib = 1_u64 << 30;
+        assert_eq!(
+            line(
+                &instance,
+                &preview(json!({"snapshots_supported": true,
+                "snapshot_reserve_bytes": 10 * gib}))
+            ),
+            Some("Snapshot space: 10 GiB.".to_owned())
+        );
+        instance.snapshot_reserve_percent = Some(20);
+        assert_eq!(
+            line(
+                &instance,
+                &preview(json!({"snapshots_supported": true,
+                "snapshot_reserve_bytes": 4 * gib, "snapshot_reserve_percent": 10,
+                "snapshot_reserve_lowered": true}))
+            ),
+            Some("Snapshot space: 4 GiB, lowered from 20 % to fit.".to_owned())
+        );
+        assert_eq!(
+            line(
+                &instance,
+                &preview(json!({"snapshots_supported": true,
+                "snapshot_reserve_lowered": true}))
+            ),
+            Some("No snapshot space: the disk has no room for it.".to_owned())
+        );
+        assert_eq!(
+            line(&instance, &preview(json!({"snapshots_supported": false}))),
+            Some("The host takes no snapshots.".to_owned())
+        );
+        instance.snapshot_reserve_percent = Some(0);
+        assert_eq!(
+            line(&instance, &preview(json!({"snapshots_supported": true}))),
+            None,
+            "an instance that asked for none"
+        );
     }
 
     fn quoted_upgrade(available: bool) -> InstanceUpgradeView {

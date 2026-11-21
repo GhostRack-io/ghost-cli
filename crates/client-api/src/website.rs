@@ -4096,6 +4096,24 @@ pub struct MoveInstanceAccepted {
 pub struct InstanceMovePreview {
     #[serde(default)]
     pub keeps_guest_identity: bool,
+    /// The snapshot reserve the moved instance gets on the offering's
+    /// hosts, in bytes (item 295c).
+    #[serde(default)]
+    pub snapshot_reserve_bytes: u64,
+    /// The setting the moved instance gets: the source's, lowered where its
+    /// disk needs the room; none for the default rule.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub snapshot_reserve_percent: Option<u8>,
+    /// The reserve is lower than the source's setting or the default rule
+    /// wants, to fit the disk the copy holds.
+    #[serde(default)]
+    pub snapshot_reserve_lowered: bool,
+    /// The receiving hosts take snapshots.
+    #[serde(default)]
+    pub snapshots_supported: bool,
+    /// The source's live snapshots, which end with its deletion.
+    #[serde(default)]
+    pub deletes_snapshots: u32,
 }
 
 /// The query of `GetInstanceMovePreview`: the backend ignores a parameter
