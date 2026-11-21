@@ -4130,13 +4130,12 @@ fn disk_usage_notes(instance: &InstanceView) -> Vec<String> {
 }
 
 /// What `ghost instance snapshot create --wait` says of the snapshot it
-/// took: kept, as no larger than the reserve, or that it may be evicted,
-/// with its size and the reserve. Nothing without them.
+/// took when it is larger than the reserve: that it may be evicted, with
+/// its size and the reserve. Nothing when it fits (kept is what users
+/// expect) or without them.
 fn snapshot_fit_line(snapshot: &InstanceSnapshotView, reserve: Option<u64>) -> Option<String> {
     let (size, fits, reserve) = (snapshot.size_bytes?, snapshot.fits_reserve?, reserve?);
-    Some(if fits {
-        format!("Kept: fits the {} reserve.", gib_text(reserve))
-    } else {
+    (!fits).then(|| {
         format!(
             "May be evicted: {}, reserve {}.",
             gib_text(size),
@@ -5314,13 +5313,13 @@ impl Summary {
                         ("ended", Some(reason)) => format!("ended ({})", reason.replace('_', " ")),
                         (state, _) => state.to_owned(),
                     };
-                    // The newest snapshot, when it fits the reserve, is
-                    // kept (item 298 of the platform); the backend says so
-                    // of it alone.
+                    // The newest snapshot, when it does not fit the reserve,
+                    // may be evicted (item 298 of the platform); the backend
+                    // says so of it alone.
                     let size = snapshot.size_bytes.map(|size| {
                         let size = pretty::binary_size(size);
-                        if snapshot.fits_reserve == Some(true) {
-                            format!("{size}, fits")
+                        if snapshot.fits_reserve == Some(false) {
+                            format!("{size}, may be evicted")
                         } else {
                             size
                         }
@@ -29133,7 +29132,7 @@ mod tests {
         let view: InstanceSnapshotsView = serde_json::from_value(listed).unwrap();
         let summary = Summary::snapshots(view.clone());
         assert_eq!(summary.rows[0]["name"], "ci-base");
-        assert_eq!(summary.rows[0]["size"], "512 MiB, fits");
+        assert_eq!(summary.rows[0]["size"], "512 MiB");
         assert_eq!(summary.rows[1]["state"], "evicted for space");
         assert_eq!(summary.rows[1]["size"], Value::Null);
         assert_eq!(
@@ -29142,10 +29141,7 @@ mod tests {
         );
         // What `create --wait` says of the snapshot it took.
         let mut taken = view.snapshots[0].clone();
-        assert_eq!(
-            snapshot_fit_line(&taken, Some(10 << 30)).as_deref(),
-            Some("Kept: fits the 10.0\u{a0}GiB reserve.")
-        );
+        assert_eq!(snapshot_fit_line(&taken, Some(10 << 30)).as_deref(), None);
         taken.size_bytes = Some(12 * (1 << 30) + (3 << 30) / 10);
         taken.fits_reserve = Some(false);
         assert_eq!(
