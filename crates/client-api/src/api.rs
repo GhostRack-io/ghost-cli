@@ -507,7 +507,7 @@ endpoints! {
     /// Take a snapshot of an instance's root disk on its host, running or
     /// stopped; past the limit the oldest is replaced. The job's resource
     /// is the snapshot.
-    CreateInstanceSnapshot { instance_id: Uuid } = wallet POST
+    CreateInstanceSnapshot { instance_id: Uuid } = user POST
         "/api/mut/v1/instances/{instance_id}/snapshots"
         (crate::website::CreateInstanceSnapshotRequest) => JobAccepted;
     /// Return an instance's root disk to a snapshot: the instance is forced
@@ -515,7 +515,7 @@ endpoints! {
     ResetInstanceSnapshot { instance_id: Uuid, snapshot_id: Uuid } = wallet POST
         "/api/mut/v1/instances/{instance_id}/snapshots/{snapshot_id}/reset" => JobAccepted;
     /// Delete a snapshot of an instance's root disk.
-    DeleteInstanceSnapshot { instance_id: Uuid, snapshot_id: Uuid } = wallet DELETE
+    DeleteInstanceSnapshot { instance_id: Uuid, snapshot_id: Uuid } = user DELETE
         "/api/mut/v1/instances/{instance_id}/snapshots/{snapshot_id}" => JobAccepted;
     ListInstanceUpgrades { instance_id: Uuid } =
         user GET "/v1/instances/{instance_id}/upgrades" => Vec<InstanceUpgradeView>;
