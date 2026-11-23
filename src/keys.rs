@@ -1299,6 +1299,15 @@ mod tests {
                 entry["authentication_key_id"]
             );
             assert_eq!(summary.deposit_memo, entry["deposit_memo"]);
+            let public_key: [u8; 32] = URL_SAFE_NO_PAD
+                .decode(entry["authentication_public_key_b64url"].as_str().unwrap())
+                .unwrap()
+                .try_into()
+                .unwrap();
+            assert_eq!(
+                ghostrack_client_api::account_auth::legacy_deposit_memo(&public_key),
+                entry["legacy_deposit_memo"].as_str().unwrap()
+            );
             assert_eq!(
                 summary.billing_verifying_key,
                 entry["billing_public_key_b64url"]
@@ -1564,6 +1573,9 @@ mod tests {
             "recovery_key_fingerprint_b64url": summary.recovery_key_fingerprint,
             "authentication_key_id": authentication.key_id,
             "deposit_memo": authentication.deposit_memo,
+            "legacy_deposit_memo": ghostrack_client_api::account_auth::legacy_deposit_memo(
+                &authentication.public_key
+            ),
             "request": {
                 "method": request.method,
                 "target": request.target,
@@ -1591,7 +1603,7 @@ mod tests {
     fn vectors() -> serde_json::Value {
         let random: [u8; 32] = Sha256::digest(b"gigahost account seed vector 3").into();
         serde_json::json!({
-            "description": "Fixed vectors of the account key (src/keys.rs): the seed file's text as clients write it (ghostrack_seed_file) and as keys saved before the rename have it (seed_file), both read as the same seed, the HKDF-SHA-256 materials, the Ed25519 and X25519 (RFC 9180 DeriveKeyPair) keys, their SHA-256 fingerprints, the key ID, the deposit memo and a request signed with the authentication key. Every client that reads an account key or signs a request reproduces them byte for byte. Regenerate with `cargo test -p ghost -- --ignored write_account_seed_vectors`.",
+            "description": "Fixed vectors of the account key (src/keys.rs): the seed file's text as clients write it (ghostrack_seed_file) and as keys saved before the rename have it (seed_file), both read as the same seed, the HKDF-SHA-256 materials, the Ed25519 and X25519 (RFC 9180 DeriveKeyPair) keys, their SHA-256 fingerprints, the key ID, the deposit memo (lowercase base32) and the one clients derived before it (legacy_deposit_memo, base64url) and a request signed with the authentication key. Every client that reads an account key or signs a request reproduces them byte for byte. Regenerate with `cargo test -p ghost -- --ignored write_account_seed_vectors`.",
             "vectors": [
                 vector("zero", [0; 32], &VectorRequest {
                     method: "POST",
