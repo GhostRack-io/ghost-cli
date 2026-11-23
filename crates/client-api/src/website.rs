@@ -4114,6 +4114,15 @@ pub struct InstanceMovePreview {
     /// The source's live snapshots, which end with its deletion.
     #[serde(default)]
     pub deletes_snapshots: u32,
+    /// The instance creation charge the move takes; none from a backend of
+    /// before. A move keeps its address, so no setup fee of one.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub creation_charge_microusd: Option<u64>,
+    /// What the moved instance holds of the balance, as a new instance
+    /// does, until the source's own hold ends with it; none from a backend
+    /// of before.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub balance_reservation_microusd: Option<u64>,
 }
 
 /// The query of `GetInstanceMovePreview`: the backend ignores a parameter
