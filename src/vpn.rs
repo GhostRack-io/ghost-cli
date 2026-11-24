@@ -732,27 +732,38 @@ pub(crate) async fn execute(
         } => {
             let connection_id = resolve(api, connection, true).await?;
             let view: VpnConnectionView = api.read(&GetVpnConnection { connection_id }, "").await?;
-            let choice = match gateway_option {
-                Some(option) => Some(*option),
-                None => {
-                    let catalog: VpnCatalogView = api.read(&GetVpnCatalog, "").await?;
-                    catalog
-                        .locations
-                        .iter()
-                        .find(|place| &place.location == location)
-                        .and_then(|place| {
-                            crate::gateway_selection(
-                                &place.gateway_options,
-                                view.tier,
-                                view.gateway_bandwidth
-                                    .as_ref()
-                                    .and_then(|view| view.purchased_bandwidth_mbit),
-                            )
-                        })
-                }
+            let choice = if let Some(option) = gateway_option {
+                Some(*option)
+            } else {
+                let catalog: VpnCatalogView = api.read(&GetVpnCatalog, "").await?;
+                catalog
+                    .locations
+                    .iter()
+                    .find(|place| &place.location == location)
+                    .and_then(|place| {
+                        crate::gateway_selection(
+                            &place.gateway_options,
+                            view.tier,
+                            view.gateway_bandwidth
+                                .as_ref()
+                                .and_then(|view| view.purchased_bandwidth_mbit),
+                        )
+                    })
             };
             if !yes {
-                bail!("Moving the gateway changes the address. Give --yes to accept the move.");
+                let option = choice
+                    .ok_or_else(|| anyhow::anyhow!("No matching gateway option has room."))?;
+                let base = option
+                    .bandwidth
+                    .map_or(option.base_microusd_per_month, |paid| {
+                        paid.total_base_microusd_per_month
+                    });
+                bail!(
+                    "Moving the gateway changes the address. The gateway costs {} per month and {} per TiB. Confirm with --yes{}.",
+                    crate::pretty::dollars(base),
+                    crate::pretty::dollars(option.traffic_microusd_per_tib),
+                    crate::gateway_option_arg(Some(option)),
+                );
             }
             to_value(
                 api.write_retryable(

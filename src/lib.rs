@@ -30651,7 +30651,7 @@ mod tests {
             &["instance", "upgrade", &id, "--offering", "of2_up", "--yes"],
         );
         let api = api_client(&cli).unwrap().with_read_retry_delays(&[]);
-        let result = execute_instance(&cli, &api, instance_command(&cli), false)
+        let result = Box::pin(execute_instance(&cli, &api, instance_command(&cli), false))
             .await
             .unwrap();
         assert_eq!(result["job_id"], job_id.to_string());
@@ -30790,7 +30790,7 @@ mod tests {
             &["instance", "gateway-location", &id, "de-fra", "--yes"],
         );
         let api = api_client(&cli).unwrap().with_read_retry_delays(&[]);
-        let result = execute_instance(&cli, &api, instance_command(&cli), false)
+        let result = Box::pin(execute_instance(&cli, &api, instance_command(&cli), false))
             .await
             .unwrap();
         assert_eq!(result["job_id"], job_id.to_string());
