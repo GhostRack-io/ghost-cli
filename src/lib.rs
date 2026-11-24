@@ -1822,6 +1822,7 @@ enum InstanceCommand {
     GatewayLocation(GatewayLocationArgs),
     /// Change the purchased bandwidth on a shared home gateway.
     GatewayBandwidth {
+        /// Instance ID or name, from `ghost instance list`.
         #[arg(value_name = "INSTANCE", value_parser = parse_instance_reference)]
         instance_id: InstanceReference,
         /// Bandwidth in Mbit/s, or base.

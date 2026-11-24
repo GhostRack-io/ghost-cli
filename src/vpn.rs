@@ -118,8 +118,10 @@ pub(crate) enum VpnCommand {
     },
     /// Move a shared VPN connection to another gateway location.
     GatewayLocation {
+        /// VPN connection ID or name, from `ghost vpn list`.
         #[arg(value_parser = parse_vpn_reference)]
         connection: InstanceReference,
+        /// Destination location key, from `ghost vpn catalog`.
         location: String,
         /// Exact gateway price option as JSON, from the VPN catalog.
         #[arg(long, value_parser = crate::parse_gateway_option)]
@@ -132,10 +134,12 @@ pub(crate) enum VpnCommand {
     },
     /// Change the purchased bandwidth of a shared VPN connection.
     GatewayBandwidth {
+        /// VPN connection ID or name, from `ghost vpn list`.
         #[arg(value_parser = parse_vpn_reference)]
         connection: InstanceReference,
         /// Bandwidth in Mbit/s, or base.
         speed: String,
+        /// Accept the quoted monthly price.
         #[arg(long)]
         yes: bool,
         #[command(flatten)]
@@ -875,27 +879,6 @@ async fn create(
     interrupt: impl Future<Output = ()>,
 ) -> Result<Value> {
     refuse_qr_with_json(cli, args.qr)?;
-    let selection =
-        if args.gateway_option.is_none() && vpn_tier(args.tier) != GatewayTier::HighBandwidth {
-            let catalog: Result<VpnCatalogView> = api.read(&GetVpnCatalog, "").await;
-            catalog
-                .ok()
-                .and_then(|catalog| {
-                    catalog
-                        .locations
-                        .into_iter()
-                        .find(|place| place.location == args.location)
-                })
-                .and_then(|place| {
-                    crate::gateway_selection(&place.gateway_options, vpn_tier(args.tier), None)
-                })
-        } else {
-            args.gateway_option
-        };
-    let selected_creation = |key| CreateVpnConnectionRequest {
-        gateway_option: selection,
-        ..creation(args, key)
-    };
     let interval = Duration::from_secs(args.mutation.poll_seconds);
     let Some(out) = &args.key.out else {
         let Some(public_key) = &args.key.public_key else {
@@ -904,7 +887,7 @@ async fn create(
         let created = api
             .write_retryable(
                 &CreateVpnConnection,
-                &selected_creation(public_key.clone()),
+                &creation(args, public_key.clone()),
                 &args.mutation.key(),
             )
             .await?;
@@ -915,7 +898,7 @@ async fn create(
     };
     let file = keys::PrivateFile::reserve(out, args.force, CONFIG_FILE)?;
     let key = DeviceKey::generate();
-    let request = selected_creation(key.public_base64());
+    let request = creation(args, key.public_base64());
     let mutation_key = args.mutation.key();
     tokio::pin!(interrupt);
     let created = tokio::select! {
