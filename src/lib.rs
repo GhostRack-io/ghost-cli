@@ -1820,6 +1820,18 @@ enum InstanceCommand {
     /// alias of `gateway --location`, with its charge (the instance creation charge). The
     /// locations are the offering's `gateway_locations`.
     GatewayLocation(GatewayLocationArgs),
+    /// Change the purchased bandwidth on a shared home gateway.
+    GatewayBandwidth {
+        #[arg(value_name = "INSTANCE", value_parser = parse_instance_reference)]
+        instance_id: InstanceReference,
+        /// Bandwidth in Mbit/s, or base.
+        speed: String,
+        /// Accept the quoted monthly price.
+        #[arg(long)]
+        yes: bool,
+        #[command(flatten)]
+        mutation: IdempotencyArgs,
+    },
     /// List where a shared IP VM's public ports go, or change it with `set`.
     ///
     /// A shared IP VM has a range of ports of its gateway's address, TCP
@@ -1913,6 +1925,9 @@ struct CreateInstanceArgs {
     /// `bottleneck` is reached over a congested or long-haul path.
     #[arg(long)]
     gateway_location: Option<String>,
+    /// Exact gateway price option as JSON, from the offering's gateway options.
+    #[arg(long, value_parser = parse_gateway_option)]
+    gateway_option: Option<ghostrack_client_api::website::GatewayOfferSelection>,
     /// OpenSSH public key line for root; repeat for multiple keys.
     // Armor starts with dashes: taken as a value, a private key given here
     // is refused by name, where clap would echo it as an unknown argument.
@@ -2875,6 +2890,9 @@ struct GatewayArgs {
     /// host.
     #[arg(long)]
     location: Option<String>,
+    /// Exact gateway price option as JSON.
+    #[arg(long, value_parser = parse_gateway_option)]
+    gateway_option: Option<ghostrack_client_api::website::GatewayOfferSelection>,
     /// Confirm that the change costs the instance creation charge and that the VM gets a new
     /// public address and is unreachable for the seconds the change takes.
     #[arg(long)]
@@ -2890,6 +2908,9 @@ struct GatewayLocationArgs {
     instance_id: InstanceReference,
     /// The location, from the offering's `gateway_locations`.
     location: String,
+    /// Exact gateway price option as JSON.
+    #[arg(long, value_parser = parse_gateway_option)]
+    gateway_option: Option<ghostrack_client_api::website::GatewayOfferSelection>,
     /// Confirm that the move costs the instance creation charge and that the VM gets a new
     /// public address and is unreachable for the seconds its move takes.
     #[arg(long)]
@@ -9259,6 +9280,7 @@ async fn approve_browser_operation(
                         spec: ContainerArgs::default(),
                         gateway_tier,
                         gateway_location: None,
+                        gateway_option: None,
                         ssh_keys: Vec::new(),
                         ssh_key_files: Vec::new(),
                         cloud_init_file: None,
@@ -10177,7 +10199,7 @@ async fn execute_instance(
             } else {
                 None
             };
-            if show_progress {
+            let offering = if show_progress {
                 // A backup's kind is its instance's, which its view does not
                 // tell: the backend checks the offering takes it.
                 let kind = if container.is_some() {
@@ -10193,14 +10215,47 @@ async fn execute_instance(
                     kind,
                     Some("Creating an instance:"),
                 )
-                .await?;
-            }
+                .await?
+            } else if args.gateway_option.is_none()
+                && matches!(
+                    args.gateway_tier,
+                    Some(GatewayTier::SharedIp | GatewayTier::SharedBandwidth)
+                )
+            {
+                api.read_as_account(
+                    &GetOffering {
+                        offering_id: args.offering.clone(),
+                    },
+                    "",
+                )
+                .await
+                .ok()
+            } else {
+                None
+            };
+            let selection = args.gateway_tier.and_then(|tier| {
+                offering.as_ref().and_then(|offering| {
+                    offering_gateway_selection(
+                        offering,
+                        tier,
+                        args.gateway_location.as_deref(),
+                        None,
+                    )
+                })
+            });
+            let (gateway_location, gateway_option) = match (args.gateway_option, selection) {
+                (Some(option), _) => (args.gateway_location.clone(), Some(option)),
+                (None, Some((location, option))) => (Some(location), Some(option)),
+                (None, None) => (args.gateway_location.clone(), None),
+            };
+
             let request = CreateInstanceRequest {
+                gateway_option,
                 offering_id: args.offering.clone(),
                 source,
                 container,
                 gateway_tier: args.gateway_tier,
-                gateway_location: args.gateway_location.clone(),
+                gateway_location,
                 ssh_key_ids: named_keys_only(&ssh_public_keys),
                 ssh_public_keys,
                 cloud_init,
@@ -10820,19 +10875,20 @@ async fn execute_instance(
                 bail!("name the gateway to change to: --tier, --location, or both");
             }
             let instance_id = resolve_instance(api, &args.instance_id, InstanceUse::Change).await?;
-            let (charge, cloud) = if args.yes && cli.globals.compact {
-                (ChangeCharge::Unknown, false)
-            } else {
-                quote_gateway_change(
-                    api,
-                    instance_id,
-                    args.tier,
-                    args.location.as_deref(),
-                    !cli.globals.compact,
-                    false,
-                )
-                .await?
-            };
+            let (charge, cloud, quoted) =
+                if args.yes && cli.globals.compact && args.gateway_option.is_some() {
+                    (ChangeCharge::Unknown, false, None)
+                } else {
+                    quote_gateway_change(
+                        api,
+                        instance_id,
+                        args.tier,
+                        args.location.as_deref(),
+                        !cli.globals.compact,
+                        false,
+                    )
+                    .await?
+                };
             if !args.yes {
                 let warning = if cloud || args.tier == Some(GatewayTierArg::DedicatedIp) {
                     cloud_change_warning(charge)
@@ -10840,7 +10896,7 @@ async fn execute_instance(
                     gateway_change_warning(charge)
                 };
                 let sentence = format!(
-                    "{warning}\nTo change: ghost instance gateway {}{}{} --yes",
+                    "{warning}\nTo change: ghost instance gateway {}{}{}{} --yes",
                     escape_control(&instance_reference_text(&args.instance_id)),
                     args.tier
                         .map_or_else(String::new, |tier| format!(" --tier {}", tier.word())),
@@ -10849,7 +10905,8 @@ async fn execute_instance(
                         .map_or_else(String::new, |location| format!(
                             " --location {}",
                             escape_control(location)
-                        ))
+                        )),
+                    gateway_option_arg(args.gateway_option.or(quoted)),
                 );
                 return Err(Preview::new(
                     instance_preview_title(
@@ -10869,6 +10926,7 @@ async fn execute_instance(
                 .write_retryable(
                     &ChangeGateway { instance_id },
                     &ChangeGatewayRequest {
+                        gateway_option: args.gateway_option.or(quoted),
                         tier: args.tier.and_then(GatewayTierArg::wire),
                         gateway_location: args.location.clone(),
                         dedicated_ip: args.tier == Some(GatewayTierArg::DedicatedIp),
@@ -10880,25 +10938,27 @@ async fn execute_instance(
         }
         InstanceCommand::GatewayLocation(args) => {
             let instance_id = resolve_instance(api, &args.instance_id, InstanceUse::Change).await?;
-            let (charge, _) = if args.yes && cli.globals.compact {
-                (ChangeCharge::Unknown, false)
-            } else {
-                quote_gateway_change(
-                    api,
-                    instance_id,
-                    None,
-                    Some(&args.location),
-                    !cli.globals.compact,
-                    true,
-                )
-                .await?
-            };
+            let (charge, _, quoted) =
+                if args.yes && cli.globals.compact && args.gateway_option.is_some() {
+                    (ChangeCharge::Unknown, false, None)
+                } else {
+                    quote_gateway_change(
+                        api,
+                        instance_id,
+                        None,
+                        Some(&args.location),
+                        !cli.globals.compact,
+                        true,
+                    )
+                    .await?
+                };
             if !args.yes {
                 let warning = gateway_change_warning(charge);
                 let sentence = format!(
-                    "{warning}\nTo move: ghost instance gateway-location {} {} --yes",
+                    "{warning}\nTo move: ghost instance gateway-location {} {}{} --yes",
                     escape_control(&instance_reference_text(&args.instance_id)),
-                    escape_control(&args.location)
+                    escape_control(&args.location),
+                    gateway_option_arg(args.gateway_option.or(quoted)),
                 );
                 return Err(Preview::new(
                     instance_preview_title(
@@ -10917,12 +10977,32 @@ async fn execute_instance(
                 .write_retryable(
                     &MoveGatewayLocation { instance_id },
                     &MoveGatewayLocationRequest {
+                        gateway_option: args.gateway_option.or(quoted),
                         gateway_location: args.location.clone(),
                     },
                     &retried_by_id(args.mutation.key(), &args.instance_id, instance_id),
                 )
                 .await?;
             mutation_result(api, accepted, &args.mutation, show_progress).await
+        }
+        InstanceCommand::GatewayBandwidth {
+            instance_id,
+            speed,
+            yes,
+            mutation,
+        } => {
+            let id = resolve_instance(api, instance_id, InstanceUse::Change).await?;
+            let instance: InstanceView = api.read(&GetInstance { instance_id: id }, "").await?;
+            let request =
+                gateway_bandwidth_request(instance.gateway_bandwidth.as_ref(), speed, *yes)?;
+            to_value(
+                api.write_retryable(
+                    &ghostrack_client_api::api::ChangeInstanceGatewayBandwidth { instance_id: id },
+                    &request,
+                    &retried_by_id(mutation.key(), instance_id, id),
+                )
+                .await?,
+            )
         }
         InstanceCommand::Delete(args) => {
             if !args.yes {
@@ -13083,6 +13163,105 @@ fn job_step_words(key: &str) -> String {
     known.to_owned()
 }
 
+fn gateway_option_arg(
+    option: Option<ghostrack_client_api::website::GatewayOfferSelection>,
+) -> String {
+    option
+        .and_then(|option| serde_json::to_string(&option).ok())
+        .map_or_else(String::new, |value| format!(" --gateway-option '{value}'"))
+}
+
+pub(crate) fn parse_gateway_option(
+    value: &str,
+) -> Result<ghostrack_client_api::website::GatewayOfferSelection, String> {
+    serde_json::from_str(value).map_err(|error| error.to_string())
+}
+
+pub(crate) fn gateway_selection(
+    options: &[ghostrack_client_api::website::GatewayPriceOption],
+    tier: GatewayTier,
+    speed: Option<u32>,
+) -> Option<ghostrack_client_api::website::GatewayOfferSelection> {
+    options
+        .iter()
+        .filter(|option| option.tier == tier)
+        .filter_map(|option| {
+            let bandwidth = if let Some(speed) = speed {
+                Some(
+                    option
+                        .bandwidth_options
+                        .iter()
+                        .find(|offer| offer.room && offer.selection.bandwidth_mbit == speed)?
+                        .selection,
+                )
+            } else {
+                if !option.room {
+                    return None;
+                }
+                None
+            };
+            Some(ghostrack_client_api::website::GatewayOfferSelection {
+                base_microusd_per_month: option.base_microusd_per_month,
+                traffic_microusd_per_tib: option.traffic_microusd_per_tib,
+                bandwidth,
+            })
+        })
+        .min_by_key(|option| {
+            (
+                option.base_microusd_per_month,
+                option.traffic_microusd_per_tib,
+            )
+        })
+}
+
+fn offering_gateway_selection(
+    offering: &OfferingView,
+    tier: GatewayTier,
+    location: Option<&str>,
+    speed: Option<u32>,
+) -> Option<(String, ghostrack_client_api::website::GatewayOfferSelection)> {
+    offering
+        .gateway_locations
+        .iter()
+        .filter(|place| location.map_or(!place.bottleneck, |location| place.location == location))
+        .find_map(|place| {
+            gateway_selection(&place.gateway_options, tier, speed)
+                .map(|option| (place.location.clone(), option))
+        })
+}
+
+pub(crate) fn gateway_bandwidth_request(
+    view: Option<&ghostrack_client_api::website::GatewayBandwidthView>,
+    speed: &str,
+    yes: bool,
+) -> Result<ghostrack_client_api::website::ChangeGatewayBandwidthRequest> {
+    let speed = if speed == "base" {
+        None
+    } else {
+        Some(speed.parse::<u32>()?)
+    };
+    let option = view
+        .and_then(|view| {
+            view.options
+                .iter()
+                .find(|option| option.bandwidth_mbit == speed && option.room)
+        })
+        .ok_or_else(|| anyhow::anyhow!("this bandwidth option is unavailable"))?;
+    if !yes {
+        bail!(
+            "{} Mbit/s costs {} per month for the gateway. Give --yes to accept.",
+            option.limit_mbit,
+            pretty::dollars(option.total_base_microusd_per_month)
+        );
+    }
+    Ok(
+        ghostrack_client_api::website::ChangeGatewayBandwidthRequest {
+            bandwidth_mbit: speed,
+            total_base_microusd_per_month: option.total_base_microusd_per_month,
+        },
+    )
+}
+
 /// Print what renting `offering_id` costs before it is rented. A malformed
 /// ID is refused here, and so is a rental of a listed offering that the
 /// backend would refuse for its gateway tier or `backup`. One the catalog
@@ -13096,7 +13275,7 @@ async fn quote_offering(
     backup: Option<&BackupView>,
     kind: Option<InstanceKind>,
     heading: Option<&str>,
-) -> Result<()> {
+) -> Result<Option<OfferingView>> {
     check_offering_id(offering_id)?;
     let colors = Terminal::stderr().colors;
     // As the account reads the catalog: a private host's offering is listed to the accounts its
@@ -13135,7 +13314,7 @@ async fn quote_offering(
                 notice(&line);
             }
             notice("");
-            Ok(())
+            Ok(Some(offering))
         }
         Err(error) if api::rejection_code(&error) == Some("invalid_offering_token") => Err(error),
         Err(error) => {
@@ -13148,7 +13327,7 @@ async fn quote_offering(
                 notice(&quote);
                 notice("");
             }
-            Ok(())
+            Ok(None)
         }
     }
 }
@@ -13319,7 +13498,7 @@ fn job_kind_words(kind: JobKind) -> String {
         JobKind::MoveInstance => "moving to another host",
         JobKind::UpgradeInstance => "upgrading",
         JobKind::RotateGatewayKeys => "rotating gateway keys",
-        JobKind::MoveGatewayLease => "moving the gateway",
+        JobKind::MoveGatewayLease | JobKind::VpnMoveGatewayLease => "moving the gateway",
         JobKind::TuneBandwidth => "tuning bandwidth",
         JobKind::RedeployContainerInstance => "updating",
         JobKind::InstanceSnapshotCreate => "taking a snapshot",
@@ -14370,7 +14549,11 @@ async fn quote_gateway_change(
     location: Option<&str>,
     print: bool,
     move_only: bool,
-) -> Result<(ChangeCharge, bool)> {
+) -> Result<(
+    ChangeCharge,
+    bool,
+    Option<ghostrack_client_api::website::GatewayOfferSelection>,
+)> {
     let colors = Terminal::stderr().colors;
     let tier = asked.and_then(GatewayTierArg::wire);
     let read = async {
@@ -14399,7 +14582,7 @@ async fn quote_gateway_change(
             if print {
                 notice(&prices_unread_notice(&error));
             }
-            Ok((ChangeCharge::Unknown, true))
+            Ok((ChangeCharge::Unknown, true, None))
         }
         Ok((instance, GatewayQuoteRead::Cloud(Ok(changes)))) => {
             // A cloud instance changes between a Dedicated IP and its
@@ -14415,7 +14598,7 @@ async fn quote_gateway_change(
                         "a cloud instance changes to dedicated-ip or shared-ip; the backend decides",
                     );
                 }
-                return Ok((ChangeCharge::Unknown, true));
+                return Ok((ChangeCharge::Unknown, true, None));
             };
             if let Some(refusal) = address_change_refusal(&changes, up) {
                 bail!(refusal);
@@ -14433,6 +14616,7 @@ async fn quote_gateway_change(
                     setup: change.setup_fee_microusd,
                 },
                 true,
+                None,
             ))
         }
         Ok((instance, GatewayQuoteRead::Home(offering))) => {
@@ -14456,13 +14640,33 @@ async fn quote_gateway_change(
                     Err(text) => notice(&text),
                 }
             }
-            Ok((ChangeCharge::of(&instance, &offering, tier), false))
+            let accepted = tier
+                .or(instance.gateway_tier)
+                .filter(|tier| matches!(tier, GatewayTier::SharedIp | GatewayTier::SharedBandwidth))
+                .and_then(|tier| {
+                    let target = location.or(instance.gateway_location.as_deref());
+                    let speed = (instance.gateway_tier == Some(tier))
+                        .then_some(
+                            instance
+                                .gateway_bandwidth
+                                .as_ref()
+                                .and_then(|choice| choice.purchased_bandwidth_mbit),
+                        )
+                        .flatten();
+                    offering_gateway_selection(&offering, tier, target, speed)
+                        .map(|(_, option)| option)
+                });
+            Ok((
+                ChangeCharge::of(&instance, &offering, tier),
+                false,
+                accepted,
+            ))
         }
         Err(error) => {
             if print {
                 notice(&prices_unread_notice(&error));
             }
-            Ok((ChangeCharge::Unknown, false))
+            Ok((ChangeCharge::Unknown, false, None))
         }
     }
 }
@@ -19959,6 +20163,7 @@ mod tests {
         let seed = seed.to_str().unwrap().to_owned();
         let instance_id = Uuid::now_v7();
         let instance = InstanceView {
+            gateway_bandwidth: None,
             delete_at: None,
             deletion_safety: None,
             bandwidth_limits: None,

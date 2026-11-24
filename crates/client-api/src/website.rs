@@ -3215,6 +3215,63 @@ pub struct BandwidthView {
     pub limit_mbit: Option<u32>,
 }
 
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct ChangeGatewayBandwidthRequest {
+    pub bandwidth_mbit: Option<u32>,
+    pub total_base_microusd_per_month: u64,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct GatewayBandwidthChoiceView {
+    pub bandwidth_mbit: Option<u32>,
+    pub limit_mbit: u32,
+    pub total_base_microusd_per_month: u64,
+    pub room: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct GatewayBandwidthView {
+    pub purchased_bandwidth_mbit: Option<u32>,
+    pub options: Vec<GatewayBandwidthChoiceView>,
+}
+
+/// A paid bandwidth choice and its quoted total monthly base charge.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct GatewayBandwidthSelection {
+    pub bandwidth_mbit: u32,
+    pub total_base_microusd_per_month: u64,
+}
+
+/// The priced gateway option confirmed by a renter for the chosen tier and location.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(deny_unknown_fields)]
+pub struct GatewayOfferSelection {
+    pub base_microusd_per_month: u64,
+    pub traffic_microusd_per_tib: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub bandwidth: Option<GatewayBandwidthSelection>,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct GatewayBandwidthOffer {
+    #[serde(flatten)]
+    pub selection: GatewayBandwidthSelection,
+    pub room: bool,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct GatewayPriceOption {
+    pub tier: GatewayTier,
+    pub base_microusd_per_month: u64,
+    pub traffic_microusd_per_tib: u64,
+    pub room: bool,
+    pub base_bandwidth_mbit: u32,
+    #[serde(default)]
+    pub bandwidth_options: Vec<GatewayBandwidthOffer>,
+}
+
 /// A location a shared bandwidth or shared IP instance of a home offering
 /// may be reached through: a shared gateway there has room for either
 /// tier. `shared_bandwidth_offered` says whether shared bandwidth is sold
@@ -3222,6 +3279,8 @@ pub struct BandwidthView {
 #[allow(clippy::struct_excessive_bools)] // A wire format of flags.
 #[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
 pub struct GatewayLocationView {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub gateway_options: Vec<GatewayPriceOption>,
     pub location: String,
     pub location_name: String,
     pub country_code: String,
@@ -3343,6 +3402,8 @@ pub struct CreateInstanceRequest {
     /// no snapshots keeps none. A backend before it refuses the field.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub snapshot_reserve_percent: Option<u8>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gateway_option: Option<GatewayOfferSelection>,
 }
 
 /// The largest snapshot reserve a renter may ask for, in percent of the
@@ -4750,6 +4811,8 @@ pub struct InstanceView {
     /// Absent from older backends.
     #[serde(default)]
     pub bandwidth: Option<BandwidthView>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gateway_bandwidth: Option<GatewayBandwidthView>,
     /// Whether the instance may send mail straight to other mail servers
     /// (TCP port 25) and submit it at a mail service (465 and 587). It may
     /// not unless the operator lifted the block for the account on its
@@ -6048,6 +6111,7 @@ pub enum JobKind {
     RotateGatewayKeys,
     /// The operator moved a home rental to another hosted gateway.
     MoveGatewayLease,
+    VpnMoveGatewayLease,
     /// The platform changed an instance's bandwidth limit on its host (a
     /// cloud instance's, or a home instance's, which its gateway limits to
     /// the same rate), after a change of the limits, of its size or of its
@@ -9008,6 +9072,8 @@ const fn is_one_multiplier(value: &u32) -> bool {
 #[serde(deny_unknown_fields)]
 pub struct MoveGatewayLocationRequest {
     pub gateway_location: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gateway_option: Option<GatewayOfferSelection>,
 }
 
 /// Change a home instance's gateway: its tier, its location from the catalog's `gateway_locations`
@@ -9034,6 +9100,8 @@ pub struct ChangeGatewayRequest {
     /// For a cloud instance, an address of its own from its host, in place of its Shared IP.
     #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub dedicated_ip: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gateway_option: Option<GatewayOfferSelection>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -9361,6 +9429,8 @@ pub struct CreateVpnConnectionRequest {
     /// gateway; allowed when absent.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub outgoing_allowed: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gateway_option: Option<GatewayOfferSelection>,
 }
 
 /// Allow or block traffic from the internet to a VPN connection's device.
@@ -9528,6 +9598,10 @@ pub struct VpnConnectionView {
     /// a backend of before 282.
     #[serde(default)]
     pub bandwidth: Option<BandwidthView>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gateway_bandwidth: Option<GatewayBandwidthView>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub gateway_move_job_id: Option<Uuid>,
 }
 
 /// What a VPN connection's gateway counted over the last hour and the last
@@ -9630,6 +9704,8 @@ pub struct VpnTierOffer {
 /// A location where VPN connections are sold.
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct VpnLocationView {
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub gateway_options: Vec<GatewayPriceOption>,
     pub location: String,
     pub display_name: String,
     pub country_code: String,

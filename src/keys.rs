@@ -1824,6 +1824,7 @@ mod tests {
         // As `ghost account approve` makes it from a `create_from_backup`
         // request: no SSH keys, cloud-init, name or startup command.
         let create_body = serde_json::to_string(&CreateInstanceRequest {
+            gateway_option: None,
             offering_id: "of2_F95QS_EuMsVz4IG5EulOew".to_owned(),
             source: Some(InstanceSource::Backup {
                 backup_id,

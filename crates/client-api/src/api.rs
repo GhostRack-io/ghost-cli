@@ -556,6 +556,9 @@ endpoints! {
         "/api/mut/v1/instances/{instance_id}/rename" (RenameInstanceRequest) => InstanceView;
     /// Lower the instance's bandwidth limit below its offering's, or restore
     /// it with a null limit (item 284). No job: the instance as it is now.
+    ChangeInstanceGatewayBandwidth { instance_id: Uuid } = user POST
+        "/api/mut/v1/instances/{instance_id}/gateway-bandwidth"
+        (crate::website::ChangeGatewayBandwidthRequest) => crate::website::GatewayBandwidthView;
     SetInstanceBandwidthLimit { instance_id: Uuid } = user POST
         "/api/mut/v1/instances/{instance_id}/bandwidth-limit"
         (SetInstanceBandwidthLimitRequest) => InstanceView;
@@ -719,6 +722,12 @@ endpoints! {
         "/api/mut/v1/vpn/connections/{connection_id}/rotate-key"
         (crate::website::RotateVpnKeyRequest) => crate::website::VpnConnectionView;
     /// Change a VPN connection's tracked connections.
+    ChangeVpnGatewayBandwidth { connection_id: Uuid } = user POST
+        "/api/mut/v1/vpn/connections/{connection_id}/gateway-bandwidth"
+        (crate::website::ChangeGatewayBandwidthRequest) => crate::website::GatewayBandwidthView;
+    MoveVpnGateway { connection_id: Uuid } = user POST
+        "/api/mut/v1/vpn/connections/{connection_id}/gateway-location"
+        (crate::website::MoveGatewayLocationRequest) => JobAccepted;
     SetVpnTrackedConnections { connection_id: Uuid } = user POST
         "/api/mut/v1/vpn/connections/{connection_id}/tracked-connections"
         (crate::website::SetVpnTrackedConnectionsRequest) => crate::website::VpnConnectionView;

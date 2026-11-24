@@ -116,6 +116,31 @@ pub(crate) enum VpnCommand {
         #[command(flatten)]
         idempotency: IdempotencyArgs,
     },
+    /// Move a shared VPN connection to another gateway location.
+    GatewayLocation {
+        #[arg(value_parser = parse_vpn_reference)]
+        connection: InstanceReference,
+        location: String,
+        /// Exact gateway price option as JSON, from the VPN catalog.
+        #[arg(long, value_parser = crate::parse_gateway_option)]
+        gateway_option: Option<ghostrack_client_api::website::GatewayOfferSelection>,
+        /// Accept the price and new address.
+        #[arg(long)]
+        yes: bool,
+        #[command(flatten)]
+        idempotency: IdempotencyArgs,
+    },
+    /// Change the purchased bandwidth of a shared VPN connection.
+    GatewayBandwidth {
+        #[arg(value_parser = parse_vpn_reference)]
+        connection: InstanceReference,
+        /// Bandwidth in Mbit/s, or base.
+        speed: String,
+        #[arg(long)]
+        yes: bool,
+        #[command(flatten)]
+        idempotency: IdempotencyArgs,
+    },
     /// Delete a VPN connection: its address and its device's key stop
     /// working at once.
     Delete {
@@ -165,6 +190,9 @@ pub(crate) struct CreateArgs {
     /// The location's code, from `ghost vpn catalog`.
     #[arg(long, value_name = "CODE")]
     location: String,
+    /// Exact gateway price option as JSON, from the VPN catalog.
+    #[arg(long, value_parser = crate::parse_gateway_option)]
+    gateway_option: Option<ghostrack_client_api::website::GatewayOfferSelection>,
     /// `shared-ip`, `shared-bandwidth`, or `dedicated-ip` (also
     /// `high-bandwidth`) for a gateway of its own; a trial account takes
     /// `shared-ip` only.
@@ -695,6 +723,68 @@ pub(crate) async fn execute(
                 .await?;
             to_value(view)
         }
+        VpnCommand::GatewayLocation {
+            connection,
+            location,
+            gateway_option,
+            yes,
+            idempotency,
+        } => {
+            let connection_id = resolve(api, connection, true).await?;
+            let view: VpnConnectionView = api.read(&GetVpnConnection { connection_id }, "").await?;
+            let choice = match gateway_option {
+                Some(option) => Some(*option),
+                None => {
+                    let catalog: VpnCatalogView = api.read(&GetVpnCatalog, "").await?;
+                    catalog
+                        .locations
+                        .iter()
+                        .find(|place| &place.location == location)
+                        .and_then(|place| {
+                            crate::gateway_selection(
+                                &place.gateway_options,
+                                view.tier,
+                                view.gateway_bandwidth
+                                    .as_ref()
+                                    .and_then(|view| view.purchased_bandwidth_mbit),
+                            )
+                        })
+                }
+            };
+            if !yes {
+                bail!("Moving the gateway changes the address. Give --yes to accept the move.");
+            }
+            to_value(
+                api.write_retryable(
+                    &ghostrack_client_api::api::MoveVpnGateway { connection_id },
+                    &ghostrack_client_api::website::MoveGatewayLocationRequest {
+                        gateway_location: location.clone(),
+                        gateway_option: choice,
+                    },
+                    &retried_by_id(idempotency.key(), connection, connection_id),
+                )
+                .await?,
+            )
+        }
+        VpnCommand::GatewayBandwidth {
+            connection,
+            speed,
+            yes,
+            idempotency,
+        } => {
+            let connection_id = resolve(api, connection, true).await?;
+            let view: VpnConnectionView = api.read(&GetVpnConnection { connection_id }, "").await?;
+            let request =
+                crate::gateway_bandwidth_request(view.gateway_bandwidth.as_ref(), speed, *yes)?;
+            to_value(
+                api.write_retryable(
+                    &ghostrack_client_api::api::ChangeVpnGatewayBandwidth { connection_id },
+                    &request,
+                    &retried_by_id(idempotency.key(), connection, connection_id),
+                )
+                .await?,
+            )
+        }
         VpnCommand::Delete {
             connection,
             yes,
@@ -752,6 +842,7 @@ pub(crate) async fn execute(
 /// The creation `args` asks for, with the device's public key.
 fn creation(args: &CreateArgs, device_public_key: String) -> CreateVpnConnectionRequest {
     CreateVpnConnectionRequest {
+        gateway_option: args.gateway_option,
         name: args.name.clone(),
         tier: vpn_tier(args.tier),
         location: args.location.clone(),
@@ -773,6 +864,27 @@ async fn create(
     interrupt: impl Future<Output = ()>,
 ) -> Result<Value> {
     refuse_qr_with_json(cli, args.qr)?;
+    let selection =
+        if args.gateway_option.is_none() && vpn_tier(args.tier) != GatewayTier::HighBandwidth {
+            let catalog: Result<VpnCatalogView> = api.read(&GetVpnCatalog, "").await;
+            catalog
+                .ok()
+                .and_then(|catalog| {
+                    catalog
+                        .locations
+                        .into_iter()
+                        .find(|place| place.location == args.location)
+                })
+                .and_then(|place| {
+                    crate::gateway_selection(&place.gateway_options, vpn_tier(args.tier), None)
+                })
+        } else {
+            args.gateway_option
+        };
+    let selected_creation = |key| CreateVpnConnectionRequest {
+        gateway_option: selection,
+        ..creation(args, key)
+    };
     let interval = Duration::from_secs(args.mutation.poll_seconds);
     let Some(out) = &args.key.out else {
         let Some(public_key) = &args.key.public_key else {
@@ -781,7 +893,7 @@ async fn create(
         let created = api
             .write_retryable(
                 &CreateVpnConnection,
-                &creation(args, public_key.clone()),
+                &selected_creation(public_key.clone()),
                 &args.mutation.key(),
             )
             .await?;
@@ -792,7 +904,7 @@ async fn create(
     };
     let file = keys::PrivateFile::reserve(out, args.force, CONFIG_FILE)?;
     let key = DeviceKey::generate();
-    let request = creation(args, key.public_base64());
+    let request = selected_creation(key.public_base64());
     let mutation_key = args.mutation.key();
     tokio::pin!(interrupt);
     let created = tokio::select! {

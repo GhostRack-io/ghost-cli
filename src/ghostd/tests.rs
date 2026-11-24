@@ -303,6 +303,7 @@ fn exit_codes_map_as_a_shell_does() {
 
 fn instance_fixture() -> InstanceView {
     InstanceView {
+        gateway_bandwidth: None,
         delete_at: None,
         deletion_safety: None,
         bandwidth_limits: None,
