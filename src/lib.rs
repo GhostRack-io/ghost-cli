@@ -200,10 +200,13 @@ pub struct Cli {
 enum Command {
     /// Send a signed JSON request to a platform app.
     App {
+        /// Name of the platform app to call.
         name: String,
+        /// HTTP method (GET, HEAD, POST, PUT, PATCH or DELETE).
         method: String,
         /// Local path beginning with /, optionally including a query.
         path: String,
+        /// JSON body for a mutation.
         #[arg(long)]
         body: Option<Value>,
         #[command(flatten)]
