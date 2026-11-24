@@ -854,17 +854,42 @@ pub(crate) async fn execute(
     }
 }
 
-/// The creation `args` asks for, with the device's public key.
-fn creation(args: &CreateArgs, device_public_key: String) -> CreateVpnConnectionRequest {
-    CreateVpnConnectionRequest {
-        gateway_option: args.gateway_option,
+/// The creation `args` asks for, with the device's public key and the
+/// cheapest available quote from a catalog that supplies price options.
+async fn creation(
+    api: &ApiClient,
+    args: &CreateArgs,
+    device_public_key: String,
+) -> Result<CreateVpnConnectionRequest> {
+    let tier = vpn_tier(args.tier);
+    let gateway_option = if let Some(option) = args.gateway_option {
+        Some(option)
+    } else {
+        let catalog: VpnCatalogView = api.read(&GetVpnCatalog, "").await?;
+        let options = catalog
+            .locations
+            .iter()
+            .find(|place| place.location == args.location)
+            .map_or(&[][..], |place| place.gateway_options.as_slice());
+        if options.iter().any(|option| option.tier == tier) {
+            Some(
+                crate::gateway_selection(options, tier, None).ok_or_else(|| {
+                    anyhow::anyhow!("no VPN gateway option at {} has room", args.location)
+                })?,
+            )
+        } else {
+            None
+        }
+    };
+    Ok(CreateVpnConnectionRequest {
+        gateway_option,
         name: args.name.clone(),
-        tier: vpn_tier(args.tier),
+        tier,
         location: args.location.clone(),
         device_public_key,
         tracked_connections: args.tracked_connections,
         outgoing_allowed: args.outgoing.map(|setting| setting == OutgoingSetting::Vpn),
-    }
+    })
 }
 
 /// `ghost vpn create`. With --out, the file's place is reserved before
@@ -884,12 +909,9 @@ async fn create(
         let Some(public_key) = &args.key.public_key else {
             bail!("give --out FILE or --public-key KEY");
         };
+        let request = creation(api, args, public_key.clone()).await?;
         let created = api
-            .write_retryable(
-                &CreateVpnConnection,
-                &creation(args, public_key.clone()),
-                &args.mutation.key(),
-            )
+            .write_retryable(&CreateVpnConnection, &request, &args.mutation.key())
             .await?;
         if !args.mutation.wait {
             return to_value(created);
@@ -898,7 +920,7 @@ async fn create(
     };
     let file = keys::PrivateFile::reserve(out, args.force, CONFIG_FILE)?;
     let key = DeviceKey::generate();
-    let request = creation(args, key.public_base64());
+    let request = creation(api, args, key.public_base64()).await?;
     let mutation_key = args.mutation.key();
     tokio::pin!(interrupt);
     let created = tokio::select! {
@@ -1575,6 +1597,33 @@ mod tests {
             .collect()
     }
 
+    fn legacy_catalog() -> (u16, String) {
+        (200, json!({
+            "enabled": true,
+            "locations": [{"location": "de-frankfurt", "display_name": "Frankfurt", "country_code": "DE"}]
+        }).to_string())
+    }
+
+    fn priced_catalog() -> (u16, String) {
+        let offer = |base, traffic, room| {
+            json!({
+                "tier": "shared_ip", "base_microusd_per_month": base, "traffic_microusd_per_tib": traffic,
+                "base_bandwidth_mbit": 20, "room": room,
+            })
+        };
+        (200, json!({
+            "enabled": true,
+            "locations": [{"location": "de-frankfurt", "display_name": "Frankfurt", "country_code": "DE",
+                "gateway_options": [offer(2_000_000, 1_000_000, true),
+                    offer(500_000, 1_000_000, false), offer(1_000_000, 6_000_000, true),
+                    offer(1_000_000, 4_000_000, true)]}]
+        }).to_string())
+    }
+
+    fn cheapest_catalog_option() -> Value {
+        json!({"base_microusd_per_month": 1_000_000, "traffic_microusd_per_tib": 4_000_000})
+    }
+
     fn expected_config(private: &str) -> String {
         format!(
             "[Interface]\nPrivateKey = {private}\nAddress = 10.200.0.2/32, fde6:93a2:eac5::2/128\nDNS = 1.1.1.1, 9.9.9.9\nMTU = 1420\n\n[Peer]\nPublicKey = {GATEWAY_KEY}\nEndpoint = 203.0.113.7:51820\nAllowedIPs = 0.0.0.0/0, ::/0\nPersistentKeepalive = 25\n"
@@ -1606,6 +1655,7 @@ mod tests {
         let provisioning = view(id, GATEWAY_KEY, "provisioning");
         let ready = view(id, GATEWAY_KEY, "ready");
         let (url, received) = canned_server(vec![
+            priced_catalog(),
             (200, provisioning.to_string()),
             (200, ready.to_string()),
         ])
@@ -1631,6 +1681,7 @@ mod tests {
         assert_eq!(
             request_lines(&received),
             [
+                "GET /v1/vpn/catalog",
                 "POST /api/mut/v1/vpn/connections",
                 &format!("GET /v1/vpn/connections/{id}")
             ]
@@ -1640,11 +1691,12 @@ mod tests {
         assert_eq!(config, expected_config(&private));
         let decoded: [u8; 32] = STANDARD.decode(&private).unwrap().try_into().unwrap();
         let key = DeviceKey::from_private(Zeroizing::new(decoded));
-        let sent = &bodies(&received)[0];
+        let sent = &bodies(&received)[1];
         assert_eq!(
             sent,
             &json!({
                 "tier": "shared_ip",
+                "gateway_option": cheapest_catalog_option(),
                 "location": "de-frankfurt",
                 "device_public_key": key.public_base64(),
             })
@@ -1763,6 +1815,7 @@ mod tests {
         let out = directory.path().join("home.conf");
         let id = Uuid::now_v7();
         let (url, received) = canned_server(vec![
+            legacy_catalog(),
             (200, view(id, GATEWAY_KEY, "provisioning").to_string()),
             (
                 503,
@@ -1774,7 +1827,7 @@ mod tests {
         let cli = command(&url, &seed, &create_line(out.to_str().unwrap(), "1"));
         let output = crate::execute(&cli).await.unwrap();
         assert_eq!(output["config_file"], json!(out));
-        assert_eq!(request_lines(&received).len(), 3);
+        assert_eq!(request_lines(&received).len(), 4);
         let config = fs::read_to_string(&out).unwrap();
         assert_eq!(config, expected_config(&written_private_key(&config)));
         assert!(temporaries(directory.path()).is_empty());
@@ -1792,10 +1845,10 @@ mod tests {
         let out = directory.path().join("home.conf");
         let out_text = out.to_str().unwrap();
         let id = Uuid::now_v7();
-        let (url, received) = canned_server(vec![(
-            200,
-            view(id, GATEWAY_KEY, "provisioning").to_string(),
-        )])
+        let (url, received) = canned_server(vec![
+            legacy_catalog(),
+            (200, view(id, GATEWAY_KEY, "provisioning").to_string()),
+        ])
         .await;
         let cli = command(&url, &seed, &create_line(out_text, "5"));
         let api = crate::api_client(&cli).unwrap();
@@ -1818,7 +1871,7 @@ mod tests {
             format!("{}\n", private.as_str())
         );
         assert_eq!(
-            bodies(&received)[0]["device_public_key"],
+            bodies(&received)[1]["device_public_key"],
             key.public_base64()
         );
         assert!(!text.contains(private.as_str()));
@@ -1867,14 +1920,15 @@ mod tests {
         let seed = directory.path().join("account.seed");
         keys::generate_seed(&seed).unwrap();
         let out = directory.path().join("home.conf");
-        let (url, received) = canned_server(vec![(502, "Bad Gateway".to_owned())]).await;
+        let (url, received) =
+            canned_server(vec![legacy_catalog(), (502, "Bad Gateway".to_owned())]).await;
         let cli = command(&url, &seed, &create_line(out.to_str().unwrap(), "1"));
         let error = crate::execute(&cli).await.unwrap_err();
         let text = format!("{error:#}");
         assert!(text.contains("may have been created"), "{text}");
         let key = DeviceKey::read(&out).unwrap();
         assert_eq!(
-            bodies(&received)[0]["device_public_key"],
+            bodies(&received)[1]["device_public_key"],
             key.public_base64()
         );
         assert!(temporaries(directory.path()).is_empty());
@@ -1892,6 +1946,7 @@ mod tests {
         let mut failed = view(id, GATEWAY_KEY, "failed");
         failed["last_error"] = json!("no gateway had room.");
         let (url, _) = canned_server(vec![
+            legacy_catalog(),
             (200, view(id, GATEWAY_KEY, "provisioning").to_string()),
             (200, failed.to_string()),
         ])
@@ -2024,10 +2079,10 @@ mod tests {
         let seed = directory.path().join("account.seed");
         keys::generate_seed(&seed).unwrap();
         let id = Uuid::now_v7();
-        let (url, received) = canned_server(vec![(
-            200,
-            view(id, GATEWAY_KEY, "provisioning").to_string(),
-        )])
+        let (url, received) = canned_server(vec![
+            legacy_catalog(),
+            (200, view(id, GATEWAY_KEY, "provisioning").to_string()),
+        ])
         .await;
         let cli = command(
             &url,
@@ -2052,7 +2107,7 @@ mod tests {
         assert_eq!(output["id"], json!(id));
         assert_eq!(output["state"], "provisioning");
         assert_eq!(
-            bodies(&received)[0],
+            bodies(&received)[1],
             json!({
                 "name": "laptop",
                 "tier": "high_bandwidth",
@@ -2389,6 +2444,7 @@ mod tests {
         blocked["outgoing_allowed"] = json!(false);
         let (url, received) = canned_server(vec![
             (200, blocked.to_string()),
+            priced_catalog(),
             (200, view(id, GATEWAY_KEY, "provisioning").to_string()),
         ])
         .await;
@@ -2436,7 +2492,11 @@ mod tests {
             ],
         );
         crate::execute(&cli).await.unwrap();
-        assert_eq!(bodies(&received)[1]["outgoing_allowed"], json!(false));
+        assert_eq!(bodies(&received)[2]["outgoing_allowed"], json!(false));
+        assert_eq!(
+            bodies(&received)[2]["gateway_option"],
+            cheapest_catalog_option()
+        );
         for setting in ["vpn", "bypass"] {
             assert!(
                 <Cli as clap::Parser>::try_parse_from([

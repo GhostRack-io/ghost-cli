@@ -9600,6 +9600,10 @@ pub struct VpnConnectionView {
     pub gateway_bandwidth: Option<GatewayBandwidthView>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub gateway_move_job_id: Option<Uuid>,
+    /// The VPN connection's current gateway is draining and its owner was
+    /// asked to choose a replacement.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub gateway_move_requested: bool,
 }
 
 /// What a VPN connection's gateway counted over the last hour and the last
