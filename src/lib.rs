@@ -198,6 +198,17 @@ pub struct Cli {
 
 #[derive(Subcommand)]
 enum Command {
+    /// Send a signed JSON request to a platform app.
+    App {
+        name: String,
+        method: String,
+        /// Local path beginning with /, optionally including a query.
+        path: String,
+        #[arg(long)]
+        body: Option<Value>,
+        #[command(flatten)]
+        idempotency: IdempotencyArgs,
+    },
     /// Generate or inspect the single account key and its purpose-specific keys.
     Key {
         #[command(subcommand)]
@@ -3932,6 +3943,17 @@ pub async fn execute(cli: &Cli) -> Result<Value> {
 
 async fn execute_command(cli: &Cli) -> Result<Value> {
     match &cli.command {
+        Command::App {
+            name,
+            method,
+            path,
+            body,
+            idempotency,
+        } => {
+            api_client(cli)?
+                .app(name, method, path, body.as_ref(), idempotency)
+                .await
+        }
         Command::Key {
             command: KeyCommand::Import { from, replace },
         } => execute_key_import(cli, from.as_deref(), *replace).await,
@@ -17978,6 +18000,43 @@ mod tests {
             }
         });
         (url, received, heads)
+    }
+
+    #[tokio::test]
+    async fn app_command_signs_the_literal_namespaced_target() {
+        let (url, received, heads) =
+            canned_server_recording_heads(vec![(200, String::new(), "true".into())]).await;
+        let api =
+            ApiClient::new(&url, Some(keys::authentication_identity(&[3; 32]).unwrap())).unwrap();
+        let key = IdempotencyArgs {
+            idempotency_key: Some("a-stable-app-key".into()),
+        };
+        let body = serde_json::json!({"example":1});
+        for path in ["/../users", "//other", "/%2e", "/x#frag", "/x?bad=%"] {
+            assert!(
+                api.app("fixture", "post", path, Some(&body), &key)
+                    .await
+                    .is_err()
+            );
+        }
+        assert_eq!(
+            api.app("fixture", "post", "/items?a=%2F&a=b", Some(&body), &key)
+                .await
+                .unwrap(),
+            true
+        );
+        let requests = received.lock().unwrap();
+        assert_eq!(
+            requests[0].0,
+            "POST /api/mut/v1/apps/fixture/items?a=%2F&a=b HTTP/1.1"
+        );
+        assert_eq!(requests[0].1, serde_json::to_vec(&body).unwrap());
+        let heads = heads.lock().unwrap();
+        assert!(
+            heads[0].contains("x-gigahost-auth-signature:")
+                || heads[0].contains(ghostrack_client_api::account_auth::REQUEST_SIGNATURE_HEADER)
+        );
+        assert!(heads[0].contains("idempotency-key: a-stable-app-key"));
     }
 
     async fn canned_api(responses: Vec<(u16, String)>) -> ApiClient {

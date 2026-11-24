@@ -924,3 +924,38 @@ endpoints! {
         => SupportTicketView;
 }
 pub const ALL: &[Listing] = DECLARED;
+
+/// Names double as PostgreSQL role/schema suffixes and literal route segments.
+pub fn valid_app_name(name: &str) -> bool {
+    let bytes = name.as_bytes();
+    bytes.len() <= 59
+        && bytes.first().is_some_and(u8::is_ascii_lowercase)
+        && bytes
+            .iter()
+            .all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || *c == b'_')
+}
+
+/// A local origin-form app target which URL clients can forward byte-for-byte.
+/// Path segments are unreserved ASCII. Query values may use percent encoding.
+pub fn valid_app_target(target: &str) -> bool {
+    let (path, query) = target.split_once('?').unwrap_or((target, ""));
+    let Some(path) = path.strip_prefix('/') else {
+        return false;
+    };
+    let segment_ok = |segment: &str| {
+        !matches!(segment, "" | "." | "..")
+            && segment
+                .bytes()
+                .all(|b| b.is_ascii_alphanumeric() || b"-_.~".contains(&b))
+    };
+    (path.is_empty() || path.split('/').all(segment_ok))
+        && query
+            .bytes()
+            .all(|b| b.is_ascii_alphanumeric() || b"-_.~!$&()*+,;=:@/?%".contains(&b))
+        && query.match_indices('%').all(|(at, _)| {
+            query
+                .as_bytes()
+                .get(at + 1..at + 3)
+                .is_some_and(|bytes| bytes.iter().all(u8::is_ascii_hexdigit))
+        })
+}

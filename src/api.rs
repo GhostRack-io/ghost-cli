@@ -367,6 +367,47 @@ impl ApiClient {
         })
     }
 
+    pub(crate) async fn app(
+        &self,
+        name: &str,
+        verb: &str,
+        path: &str,
+        body: Option<&serde_json::Value>,
+        idempotency: &super::IdempotencyArgs,
+    ) -> Result<serde_json::Value> {
+        anyhow::ensure!(
+            api::valid_app_name(name) && api::valid_app_target(path),
+            "invalid app name or local request target"
+        );
+        let method = Method::from_bytes(verb.to_ascii_uppercase().as_bytes())?;
+        let read = matches!(method, Method::GET | Method::HEAD);
+        anyhow::ensure!(
+            read || matches!(
+                method,
+                Method::POST | Method::PUT | Method::PATCH | Method::DELETE
+            ),
+            "unsupported app request method"
+        );
+        anyhow::ensure!(
+            !read || (body.is_none() && !idempotency.has_key()),
+            "app reads take no body or idempotency key"
+        );
+        let prefix = if read { "/v1" } else { "/api/mut/v1" };
+        let target = format!("{prefix}/apps/{name}{path}");
+        let key = (!read).then(|| idempotency.key());
+        let response = self
+            .send(
+                method,
+                &target,
+                true,
+                body,
+                key.as_ref().map(|key| key.key.as_str()),
+                false,
+            )
+            .await?;
+        Ok(response.value)
+    }
+
     async fn send<B: Serialize + ?Sized, T: DeserializeOwned>(
         &self,
         method: Method,
@@ -389,6 +430,7 @@ impl ApiClient {
             || url.path().to_owned(),
             |query| format!("{}?{query}", url.path()),
         );
+        let head = method == Method::HEAD;
         let mut request = self.client.request(method.clone(), url);
         if authenticated {
             let identity = self.identity()?;
@@ -483,7 +525,12 @@ impl ApiClient {
             }
             .into());
         }
-        let value = serde_json::from_slice(&bytes).with_context(|| {
+        let content = if head || status == StatusCode::NO_CONTENT {
+            b"null".as_slice()
+        } else {
+            &bytes
+        };
+        let value = serde_json::from_slice(content).with_context(|| {
             format!(
                 "decode successful API response as {}",
                 std::any::type_name::<T>()
