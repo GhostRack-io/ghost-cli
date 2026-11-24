@@ -53,6 +53,23 @@ pub struct MutationKey {
     pub retry: String,
 }
 
+impl MutationKey {
+    fn retry_error(&self, error: anyhow::Error) -> anyhow::Error {
+        if is_transient(&error) {
+            error.context(format!(
+                "this exact mutation may be retried with {}",
+                self.retry
+            ))
+        } else if rejection_code(&error) == Some(IDEMPOTENCY_KEY_REUSED) {
+            error.context(
+                    "this idempotency key was used before for a different request; repeat that request unchanged, or leave out --idempotency-key",
+                )
+        } else {
+            error
+        }
+    }
+}
+
 impl ApiClient {
     /// A client that signs with `identity`, or sends only public requests.
     #[cfg(test)]
@@ -351,20 +368,7 @@ impl ApiClient {
             false,
         )
         .await
-        .map_err(|error| {
-            if is_transient(&error) {
-                error.context(format!(
-                    "this exact mutation may be retried with {}",
-                    key.retry
-                ))
-            } else if rejection_code(&error) == Some(IDEMPOTENCY_KEY_REUSED) {
-                error.context(
-                    "this idempotency key was used before for a different request; repeat that request unchanged, or leave out --idempotency-key",
-                )
-            } else {
-                error
-            }
-        })
+        .map_err(|error| key.retry_error(error))
     }
 
     pub(crate) async fn app(
@@ -395,7 +399,7 @@ impl ApiClient {
         let prefix = if read { "/v1" } else { "/api/mut/v1" };
         let target = format!("{prefix}/apps/{name}{path}");
         let key = (!read).then(|| idempotency.key());
-        let response = self
+        let result = self
             .send(
                 method,
                 &target,
@@ -404,7 +408,11 @@ impl ApiClient {
                 key.as_ref().map(|key| key.key.as_str()),
                 false,
             )
-            .await?;
+            .await;
+        let response = match key {
+            Some(key) => result.map_err(|error| key.retry_error(error))?,
+            None => result?,
+        };
         Ok(response.value)
     }
 

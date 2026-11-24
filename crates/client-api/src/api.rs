@@ -925,7 +925,7 @@ endpoints! {
 }
 pub const ALL: &[Listing] = DECLARED;
 
-/// Names double as PostgreSQL role/schema suffixes and literal route segments.
+/// Names double as database role/schema suffixes and literal route segments.
 pub fn valid_app_name(name: &str) -> bool {
     let bytes = name.as_bytes();
     bytes.len() <= 59

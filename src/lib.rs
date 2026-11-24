@@ -18004,6 +18004,8 @@ mod tests {
 
     #[tokio::test]
     async fn app_command_signs_the_literal_namespaced_target() {
+        use ghostrack_client_api::account_auth as auth;
+
         let (url, received, heads) =
             canned_server_recording_heads(vec![(200, String::new(), "true".into())]).await;
         let api =
@@ -18032,11 +18034,29 @@ mod tests {
         );
         assert_eq!(requests[0].1, serde_json::to_vec(&body).unwrap());
         let heads = heads.lock().unwrap();
-        assert!(
-            heads[0].contains("x-gigahost-auth-signature:")
-                || heads[0].contains(ghostrack_client_api::account_auth::REQUEST_SIGNATURE_HEADER)
+        let header = |name: &str| {
+            heads[0]
+                .lines()
+                .filter_map(|line| line.split_once(": "))
+                .find(|(key, _)| key.eq_ignore_ascii_case(name))
+                .unwrap()
+                .1
+        };
+        let canonical = auth::canonical_request(&auth::RequestSignatureInput {
+            auth_key_id: header(auth::AUTH_KEY_ID_HEADER),
+            timestamp_unix_ms: header(auth::REQUEST_TIMESTAMP_HEADER).parse().unwrap(),
+            nonce: header(auth::REQUEST_NONCE_HEADER).parse().unwrap(),
+            method: "POST",
+            target: "/api/mut/v1/apps/fixture/items?a=%2F&a=b",
+            body: &requests[0].1,
+            idempotency_key: Some("a-stable-app-key"),
+        });
+        let identity = keys::authentication_identity(&[3; 32]).unwrap();
+        assert_eq!(
+            header(auth::REQUEST_SIGNATURE_HEADER),
+            URL_SAFE_NO_PAD.encode(identity.sign(&canonical).to_bytes())
         );
-        assert!(heads[0].contains("idempotency-key: a-stable-app-key"));
+        assert_eq!(header("idempotency-key"), "a-stable-app-key");
     }
 
     async fn canned_api(responses: Vec<(u16, String)>) -> ApiClient {
