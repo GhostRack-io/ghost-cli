@@ -3238,7 +3238,6 @@ pub struct GatewayBandwidthView {
 
 /// A paid bandwidth choice and its quoted total monthly base charge.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
 pub struct GatewayBandwidthSelection {
     pub bandwidth_mbit: u32,
     pub total_base_microusd_per_month: u64,
@@ -3246,7 +3245,6 @@ pub struct GatewayBandwidthSelection {
 
 /// The priced gateway option confirmed by a renter for the chosen tier and location.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
-#[serde(deny_unknown_fields)]
 pub struct GatewayOfferSelection {
     pub base_microusd_per_month: u64,
     pub traffic_microusd_per_tib: u64,
