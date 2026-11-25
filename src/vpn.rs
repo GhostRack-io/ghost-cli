@@ -769,7 +769,7 @@ pub(crate) async fn execute(
                         paid.total_base_microusd_per_month
                     });
                 bail!(
-                    "Moving the gateway changes the address. The gateway costs {} per month and {} per TiB. Confirm with --yes{}.",
+                    "Moving the gateway changes the address. The gateway costs {} per month and {} per TiB. Confirm with\n--yes{}",
                     crate::pretty::dollars(base),
                     crate::pretty::dollars(option.traffic_microusd_per_tib),
                     crate::gateway_option_arg(Some(option)),
@@ -1628,6 +1628,38 @@ mod tests {
 
     fn cheapest_catalog_option() -> Value {
         json!({"base_microusd_per_month": 1_000_000, "traffic_microusd_per_tib": 4_000_000})
+    }
+
+    #[tokio::test]
+    async fn gateway_move_preview_flags_can_be_pasted() {
+        let directory = tempfile::tempdir().unwrap();
+        let seed = directory.path().join("account.seed");
+        keys::generate_seed(&seed).unwrap();
+        let id = Uuid::now_v7();
+        let (url, received) =
+            canned_server(vec![(200, view(id, GATEWAY_KEY, "ready").to_string())]).await;
+        let connection = id.to_string();
+        let mut arguments = vec!["vpn", "gateway-location", &connection, "nl-amsterdam"];
+        let command_len = arguments.len();
+        let quote = "0.20/m,10.00/T,200M@1.20";
+        arguments.extend(["--gateway-option", quote]);
+        let preview = command(&url, &seed, &arguments);
+        let error = crate::execute(&preview).await.unwrap_err();
+        let output = crate::render_error(&error, crate::Terminal::plain());
+        let (_, flags) = output.split_once("Confirm with").unwrap();
+        arguments.truncate(command_len);
+        arguments.extend(flags.split_ascii_whitespace());
+        let confirmed = command(&url, &seed, &arguments);
+        assert!(matches!(
+            confirmed.command,
+            crate::Command::Vpn {
+                command: VpnCommand::GatewayLocation { yes: true, gateway_option, .. },
+            } if gateway_option == Some(crate::parse_gateway_option(quote).unwrap())
+        ));
+        assert_eq!(
+            request_lines(&received),
+            [format!("GET /v1/vpn/connections/{id}")]
+        );
     }
 
     fn expected_config(private: &str) -> String {
