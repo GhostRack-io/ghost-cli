@@ -209,8 +209,10 @@ enum Command {
         /// JSON body for a mutation.
         #[arg(long)]
         body: Option<Value>,
-        #[command(flatten)]
-        idempotency: IdempotencyArgs,
+        /// Key for repeating this exact app mutation within the app's retry window.
+        /// Generated when omitted.
+        #[arg(long, value_parser = parse_idempotency_key)]
+        idempotency_key: Option<String>,
     },
     /// Generate or inspect the single account key and its purpose-specific keys.
     Key {
@@ -3951,10 +3953,16 @@ async fn execute_command(cli: &Cli) -> Result<Value> {
             method,
             path,
             body,
-            idempotency,
+            idempotency_key,
         } => {
             api_client(cli)?
-                .app(name, method, path, body.as_ref(), idempotency)
+                .app(
+                    name,
+                    method,
+                    path,
+                    body.as_ref(),
+                    idempotency_key.as_deref(),
+                )
                 .await
         }
         Command::Key {
@@ -16276,7 +16284,7 @@ async fn resolve_optional_instance(
 /// Accept the keys the backend accepts (16 to 128 ASCII characters), minus
 /// spaces and control characters, so a retry hint can be pasted as is.
 fn parse_idempotency_key(value: &str) -> Result<String, String> {
-    if (16..=128).contains(&value.len()) && value.bytes().all(|byte| byte.is_ascii_graphic()) {
+    if ghostrack_client_api::api::valid_idempotency_key(value.as_bytes()) {
         Ok(value.to_owned())
     } else {
         Err("must contain 16 to 128 printable ASCII characters without spaces".to_owned())
@@ -18013,19 +18021,17 @@ mod tests {
             canned_server_recording_heads(vec![(200, String::new(), "true".into())]).await;
         let api =
             ApiClient::new(&url, Some(keys::authentication_identity(&[3; 32]).unwrap())).unwrap();
-        let key = IdempotencyArgs {
-            idempotency_key: Some("a-stable-app-key".into()),
-        };
+        let key = Some("a-stable-app-key");
         let body = serde_json::json!({"example":1});
         for path in ["/../users", "//other", "/%2e", "/x#frag", "/x?bad=%"] {
             assert!(
-                api.app("fixture", "post", path, Some(&body), &key)
+                api.app("fixture", "post", path, Some(&body), key)
                     .await
                     .is_err()
             );
         }
         assert_eq!(
-            api.app("fixture", "post", "/items?a=%2F&a=b", Some(&body), &key)
+            api.app("fixture", "post", "/items?a=%2F&a=b", Some(&body), key)
                 .await
                 .unwrap(),
             true
@@ -18060,6 +18066,18 @@ mod tests {
             URL_SAFE_NO_PAD.encode(identity.sign(&canonical).to_bytes())
         );
         assert_eq!(header("idempotency-key"), "a-stable-app-key");
+    }
+
+    #[tokio::test]
+    async fn app_retry_hint_names_the_key_and_the_apps_retry_window() {
+        let (url, _) = canned_server(vec![(503, "{}".to_owned())]).await;
+        let api =
+            ApiClient::new(&url, Some(keys::authentication_identity(&[3; 32]).unwrap())).unwrap();
+        let error = api
+            .app("fixture", "post", "/items", None, Some("a-stable-app-key"))
+            .await
+            .unwrap_err();
+        assert!(error.to_string().contains("within this app's retry window, repeat the exact request with --idempotency-key a-stable-app-key"));
     }
 
     async fn canned_api(responses: Vec<(u16, String)>) -> ApiClient {

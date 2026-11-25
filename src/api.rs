@@ -377,7 +377,7 @@ impl ApiClient {
         verb: &str,
         path: &str,
         body: Option<&serde_json::Value>,
-        idempotency: &super::IdempotencyArgs,
+        idempotency_key: Option<&str>,
     ) -> Result<serde_json::Value> {
         anyhow::ensure!(
             api::valid_app_name(name) && api::valid_app_target(path),
@@ -393,26 +393,23 @@ impl ApiClient {
             "unsupported app request method"
         );
         anyhow::ensure!(
-            !read || (body.is_none() && !idempotency.has_key()),
+            !read || (body.is_none() && idempotency_key.is_none()),
             "app reads take no body or idempotency key"
         );
         let prefix = if read { "/v1" } else { "/api/mut/v1" };
         let target = format!("{prefix}/apps/{name}{path}");
-        let key = (!read).then(|| idempotency.key());
+        let key = (!read)
+            .then(|| idempotency_key.map_or_else(super::fresh_idempotency_key, str::to_owned));
         let result = self
-            .send(
-                method,
-                &target,
-                true,
-                body,
-                key.as_ref().map(|key| key.key.as_str()),
-                false,
-            )
+            .send(method, &target, true, body, key.as_deref(), false)
             .await;
-        let response = match key {
-            Some(key) => result.map_err(|error| key.retry_error(error))?,
-            None => result?,
-        };
+        let response = result.map_err(|error| {
+            if let Some(key) = &key && is_transient(&error) {
+                error.context(format!("within this app's retry window, repeat the exact request with --idempotency-key {key}"))
+            } else {
+                error
+            }
+        })?;
         Ok(response.value)
     }
 

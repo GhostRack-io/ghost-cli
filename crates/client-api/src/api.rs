@@ -925,6 +925,11 @@ endpoints! {
 }
 pub const ALL: &[Listing] = DECLARED;
 
+/// Idempotency keys accepted by the CLI, website and platform apps.
+pub fn valid_idempotency_key(value: &[u8]) -> bool {
+    (16..=128).contains(&value.len()) && value.iter().all(u8::is_ascii_graphic)
+}
+
 /// Names double as database role/schema suffixes and literal route segments.
 pub fn valid_app_name(name: &str) -> bool {
     let bytes = name.as_bytes();
