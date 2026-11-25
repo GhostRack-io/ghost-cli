@@ -1928,7 +1928,8 @@ struct CreateInstanceArgs {
     gateway_location: Option<String>,
     /// Exact gateway prices in USD, from the offering. Use `BASE/m,TRAFFIC/T`
     /// for base per month and traffic per TiB. Append `,SPEEDM@TOTAL` for a paid
-    /// speed in Mbit/s and its total charge in USD per month.
+    /// speed in Mbit/s and its total charge in USD per month. With the base speed,
+    /// optional `@TOTAL` after `TRAFFIC/T` must equal BASE.
     #[arg(long, value_parser = parse_gateway_option)]
     gateway_option: Option<ghostrack_client_api::website::GatewayOfferSelection>,
     /// OpenSSH public key line for root; repeat for multiple keys.
@@ -2895,7 +2896,8 @@ struct GatewayArgs {
     location: Option<String>,
     /// Exact gateway prices in USD. Use `BASE/m,TRAFFIC/T` for base per month
     /// and traffic per TiB. Append `,SPEEDM@TOTAL` for a paid speed in Mbit/s
-    /// and its total charge in USD per month.
+    /// and its total charge in USD per month. With the base speed, optional
+    /// `@TOTAL` after `TRAFFIC/T` must equal BASE.
     #[arg(long, value_parser = parse_gateway_option)]
     gateway_option: Option<ghostrack_client_api::website::GatewayOfferSelection>,
     /// Confirm that the change costs the instance creation charge and that the VM gets a new
@@ -2915,7 +2917,8 @@ struct GatewayLocationArgs {
     location: String,
     /// Exact gateway prices in USD. Use `BASE/m,TRAFFIC/T` for base per month
     /// and traffic per TiB. Append `,SPEEDM@TOTAL` for a paid speed in Mbit/s
-    /// and its total charge in USD per month.
+    /// and its total charge in USD per month. With the base speed, optional
+    /// `@TOTAL` after `TRAFFIC/T` must equal BASE.
     #[arg(long, value_parser = parse_gateway_option)]
     gateway_option: Option<ghostrack_client_api::website::GatewayOfferSelection>,
     /// Confirm that the move costs the instance creation charge and that the VM gets a new
@@ -13205,27 +13208,33 @@ pub(crate) fn parse_gateway_option(
         return serde_json::from_str(value).map_err(|error| error.to_string());
     }
     let invalid = || {
-        "use BASE/m,TRAFFIC/T or BASE/m,TRAFFIC/T,SPEEDM@TOTAL with USD amounts of up to six decimal places"
+        "use BASE/m,TRAFFIC/T, BASE/m,TRAFFIC/T@BASE, or BASE/m,TRAFFIC/T,SPEEDM@TOTAL with USD amounts of up to six decimal places"
             .to_owned()
     };
-    let price = |text: &str, unit| {
-        text.strip_suffix(unit)
-            .and_then(|amount| exact_usd(amount, 14))
-            .ok_or_else(invalid)
-    };
+    let amount = |text: &str| exact_usd(text, 14).ok_or_else(invalid);
+    let price = |text: &str, unit| text.strip_suffix(unit).ok_or_else(invalid).and_then(amount);
     let mut parts = value.splitn(3, ',');
     let base_microusd_per_month = price(parts.next().ok_or_else(invalid)?, "/m")?;
-    let traffic_microusd_per_tib = price(parts.next().ok_or_else(invalid)?, "/T")?;
+    let traffic = parts.next().ok_or_else(invalid)?;
+    let (traffic, base_total) = traffic
+        .split_once('@')
+        .map_or((traffic, None), |(traffic, total)| (traffic, Some(total)));
+    let traffic_microusd_per_tib = price(traffic, "/T")?;
     let bandwidth = if let Some(upgrade) = parts.next() {
         let (speed, total) = upgrade.split_once("M@").ok_or_else(invalid)?;
-        if !speed.bytes().all(|byte| byte.is_ascii_digit()) {
+        if base_total.is_some() || !speed.bytes().all(|byte| byte.is_ascii_digit()) {
             return Err(invalid());
         }
         Some(GatewayBandwidthSelection {
             bandwidth_mbit: speed.parse().map_err(|_| invalid())?,
-            total_base_microusd_per_month: exact_usd(total, 14).ok_or_else(invalid)?,
+            total_base_microusd_per_month: amount(total)?,
         })
     } else {
+        if let Some(total) = base_total
+            && amount(total)? != base_microusd_per_month
+        {
+            return Err("the total monthly price must equal the base monthly price when no paid speed is given".to_owned());
+        }
         None
     };
     Ok(GatewayOfferSelection {
@@ -16589,6 +16598,14 @@ mod tests {
             assert_eq!(parse_gateway_option(&format!(" {legacy} ")), Ok(option));
         }
         assert_eq!(parse_gateway_option("[3000000,3000000,null]"), Ok(base));
+        assert_eq!(parse_gateway_option("3.00/m,3.00/T@3"), Ok(base));
+        assert_eq!(
+            parse_gateway_option("0.00/m,3.00/T@0"),
+            Ok(GatewayOfferSelection {
+                base_microusd_per_month: 0,
+                ..base
+            })
+        );
         assert_eq!(gateway_option_arg(None), "");
     }
 
@@ -16600,6 +16617,10 @@ mod tests {
             "3.00/m,3.00/TiB",
             "3.00/m",
             "3.00/m,3.00/T,",
+            "3.00/m,3.00/T@",
+            "3.00/m,3.00/T@3.01",
+            "3.00/m,3.00/T@3/m",
+            "3.00/m,3.00/T@3,200M@4",
             "3.00/m,3.00/T,200M:1.00",
             "3.00/m,3.00/T,200Mbit/s@1.00",
             "3.00/m,3.00/T,200M@1.00/m",
