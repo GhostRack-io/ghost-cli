@@ -1926,7 +1926,9 @@ struct CreateInstanceArgs {
     /// `bottleneck` is reached over a congested or long-haul path.
     #[arg(long)]
     gateway_location: Option<String>,
-    /// Exact gateway price option as JSON, from the offering's gateway options.
+    /// Exact gateway prices in USD, from the offering. Use `BASE/m,TRAFFIC/T`
+    /// for base per month and traffic per TiB. Append `,SPEEDM@TOTAL` for a paid
+    /// speed in Mbit/s and its total charge in USD per month.
     #[arg(long, value_parser = parse_gateway_option)]
     gateway_option: Option<ghostrack_client_api::website::GatewayOfferSelection>,
     /// OpenSSH public key line for root; repeat for multiple keys.
@@ -2891,7 +2893,9 @@ struct GatewayArgs {
     /// host.
     #[arg(long)]
     location: Option<String>,
-    /// Exact gateway price option as JSON.
+    /// Exact gateway prices in USD. Use `BASE/m,TRAFFIC/T` for base per month
+    /// and traffic per TiB. Append `,SPEEDM@TOTAL` for a paid speed in Mbit/s
+    /// and its total charge in USD per month.
     #[arg(long, value_parser = parse_gateway_option)]
     gateway_option: Option<ghostrack_client_api::website::GatewayOfferSelection>,
     /// Confirm that the change costs the instance creation charge and that the VM gets a new
@@ -2909,7 +2913,9 @@ struct GatewayLocationArgs {
     instance_id: InstanceReference,
     /// The location, from the offering's `gateway_locations`.
     location: String,
-    /// Exact gateway price option as JSON.
+    /// Exact gateway prices in USD. Use `BASE/m,TRAFFIC/T` for base per month
+    /// and traffic per TiB. Append `,SPEEDM@TOTAL` for a paid speed in Mbit/s
+    /// and its total charge in USD per month.
     #[arg(long, value_parser = parse_gateway_option)]
     gateway_option: Option<ghostrack_client_api::website::GatewayOfferSelection>,
     /// Confirm that the move costs the instance creation charge and that the VM gets a new
@@ -13167,15 +13173,66 @@ fn job_step_words(key: &str) -> String {
 fn gateway_option_arg(
     option: Option<ghostrack_client_api::website::GatewayOfferSelection>,
 ) -> String {
-    option
-        .and_then(|option| serde_json::to_string(&option).ok())
-        .map_or_else(String::new, |value| format!(" --gateway-option '{value}'"))
+    let Some(option) = option else {
+        return String::new();
+    };
+    let base = pretty::exact_dollars(option.base_microusd_per_month);
+    let traffic = pretty::exact_dollars(option.traffic_microusd_per_tib);
+    let mut arg = format!(
+        " --gateway-option {}/m,{}/T",
+        base.trim_start_matches('$'),
+        traffic.trim_start_matches('$'),
+    );
+    if let Some(bandwidth) = option.bandwidth {
+        let total = pretty::exact_dollars(bandwidth.total_base_microusd_per_month);
+        let _ = write!(
+            arg,
+            ",{}M@{}",
+            bandwidth.bandwidth_mbit,
+            total.trim_start_matches('$'),
+        );
+    }
+    arg
 }
 
 pub(crate) fn parse_gateway_option(
     value: &str,
 ) -> Result<ghostrack_client_api::website::GatewayOfferSelection, String> {
-    serde_json::from_str(value).map_err(|error| error.to_string())
+    use ghostrack_client_api::website::{GatewayBandwidthSelection, GatewayOfferSelection};
+
+    let value = value.trim();
+    if value.starts_with(['{', '[']) {
+        return serde_json::from_str(value).map_err(|error| error.to_string());
+    }
+    let invalid = || {
+        "use BASE/m,TRAFFIC/T or BASE/m,TRAFFIC/T,SPEEDM@TOTAL with USD amounts of up to six decimal places"
+            .to_owned()
+    };
+    let price = |text: &str, unit| {
+        text.strip_suffix(unit)
+            .and_then(|amount| exact_usd(amount, 14))
+            .ok_or_else(invalid)
+    };
+    let mut parts = value.splitn(3, ',');
+    let base_microusd_per_month = price(parts.next().ok_or_else(invalid)?, "/m")?;
+    let traffic_microusd_per_tib = price(parts.next().ok_or_else(invalid)?, "/T")?;
+    let bandwidth = if let Some(upgrade) = parts.next() {
+        let (speed, total) = upgrade.split_once("M@").ok_or_else(invalid)?;
+        if !speed.bytes().all(|byte| byte.is_ascii_digit()) {
+            return Err(invalid());
+        }
+        Some(GatewayBandwidthSelection {
+            bandwidth_mbit: speed.parse().map_err(|_| invalid())?,
+            total_base_microusd_per_month: exact_usd(total, 14).ok_or_else(invalid)?,
+        })
+    } else {
+        None
+    };
+    Ok(GatewayOfferSelection {
+        base_microusd_per_month,
+        traffic_microusd_per_tib,
+        bandwidth,
+    })
 }
 
 pub(crate) fn gateway_selection(
@@ -15952,22 +16009,26 @@ fn parse_tag(value: &str) -> Result<String, String> {
 /// nine digits of dollars and six decimals, read from the text alone
 /// without floating point. The backend checks the bounds.
 fn parse_usd(value: &str) -> Result<u64, String> {
-    let invalid = || format!("{value} is not an amount in dollars; write one such as 5 or 2.50");
     let text = value.trim();
     let text = text.strip_prefix('$').unwrap_or(text);
+    exact_usd(text, 9)
+        .ok_or_else(|| format!("{value} is not an amount in dollars; write one such as 5 or 2.50"))
+}
+
+fn exact_usd(text: &str, max_whole_digits: usize) -> Option<u64> {
     let (whole, fraction) = text.split_once('.').unwrap_or((text, ""));
     if whole.is_empty()
-        || whole.len() > 9
+        || whole.len() > max_whole_digits
         || fraction.len() > 6
         || !whole.bytes().all(|byte| byte.is_ascii_digit())
         || !fraction.bytes().all(|byte| byte.is_ascii_digit())
         || (text.contains('.') && fraction.is_empty())
     {
-        return Err(invalid());
+        return None;
     }
-    let whole: u64 = whole.parse().map_err(|_| invalid())?;
-    let fraction: u64 = format!("{fraction:0<6}").parse().map_err(|_| invalid())?;
-    Ok(whole * 1_000_000 + fraction)
+    let whole: u64 = whole.parse().ok()?;
+    let fraction: u64 = format!("{fraction:0<6}").parse().ok()?;
+    whole.checked_mul(1_000_000)?.checked_add(fraction)
 }
 
 /// An amount of MMX, such as `40`, `40.5` or `0.000001`, to atomic units
@@ -16485,6 +16546,75 @@ mod tests {
     }
 
     use super::*;
+
+    #[test]
+    fn gateway_price_quotes_keep_exact_amounts() {
+        use ghostrack_client_api::website::{GatewayBandwidthSelection, GatewayOfferSelection};
+
+        let base = GatewayOfferSelection {
+            base_microusd_per_month: 3_000_000,
+            traffic_microusd_per_tib: 3_000_000,
+            bandwidth: None,
+        };
+        let paid = GatewayOfferSelection {
+            base_microusd_per_month: 200_001,
+            traffic_microusd_per_tib: 1_234_000_000,
+            bandwidth: Some(GatewayBandwidthSelection {
+                bandwidth_mbit: 200,
+                total_base_microusd_per_month: 1_200_500,
+            }),
+        };
+        let limits = GatewayOfferSelection {
+            base_microusd_per_month: 0,
+            traffic_microusd_per_tib: 1,
+            bandwidth: Some(GatewayBandwidthSelection {
+                bandwidth_mbit: u32::MAX,
+                total_base_microusd_per_month: u64::MAX,
+            }),
+        };
+        for (text, option) in [
+            ("3.00/m,3.00/T", base),
+            ("0.200001/m,1234.00/T,200M@1.2005", paid),
+            (
+                "0.00/m,0.000001/T,4294967295M@18446744073709.551615",
+                limits,
+            ),
+        ] {
+            assert_eq!(parse_gateway_option(text), Ok(option));
+            assert_eq!(
+                gateway_option_arg(Some(option)),
+                format!(" --gateway-option {text}")
+            );
+            let legacy = serde_json::to_string(&option).unwrap();
+            assert_eq!(parse_gateway_option(&format!(" {legacy} ")), Ok(option));
+        }
+        assert_eq!(parse_gateway_option("[3000000,3000000,null]"), Ok(base));
+        assert_eq!(gateway_option_arg(None), "");
+    }
+
+    #[test]
+    fn malformed_gateway_price_quotes_are_rejected() {
+        for text in [
+            "3.00/mo,3.00/T",
+            "3.00/m,3.00/GB",
+            "3.00/m,3.00/TiB",
+            "3.00/m",
+            "3.00/m,3.00/T,",
+            "3.00/m,3.00/T,200M:1.00",
+            "3.00/m,3.00/T,200Mbit/s@1.00",
+            "3.00/m,3.00/T,200M@1.00/m",
+            "3.00/m,3.00/T,200M@1.00,0.00/m",
+            "3.00/m,3.00/T,+200M@1.00",
+            "3.00/m,3.00/T,4294967296M@1.00",
+            "3.00/m,3.00/T,200M@18446744073709.551616",
+            "18446744073710/m,3.00/T",
+            "0.0000001/m,3.00/T",
+            "0./m,3.00/T",
+            "-0.00/m,3.00/T",
+        ] {
+            assert!(parse_gateway_option(text).is_err(), "{text}");
+        }
+    }
 
     /// `ghost backup schedule set` reads the spec's example and a rule's
     /// own time and day, and refuses what the API would.

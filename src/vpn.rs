@@ -123,7 +123,9 @@ pub(crate) enum VpnCommand {
         connection: InstanceReference,
         /// Destination location key, from `ghost vpn catalog`.
         location: String,
-        /// Exact gateway price option as JSON, from the VPN catalog.
+        /// Exact gateway prices in USD, from the VPN catalog. Use `BASE/m,TRAFFIC/T`
+        /// for base per month and traffic per TiB. Append `,SPEEDM@TOTAL` for a paid
+        /// speed in Mbit/s and its total charge in USD per month.
         #[arg(long, value_parser = crate::parse_gateway_option)]
         gateway_option: Option<ghostrack_client_api::website::GatewayOfferSelection>,
         /// Accept the price and new address.
@@ -194,7 +196,9 @@ pub(crate) struct CreateArgs {
     /// The location's code, from `ghost vpn catalog`.
     #[arg(long, value_name = "CODE")]
     location: String,
-    /// Exact gateway price option as JSON, from the VPN catalog.
+    /// Exact gateway prices in USD, from the VPN catalog. Use `BASE/m,TRAFFIC/T`
+    /// for base per month and traffic per TiB. Append `,SPEEDM@TOTAL` for a paid
+    /// speed in Mbit/s and its total charge in USD per month.
     #[arg(long, value_parser = crate::parse_gateway_option)]
     gateway_option: Option<ghostrack_client_api::website::GatewayOfferSelection>,
     /// `shared-ip`, `shared-bandwidth`, or `dedicated-ip` (also
