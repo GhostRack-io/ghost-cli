@@ -5340,6 +5340,10 @@ pub struct StockImage {
     pub ssh_user: String,
     /// The least memory an instance of it is given.
     pub minimum_memory_bytes: u64,
+    /// The least guest-visible root disk the image needs, after any snapshot
+    /// reserve. Absent when the image does not specify a minimum.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub minimum_disk_bytes: Option<u64>,
     /// The x86-64 microarchitecture level its distribution is built for,
     /// 1 to 4, which its host's CPU must have.
     pub x86_64_level: u8,
@@ -5360,6 +5364,10 @@ pub struct ContainerImageView {
     pub init_system: StockImageInit,
     /// An offering with less memory does not take it.
     pub minimum_memory_bytes: u64,
+    /// The least guest-visible root disk the image needs, after any snapshot
+    /// reserve. Absent when the image does not specify a minimum.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub minimum_disk_bytes: Option<u64>,
     /// The x86-64 level its host's CPU must have; only hosts that have it
     /// are given it.
     pub x86_64_level: u8,
@@ -5377,6 +5385,7 @@ impl From<&StockImage> for ContainerImageView {
             reference: image.reference.clone(),
             init_system: image.init_system,
             minimum_memory_bytes: image.minimum_memory_bytes,
+            minimum_disk_bytes: image.minimum_disk_bytes,
             x86_64_level: image.x86_64_level,
             os_family: image.os_family.clone(),
         }
