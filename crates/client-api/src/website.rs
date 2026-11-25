@@ -719,6 +719,118 @@ pub struct AccountActivationTerms {
     pub trial_credit_microusd: Option<u64>,
 }
 
+mod activation_fee_decimal {
+    use serde::{Deserialize, Deserializer, Serializer, de};
+
+    #[allow(
+        clippy::trivially_copy_pass_by_ref,
+        reason = "Serde field serializers receive references"
+    )]
+    pub(super) fn serialize<S: Serializer>(fee: &u64, serializer: S) -> Result<S::Ok, S::Error> {
+        serializer.collect_str(fee)
+    }
+
+    pub(super) fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<u64, D::Error> {
+        let value = String::deserialize(deserializer)?;
+        if value.is_empty() || value.len() > 19 || !value.bytes().all(|byte| byte.is_ascii_digit())
+        {
+            return Err(de::Error::custom(
+                "expected a decimal activation fee in microdollars",
+            ));
+        }
+        value.parse().map_err(de::Error::custom)
+    }
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct EvmDepositToken {
+    pub chain_id: u64,
+    pub network: String,
+    pub symbol: String,
+    pub contract: String,
+    pub decimals: u8,
+    pub transaction_explorer_url: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct EvmDepositTerms {
+    pub enabled: bool,
+    pub minimum_storage_microusd: u64,
+    pub minimum_activation_microusd: u64,
+    #[serde(default, with = "activation_fee_decimal")]
+    pub activation_fee_microusd: u64,
+    pub tokens: Vec<EvmDepositToken>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct EvmDepositLookup {
+    #[serde(default)]
+    pub chain_id: Option<u64>,
+    #[serde(default)]
+    pub custody_version: Option<u32>,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct EvmDepositOwnerRequest {
+    pub authentication_public_key: String,
+    #[serde(default)]
+    pub lookup: EvmDepositLookup,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(deny_unknown_fields)]
+pub struct ActivateWithEvmDepositRequest {
+    pub authentication_public_key: String,
+    pub billing_public_key: String,
+    pub recovery_public_key: String,
+    #[serde(default, with = "activation_fee_decimal")]
+    pub maximum_activation_fee_microusd: u64,
+    #[serde(default)]
+    pub lookup: EvmDepositLookup,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Serialize, PartialEq, Eq)]
+#[serde(rename_all = "snake_case")]
+pub enum EvmDepositStatus {
+    Pending,
+    Confirmed,
+    Failed,
+    Credited,
+    ClosedAccount,
+    OutOfRange,
+    #[serde(other)]
+    Unknown,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct EvmDepositTransaction {
+    pub chain_id: u64,
+    /// A failed transaction may have no token transfer event.
+    pub symbol: Option<String>,
+    pub transaction_hash: String,
+    pub explorer_url: String,
+    pub log_index: Option<u64>,
+    pub amount_microusd: Option<u64>,
+    pub status: EvmDepositStatus,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, PartialEq, Eq)]
+pub struct EvmDepositView {
+    #[serde(default)]
+    pub chain_id: Option<u64>,
+    pub address: Option<String>,
+    pub custody_version: Option<u32>,
+    pub minimum_microusd: u64,
+    pub confirmed_microusd: u64,
+    pub remaining_microusd: u64,
+    #[serde(default, with = "activation_fee_decimal")]
+    pub activation_fee_microusd: u64,
+    pub waiting_microusd: u64,
+    pub transactions: Vec<EvmDepositTransaction>,
+}
+
 /// What became of a deposit, by its transaction (`GetDepositLookup`,
 /// public, backlog item 214): each output it paid to the deposit address,
 /// with only what the chain shows anyway, never a memo or an account.

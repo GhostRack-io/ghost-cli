@@ -262,6 +262,15 @@ endpoints! {
     /// the website session the request came with, if any.
     GetAccountSession = user GET "/v1/account/session" => AccountSessionView;
     GetActivationTerms = public GET "/v1/account/activation-terms" => AccountActivationTerms;
+    GetEvmDepositTerms = public GET "/v1/account/evm-deposit-terms"
+        => crate::website::EvmDepositTerms;
+    GetEvmDeposits = user GET "/v1/account/evm-deposits" => crate::website::EvmDepositView;
+    GetEvmDepositAddress = wallet POST "/api/mut/v1/account/evm-deposit-address"
+        (crate::website::EvmDepositOwnerRequest) => crate::website::EvmDepositView;
+    ActivateWithEvmDeposit = wallet POST "/api/mut/v1/account/activate-with-evm-deposit"
+        (crate::website::ActivateWithEvmDepositRequest) => crate::website::AccountView;
+    CheckEvmDeposits = user POST "/api/mut/v1/account/evm-deposits"
+        (crate::website::EvmDepositLookup) => crate::website::EvmDepositView;
     /// What became of the deposit `transaction_id` (hex in either case):
     /// each output it paid, credited, pending, being returned, returned or
     /// kept, without its memo or account (backlog item 214).
