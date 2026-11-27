@@ -7857,8 +7857,9 @@ pub struct DeclareHostEmergencyRequest {
 }
 
 /// The local backups of a host declared lost that its provider can upload
-/// as hosted backups (`ProviderHostBackupRecovery`, item 322), oldest
-/// first. The provider sees each backup's ID and figures, never its renter.
+/// as hosted backups (`ProviderHostBackupRecovery`, item 322), a page of
+/// them oldest first, read with [`PageQuery`]'s `cursor` and `limit`. The
+/// provider sees each backup's ID and figures, never its renter.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct HostBackupRecoveryView {
     /// The end of the 14 days after the host's emergency in which its local
@@ -7868,6 +7869,9 @@ pub struct HostBackupRecoveryView {
     pub recover_until: Option<DateTime<Utc>>,
     #[serde(default)]
     pub backups: Vec<RecoverableBackupView>,
+    /// The cursor of the next page, while one follows.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub next_cursor: Option<String>,
 }
 
 /// One local backup of a lost host, as the provider finds and uploads it.

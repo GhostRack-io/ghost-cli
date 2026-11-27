@@ -2,8 +2,8 @@
 //! backups, found in its backup pools attached to a fresh system, uploaded
 //! as they are stored, still encrypted, as the renters' hosted backups.
 //!
-//! Each backup the host's recovery lists as waiting or uploading is looked
-//! for by its artifact's name in the directories given: a file pool's
+//! Each backup the host's recovery lists as waiting or uploading, on every
+//! page of the list ([`read_all`]), is looked for by its artifact's name in the directories given: a file pool's
 //! directory (`ghb-<id>.ghb`, exactly the recorded size) or a volume
 //! group's `/dev/<VG>` (`ghb-<id>`, at least the recorded size, of which
 //! only the recorded size is read). Its header must name the backup, and a
@@ -27,8 +27,8 @@ use ghostrack_backup_format::{HEADER_BYTES, parse_header};
 use ghostrack_client_api::{
     hypervisor::StorageBackend,
     website::{
-        BackupRecoveryState, PresignedHeaderView, RecoverHostBackupRequest, RecoverHostBackupView,
-        RecoverableBackupView,
+        BackupRecoveryState, HostBackupRecoveryView, PresignedHeaderView, RecoverHostBackupRequest,
+        RecoverHostBackupView, RecoverableBackupView,
     },
 };
 use md5::{Digest as _, Md5};
@@ -43,6 +43,52 @@ pub const ATTEMPTS: u32 = 5;
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct Found {
     pub path: PathBuf,
+}
+
+/// The most backups a page of the recovery list holds: the most the
+/// backend serves.
+pub const PAGE_LIMIT: u32 = 200;
+
+/// The query of the recovery list's page after `cursor` (none for the
+/// first), of [`PAGE_LIMIT`] backups.
+///
+/// # Panics
+///
+/// Only if the static URL it builds on cannot be parsed.
+#[must_use]
+pub fn page_query(cursor: Option<&str>) -> String {
+    let mut url = reqwest::Url::parse("https://api.ghostrack.io/").expect("static URL");
+    {
+        let mut query = url.query_pairs_mut();
+        query.append_pair("limit", &PAGE_LIMIT.to_string());
+        if let Some(cursor) = cursor {
+            query.append_pair("cursor", cursor);
+        }
+    }
+    url.query().unwrap_or_default().to_owned()
+}
+
+/// The host's whole recovery list: the first page `read` answers for no
+/// cursor, and each next one for the cursor of the page before, until a
+/// page names none.
+///
+/// # Errors
+///
+/// A read that fails, and a page that names its own cursor again.
+pub async fn read_all<F: Future<Output = Result<HostBackupRecoveryView>>>(
+    mut read: impl FnMut(Option<String>) -> F,
+) -> Result<HostBackupRecoveryView> {
+    let mut list = read(None).await?;
+    let mut cursor = list.next_cursor.take();
+    while let Some(after) = cursor {
+        let mut page = read(Some(after.clone())).await?;
+        cursor = page.next_cursor.take();
+        if cursor.as_deref() == Some(after.as_str()) {
+            bail!("the backend answered the same page of the recovery list again");
+        }
+        list.backups.append(&mut page.backups);
+    }
+    Ok(list)
 }
 
 /// The backups to upload, in order: one whose upload a run began first
@@ -378,6 +424,43 @@ mod tests {
             next = next.wrapping_add(1);
         }
         bytes
+    }
+
+    #[tokio::test]
+    async fn every_page_of_the_list_is_read() {
+        let ids: Vec<Uuid> = (0..5).map(|_| Uuid::now_v7()).collect();
+        let pages = |cursor: Option<String>| {
+            let start = cursor.map_or(0, |cursor| cursor.parse::<usize>().unwrap());
+            let end = (start + 2).min(ids.len());
+            let view = HostBackupRecoveryView {
+                recover_until: Some(Utc::now()),
+                backups: ids[start..end]
+                    .iter()
+                    .map(|id| backup(*id, StorageBackend::LvmThin, 300))
+                    .collect(),
+                next_cursor: (end < ids.len()).then(|| end.to_string()),
+            };
+            async move { Ok(view) }
+        };
+        let list = read_all(pages).await.unwrap();
+        assert_eq!(
+            list.backups
+                .iter()
+                .map(|backup| backup.backup_id)
+                .collect::<Vec<_>>(),
+            ids
+        );
+        assert!(list.next_cursor.is_none());
+        // A page that answers its own cursor again stops the read.
+        let stuck = |_: Option<String>| async {
+            Ok(HostBackupRecoveryView {
+                next_cursor: Some("again".to_owned()),
+                ..HostBackupRecoveryView::default()
+            })
+        };
+        assert!(read_all(stuck).await.is_err());
+        assert_eq!(page_query(None), "limit=200");
+        assert_eq!(page_query(Some("a b")), "limit=200&cursor=a+b");
     }
 
     fn sha(bytes: &[u8]) -> String {

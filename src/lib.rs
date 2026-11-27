@@ -12025,9 +12025,14 @@ async fn recover_backups(
 ) -> Result<Value> {
     use std::io::{IsTerminal as _, Write as _};
 
-    let recovery: HostBackupRecoveryView = api
-        .read(&ProviderHostBackupRecovery { host_id }, "")
-        .await?;
+    let recovery: HostBackupRecoveryView = recover::read_all(|cursor| async move {
+        api.read(
+            &ProviderHostBackupRecovery { host_id },
+            &recover::page_query(cursor.as_deref()),
+        )
+        .await
+    })
+    .await?;
     let Some(recover_until) = recovery.recover_until else {
         refuse!(
             "invalid_request",

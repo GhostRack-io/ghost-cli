@@ -894,7 +894,9 @@ endpoints! {
         "/api/mut/v1/provider/hosts/{host_id}/emergency" (DeclareHostEmergencyRequest)
         => ProviderHostView;
     /// The local backups of the provider's host declared lost, which it
-    /// can upload as hosted backups until `recover_until` (item 322).
+    /// can upload as hosted backups until `recover_until` (item 322), paged
+    /// oldest first with [`crate::website::PageQuery`]'s `cursor` and
+    /// `limit`.
     ProviderHostBackupRecovery { host_id: Uuid } = user GET
         "/v1/provider/hosts/{host_id}/backup-recovery" => HostBackupRecoveryView;
     /// One step of the upload of a lost host's local backup, signed with
