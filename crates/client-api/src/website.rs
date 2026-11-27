@@ -3542,14 +3542,32 @@ pub enum InstanceSource {
         #[serde(default, skip_serializing_if = "Option::is_none")]
         accepted_charge: Option<AcceptedCharge>,
     },
-    /// A clone of the account's instance `instance_id` on another host of
-    /// its LAN mesh (item 295a): the new instance's root disk is a copy of
-    /// the instance's, of a running one as a backup reads it. The offering
-    /// is of the receiving host ([`MeshHostsView`]), with a root disk at
-    /// least the instance's. A backend before it refuses the kind.
+    /// A clone of the account's instance `instance_id` on its own host
+    /// (item 317a) or on another host of its LAN mesh (item 295a): the new
+    /// instance's root disk is a copy of the instance's, of a running one
+    /// as a backup reads it. The offering is of one of those hosts
+    /// ([`MeshHostsView`]), with a root disk at least the instance's. A
+    /// backend before it refuses the kind.
     Instance {
         instance_id: Uuid,
+        /// Which host the clone goes to. Absent, the instance's own host
+        /// when the offering is on it and it has room, else another host
+        /// of its LAN mesh. A backend before item 317a refuses the field,
+        /// so it is sent only when chosen.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        host: Option<CloneHost>,
     },
+}
+
+/// Which host a clone goes to ([`InstanceSource::Instance`], item 317a).
+/// A request's choice: a value this backend does not know is refused.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum CloneHost {
+    /// The instance's own host, its disk copied on the host.
+    Same,
+    /// Another host of its host's LAN mesh, never its own.
+    Other,
 }
 
 /// The most environment variables a container instance is given.
@@ -8672,8 +8690,9 @@ pub struct LanMeshView {
 /// The hosts that can take a copy of an instance or of a local backup now
 /// (`ListInstanceMeshHosts`, `ListBackupMeshHosts`, item 295a): the other
 /// hosts of its host's LAN mesh, of any provider, with a proven LAN link
-/// to it and an agent that copies. Whether one has room for the new
-/// instance is the offering's.
+/// to it and an agent that copies, and for an instance its own host first
+/// when its agent clones there (item 317a, [`MeshHostView::same_host`]).
+/// Whether one has room for the new instance is the offering's.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct MeshHostsView {
     #[serde(default)]
@@ -8689,6 +8708,11 @@ pub struct MeshHostView {
     /// Its location code.
     #[serde(default)]
     pub location: String,
+    /// Whether it is the instance's own host, which a clone copies the
+    /// disk on (item 317a): listed first. A move never goes there. False
+    /// from a backend before it.
+    #[serde(default)]
+    pub same_host: bool,
 }
 
 /// A provider with a host in a LAN mesh.

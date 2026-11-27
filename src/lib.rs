@@ -90,7 +90,7 @@ use ghostrack_client_api::{
         AuthorizeBackupRestoreRequest, BACKUP_DOWNLOAD_RENEWAL, BackupDestinationFilter,
         BackupDestinationKind, BackupDownloadView, BackupPricingView, BackupScheduleFrequency,
         BackupScheduleRuleInput, BackupScheduleRuleView, BackupScheduleView, BackupSort,
-        BackupStateFilter, BackupView, BillingAuthorization, ChangeGatewayRequest,
+        BackupStateFilter, BackupView, BillingAuthorization, ChangeGatewayRequest, CloneHost,
         CloudIpAddressInput, CloudIpAddressView, CloudIpPoolScope, CloudIpPoolView,
         ContainerEnvVar, ContainerImageView, ContainerLogView, CreateBackupRequest,
         CreateCloudIpPoolRequest, CreateContainerRequest, CreateHostEnrollmentTokenRequest,
@@ -1532,10 +1532,11 @@ enum InstanceCommand {
         #[arg(value_name = "INSTANCE", value_parser = parse_instance_reference)]
         instance_id: InstanceReference,
     },
-    /// List the hosts of the instance's LAN mesh that can take a clone of it
-    /// (`ghost instance create --clone`) or the instance itself (`ghost
-    /// instance move`) now, of any provider. Whether one has
-    /// room is its offering's: `ghost catalog offerings --host HOST_ID`.
+    /// List the hosts that can take a clone of the instance (`ghost
+    /// instance create --clone`) now, its own host first, marked "(this
+    /// host)", then the other hosts of its LAN mesh, of any provider, which
+    /// can take the instance itself too (`ghost instance move`). Whether one
+    /// has room is its offering's: `ghost catalog offerings --host HOST_ID`.
     MeshHosts {
         /// Instance ID or name, from `ghost instance list`.
         #[arg(value_name = "INSTANCE", value_parser = parse_instance_reference)]
@@ -1894,6 +1895,22 @@ enum InstanceCommand {
     Keep(KeepArgs),
 }
 
+/// Which host `ghost instance create --clone` puts the clone on.
+#[derive(Clone, Copy, ValueEnum)]
+enum CloneHostArg {
+    Same,
+    Other,
+}
+
+impl From<CloneHostArg> for CloneHost {
+    fn from(host: CloneHostArg) -> Self {
+        match host {
+            CloneHostArg::Same => Self::Same,
+            CloneHostArg::Other => Self::Other,
+        }
+    }
+}
+
 // What the instance runs is given explicitly, one of the four: no source
 // is guessed, whichever kind its offering is offered as by default, and the
 // usage error of none names them all.
@@ -1916,13 +1933,18 @@ struct CreateInstanceArgs {
     /// container instance.
     #[arg(long, value_name = "BACKUP_ID")]
     backup: Option<Uuid>,
-    /// Create a clone of this VM of yours on the offering's host, another
-    /// host of its host's LAN mesh (`ghost instance mesh-hosts`): its disk
-    /// is copied there over the mesh, a running VM's from a snapshot, and
-    /// billed as LAN mesh traffic. The offering's root disk must be at
-    /// least the VM's.
+    /// Create a clone of this VM of yours on the offering's host, its own
+    /// host or another host of its host's LAN mesh (`ghost instance
+    /// mesh-hosts`): its disk is copied there, a running VM's from a
+    /// snapshot; a copy over the mesh is billed as LAN mesh traffic, one
+    /// on its own host is free. The offering's root disk must be at least
+    /// the VM's.
     #[arg(long, value_name = "INSTANCE", value_parser = parse_instance_reference)]
     clone: Option<InstanceReference>,
+    /// same: on the instance's host; other: on another host of its LAN
+    /// mesh; default: its host when it has room.
+    #[arg(long, value_name = "HOST", value_enum, conflicts_with_all = ["image", "backup", "container", "stock_image"])]
+    clone_host: Option<CloneHostArg>,
     #[command(flatten)]
     spec: ContainerArgs,
     /// How the VM is reached: required for home offerings; for a cloud
@@ -9327,6 +9349,7 @@ async fn approve_browser_operation(
                         image: None,
                         backup: Some(backup_id),
                         clone: None,
+                        clone_host: None,
                         spec: ContainerArgs::default(),
                         gateway_tier,
                         gateway_location: None,
@@ -10245,6 +10268,7 @@ async fn execute_instance(
             } else if let Some(clone) = &args.clone {
                 Some(InstanceSource::Instance {
                     instance_id: resolve_instance(api, clone, InstanceUse::Read).await?,
+                    host: args.clone_host.map(CloneHost::from),
                 })
             } else {
                 None
@@ -27755,8 +27779,55 @@ mod tests {
         assert!(create(&["--clone", "web-1"]).is_ok());
         assert!(create(&["--clone", &id, "--backup", &id]).is_err());
         assert!(create(&["--clone", &id, "--image", "debian-13"]).is_err());
+        // Its host (item 317a): only with --clone, and one of the two.
+        assert!(create(&["--clone", &id, "--clone-host", "same"]).is_ok());
+        assert!(create(&["--clone", &id, "--clone-host", "other"]).is_ok());
+        assert!(create(&["--clone", &id, "--clone-host", "elsewhere"]).is_err());
+        assert!(create(&["--image", "debian-13", "--clone-host", "same"]).is_err());
         assert!(Cli::try_parse_from(["ghost", "instance", "mesh-hosts", &id]).is_ok());
         assert!(Cli::try_parse_from(["ghost", "backup", "mesh-hosts", &id]).is_ok());
+    }
+
+    /// A clone's host is sent only when chosen, which a backend before
+    /// item 317a would refuse, and a value the backend does not know is
+    /// refused there.
+    #[test]
+    fn a_clone_names_its_host_only_when_chosen() {
+        let instance_id = Uuid::now_v7();
+        let unset = serde_json::to_value(InstanceSource::Instance {
+            instance_id,
+            host: None,
+        })
+        .unwrap();
+        assert_eq!(
+            unset,
+            json!({"kind": "instance", "instance_id": instance_id})
+        );
+        let same = serde_json::to_value(InstanceSource::Instance {
+            instance_id,
+            host: Some(CloneHost::Same),
+        })
+        .unwrap();
+        assert_eq!(
+            same,
+            json!({"kind": "instance", "instance_id": instance_id, "host": "same"})
+        );
+        assert!(
+            serde_json::from_value::<InstanceSource>(
+                json!({"kind": "instance", "instance_id": instance_id, "host": "nearby"})
+            )
+            .is_err()
+        );
+        assert!(matches!(
+            serde_json::from_value::<InstanceSource>(
+                json!({"kind": "instance", "instance_id": instance_id, "host": "other"})
+            )
+            .unwrap(),
+            InstanceSource::Instance {
+                host: Some(CloneHost::Other),
+                ..
+            }
+        ));
     }
 
     #[tokio::test]
@@ -27768,8 +27839,11 @@ mod tests {
         let (url, received) = canned_server(vec![
             (
                 200,
-                json!({"hosts": [{"host_id": host_id, "provider_name": "Lan", "location": "de-x"}]})
-                    .to_string(),
+                json!({"hosts": [
+                    {"host_id": host_id, "provider_name": "Own", "location": "de-y", "same_host": true},
+                    {"host_id": host_id, "provider_name": "Lan", "location": "de-x"},
+                ]})
+                .to_string(),
             ),
             // A later backend may add fields, an older one none.
             (200, json!({"hosts": [], "later": true}).to_string()),
@@ -27784,7 +27858,20 @@ mod tests {
         .await
         .unwrap();
         assert_eq!(hosts[0]["host_id"], host_id.to_string());
-        assert_eq!(hosts[0]["location"], "de-x");
+        // The instance's own host first, as the backend lists it (item
+        // 317a); a backend before it says nothing of it.
+        assert_eq!(hosts[0]["same_host"], true);
+        assert_eq!(hosts[1]["location"], "de-x");
+        assert_eq!(hosts[1]["same_host"], false);
+        let shown = crate::pretty::render(
+            &hosts,
+            crate::pretty::Terminal {
+                colors: false,
+                width: 120,
+            },
+        );
+        assert!(shown.contains("(this host)"), "{shown}");
+        assert_eq!(shown.matches("(this host)").count(), 1, "{shown}");
         let backup = backup_id.to_string();
         let none = execute(&account_command(
             &url,

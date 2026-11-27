@@ -752,6 +752,10 @@ fn state_paint(state: &str) -> Option<Paint> {
 /// take lines of their own. `key` is the name of the field it came from.
 fn inline(key: Option<&str>, value: &Value) -> Option<Text> {
     Some(match value {
+        // The instance's own host among the hosts a clone can go to (`ghost
+        // instance mesh-hosts`, item 317a).
+        Value::Bool(true) if key == Some("same_host") => Text::plain("(this host)"),
+        Value::Bool(false) if key == Some("same_host") => Text::absent("-"),
         Value::Null => Text::absent("-"),
         Value::Bool(true) => Text::plain("yes"),
         Value::Bool(false) => Text::plain("no"),
