@@ -1794,15 +1794,15 @@ enum InstanceCommand {
     /// runs; grow it yourself on other systems.
     Upgrade(UpgradeArgs),
     /// Move an instance to another host of its LAN mesh, at that host's
-    /// offering.
+    /// offering, or to another offering of its own host.
     ///
     /// The instance is stopped for the copy of its disk. The copy is a new
     /// instance with a new ID, which takes over the instance's address,
     /// port forwards and HTTP proxy names, and is started if the instance
     /// ran; the instance is then deleted. Its backups stay with its old ID.
     /// The new instance pays the offering's price, and the copy is billed
-    /// as LAN mesh traffic. `ghost instance mesh-hosts` lists the hosts
-    /// that can take it.
+    /// as LAN mesh traffic; one on its own host is free. `ghost instance
+    /// mesh-hosts` lists the hosts that can take it.
     Move(MoveArgs),
     /// Give an instance another name, which the website and `ghost` show.
     ///
@@ -2392,10 +2392,16 @@ struct MoveArgs {
     /// Instance ID or name, from `ghost instance list`.
     #[arg(value_name = "INSTANCE", value_parser = parse_instance_reference)]
     instance_id: InstanceReference,
-    /// An offering of another host of the instance's LAN mesh, from `ghost
-    /// catalog offerings --host HOST_ID`.
+    /// An offering of another host of the instance's LAN mesh, or another
+    /// offering of its own host, from `ghost catalog offerings --host
+    /// HOST_ID`.
     #[arg(long, value_name = "OFFERING")]
     offering: String,
+    /// same: on the instance's host; other: on another host of its LAN
+    /// mesh; default: another host of its LAN mesh, its own host only when
+    /// none can take it.
+    #[arg(long, value_name = "HOST", value_enum)]
+    host: Option<CloneHostArg>,
     /// Confirm the stop of the instance for the copy.
     #[arg(long)]
     yes: bool,
@@ -10772,7 +10778,7 @@ async fn execute_instance(
         InstanceCommand::Move(args) => {
             let instance_id = resolve_instance(api, &args.instance_id, InstanceUse::Change).await?;
             if !cli.globals.compact {
-                quote_move(api, instance_id, &args.offering).await;
+                quote_move(api, instance_id, &args.offering, args.host).await;
             }
             if !args.yes {
                 // The copy it leaves takes its snapshots with it (item 298).
@@ -10782,9 +10788,14 @@ async fn execute_instance(
                 return Err(Preview::new(
                     instance_preview_title("Move", &args.instance_id, Some(instance_id), None),
                     format!(
-                        "a move stops the instance for the copy of its disk, which gets a new ID.\nTo move: ghost instance move {} --offering {} --yes",
+                        "a move stops the instance for the copy of its disk, which gets a new ID.\nTo move: ghost instance move {} --offering {}{} --yes",
                         escape_control(&instance_reference_text(&args.instance_id)),
-                        escape_control(&args.offering)
+                        escape_control(&args.offering),
+                        match args.host {
+                            Some(CloneHostArg::Same) => " --host same",
+                            Some(CloneHostArg::Other) => " --host other",
+                            None => "",
+                        }
                     ),
                 )
                 .row("Offering", Some(args.offering.clone()))
@@ -10797,6 +10808,7 @@ async fn execute_instance(
                     &MoveInstance { instance_id },
                     &MoveInstanceRequest {
                         offering_id: args.offering.clone(),
+                        host: args.host.map(CloneHost::from),
                     },
                     &retried_by_id(args.mutation.key(), &args.instance_id, instance_id),
                 )
@@ -14355,7 +14367,12 @@ fn move_snapshot_space(instance: &InstanceView, preview: &InstanceMovePreview) -
 
 /// Print what a move changes before it is asked for. A read that fails
 /// only costs the quote.
-async fn quote_move(api: &ApiClient, instance_id: Uuid, offering_id: &str) {
+async fn quote_move(
+    api: &ApiClient,
+    instance_id: Uuid,
+    offering_id: &str,
+    host: Option<CloneHostArg>,
+) {
     let colors = Terminal::stderr().colors;
     let read = async {
         let instance: InstanceView = api.read(&GetInstance { instance_id }, "").await?;
@@ -14370,6 +14387,15 @@ async fn quote_move(api: &ApiClient, instance_id: Uuid, offering_id: &str) {
         let mut url = reqwest::Url::parse("https://api.ghostrack.io/").expect("static URL");
         url.query_pairs_mut()
             .append_pair("offering_id", offering_id);
+        if let Some(host) = host {
+            url.query_pairs_mut().append_pair(
+                "host",
+                match host {
+                    CloneHostArg::Same => "same",
+                    CloneHostArg::Other => "other",
+                },
+            );
+        }
         let preview: InstanceMovePreview = api
             .read(
                 &GetInstanceMovePreview { instance_id },
@@ -31464,6 +31490,39 @@ mod tests {
             request_lines(&received)[3],
             format!("POST /api/mut/v1/instances/{id}/move")
         );
+        let body: Value = serde_json::from_slice(&received.lock().unwrap()[3].1).unwrap();
+        assert_eq!(body, json!({"offering_id": "of2_there"}), "no host unless chosen");
+        // A move onto its own host (item 317b): the preview and the write
+        // name the host.
+        let (url, received) = canned_server(vec![
+            (200, instance.clone()),
+            (200, offering.clone()),
+            (200, preview.clone()),
+            (200, accepted.clone()),
+        ])
+        .await;
+        execute(&account_command(
+            &url,
+            &seed,
+            &[
+                "instance",
+                "move",
+                &id,
+                "--offering",
+                "of2_there",
+                "--host",
+                "same",
+                "--yes",
+            ],
+        ))
+        .await
+        .unwrap();
+        assert_eq!(
+            request_lines(&received)[2],
+            format!("GET /v1/instances/{id}/move-preview?offering_id=of2_there&host=same")
+        );
+        let body: Value = serde_json::from_slice(&received.lock().unwrap()[3].1).unwrap();
+        assert_eq!(body, json!({"offering_id": "of2_there", "host": "same"}));
 
         // Move with a failed offering read: the write is still sent.
         let (url, received) = canned_server(vec![

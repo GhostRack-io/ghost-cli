@@ -3579,7 +3579,8 @@ pub enum InstanceSource {
     },
 }
 
-/// Which host a clone goes to ([`InstanceSource::Instance`], item 317a).
+/// Which host a clone goes to ([`InstanceSource::Instance`], item 317a),
+/// or a move ([`MoveInstanceRequest::host`], item 317b).
 /// A request's choice: a value this backend does not know is refused.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -4285,6 +4286,13 @@ pub struct MoveInstanceRequest {
     /// `ListInstanceMeshHosts` lists the hosts, whose root disk is at least
     /// the instance's.
     pub offering_id: String,
+    /// Which host it goes to (item 317b): its own host, on another of its
+    /// offerings, or another host of its LAN mesh. None, the default, is
+    /// another host of its LAN mesh, and its own host only when none of
+    /// the offering can take it. A backend before item 317b refuses the
+    /// field, so it is sent only when chosen.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host: Option<CloneHost>,
 }
 
 /// The answer to a move (item 295b): its job, whose resource is the new
@@ -4342,6 +4350,9 @@ pub struct InstanceMovePreview {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct MovePreviewQuery {
     pub offering_id: String,
+    /// The host the move would go to, as [`MoveInstanceRequest::host`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub host: Option<CloneHost>,
 }
 
 /// A size the instance can be upgraded to: a larger offering of its host.
