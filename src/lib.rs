@@ -1320,8 +1320,9 @@ enum ProviderHostCommand {
         #[command(flatten)]
         mutation: IdempotencyArgs,
     },
-    /// Check a cloud host's public path now; `ghost provider hosts` shows
-    /// the result.
+    /// Check a cloud host's public path now, through an address of its
+    /// pools, or its Shared IP when it has none; `ghost provider hosts`
+    /// shows the result.
     CheckPath {
         /// Host ID, from `ghost provider hosts`.
         host_id: Uuid,
@@ -22091,6 +22092,25 @@ mod tests {
             ]
         );
         assert!(Cli::try_parse_from(["ghost", "catalog", "provider", "gh-short"]).is_err());
+    }
+
+    /// A host view of a backend of before, which has no
+    /// `has_cloud_addresses`, reads as a host with addresses (item 335);
+    /// one that says so reads as it says.
+    #[test]
+    fn a_host_view_without_its_address_flag_has_addresses() {
+        let mut host = json!({
+            "host_id": Uuid::nil(), "label": "cloud-1", "mode": "cloud_routed",
+            "status": "active", "location": "pl-warsaw", "rentals_paused": true,
+            "active_instance_count": 0, "can_retire": true, "retired_at": null,
+            "retirement_notice": null, "public_path_verified_at": null,
+            "public_path_error": null, "public_path_checking": false,
+        });
+        let before: ProviderHostView = serde_json::from_value(host.clone()).unwrap();
+        assert!(before.has_cloud_addresses);
+        host["has_cloud_addresses"] = json!(false);
+        let without: ProviderHostView = serde_json::from_value(host).unwrap();
+        assert!(!without.has_cloud_addresses);
     }
 
     /// `provider hosts` lists each host as the website's hosts table does:

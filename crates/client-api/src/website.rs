@@ -6801,6 +6801,12 @@ pub enum ProviderStatus {
     Unknown,
 }
 
+/// [`ProviderHostView::has_cloud_addresses`] from a backend of before,
+/// whose cloud hosts all needed addresses (item 335).
+const fn has_cloud_addresses_before() -> bool {
+    true
+}
+
 #[allow(clippy::struct_excessive_bools)]
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct ProviderHostView {
@@ -6819,15 +6825,23 @@ pub struct ProviderHostView {
     /// Best current network test readings, or absent without a current result.
     #[serde(default)]
     pub network: Option<NetworkTestSummaryView>,
-    /// When one of its pools' addresses first answered through this cloud
-    /// host. Until then it cannot resume admitting rentals. Always absent
-    /// for a home host, whose rentals use the platform's gateways.
+    /// When this cloud host's public path first answered a check: one of
+    /// its pools' addresses through it, or without addresses its Shared IP.
+    /// Until then it cannot resume admitting rentals. Always absent for a
+    /// home host, whose rentals use the platform's gateways.
     pub public_path_verified_at: Option<DateTime<Utc>>,
     /// Why the last check through this unverified cloud host had no answer
-    /// on any of its addresses.
+    /// on any of its addresses, or on its Shared IP.
     pub public_path_error: Option<String>,
-    /// A check of addresses through this host is running now.
+    /// A check of addresses through this host, or of its Shared IP, is
+    /// running now.
     pub public_path_checking: bool,
+    /// The host has addresses in its IPv4 pools: a non-disabled one of a
+    /// pool that is not deleted. Without them a cloud host rents Shared IP
+    /// only and its public path is checked through its Shared IP. Absent
+    /// from a backend of before, which needed them: true.
+    #[serde(default = "has_cloud_addresses_before")]
+    pub has_cloud_addresses: bool,
     /// When the host's last heartbeat arrived; absent before its first.
     #[serde(default)]
     pub last_heartbeat_at: Option<DateTime<Utc>>,
