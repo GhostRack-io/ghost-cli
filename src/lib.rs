@@ -31491,7 +31491,11 @@ mod tests {
             format!("POST /api/mut/v1/instances/{id}/move")
         );
         let body: Value = serde_json::from_slice(&received.lock().unwrap()[3].1).unwrap();
-        assert_eq!(body, json!({"offering_id": "of2_there"}), "no host unless chosen");
+        assert_eq!(
+            body,
+            json!({"offering_id": "of2_there"}),
+            "no host unless chosen"
+        );
         // A move onto its own host (item 317b): the preview and the write
         // name the host.
         let (url, received) = canned_server(vec![
