@@ -808,6 +808,15 @@ fn string_text(key: Option<&str>, text: &str) -> Text {
         if key == "destination" && text == "gigahost_s3" {
             return Text::plain("hosted");
         }
+        // The path of the mesh's traffic, as a copy's host names it (`ghost
+        // instance mesh-hosts`, item 311).
+        if key == "path" {
+            match text {
+                "lan_mesh" => return Text::plain("LAN mesh"),
+                "wan_mesh" => return Text::plain("Internet"),
+                _ => {}
+            }
+        }
     }
     Text::plain(escape_control(text))
 }

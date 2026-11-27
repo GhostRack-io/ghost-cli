@@ -8832,11 +8832,13 @@ pub struct LanMeshView {
 }
 
 /// The hosts that can take a copy of an instance or of a local backup now
-/// (`ListInstanceMeshHosts`, `ListBackupMeshHosts`, item 295a): the other
-/// hosts of its host's LAN mesh, of any provider, with a proven LAN link
-/// to it and an agent that copies, and for an instance its own host first
-/// when its agent clones there (item 317a, [`MeshHostView::same_host`]).
-/// Whether one has room for the new instance is the offering's.
+/// (`ListInstanceMeshHosts`, `ListBackupMeshHosts`, item 295a): for an
+/// instance its own host first when its agent clones there (item 317a,
+/// [`MeshHostView::same_host`]), then the other hosts of its host's LAN
+/// mesh, of any provider, with a proven LAN link to it and an agent that
+/// copies, then the other hosts that can link with it over the internet
+/// (item 311), by provider and location ([`MeshHostView::path`]). Whether
+/// one has room for the new instance is the offering's.
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct MeshHostsView {
     #[serde(default)]
@@ -8857,6 +8859,12 @@ pub struct MeshHostView {
     /// from a backend before it.
     #[serde(default)]
     pub same_host: bool,
+    /// The way a copy to it travels (item 311): over the LAN mesh
+    /// (`lan_mesh`), or over the hosts' internet mesh link (`wan_mesh`),
+    /// billed at that path's price; none for the instance's own host and
+    /// from a backend before it.
+    #[serde(default)]
+    pub path: Option<MeshPath>,
 }
 
 /// A provider with a host in a LAN mesh.

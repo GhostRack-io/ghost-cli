@@ -1555,8 +1555,10 @@ enum InstanceCommand {
     /// List the hosts that can take a clone of the instance (`ghost
     /// instance create --clone`) now, its own host first, marked "(this
     /// host)", then the other hosts of its LAN mesh, of any provider, which
-    /// can take the instance itself too (`ghost instance move`). Whether one
-    /// has room is its offering's: `ghost catalog offerings --host HOST_ID`.
+    /// can take the instance itself too (`ghost instance move`), then the
+    /// hosts a clone reaches over the internet; the Path column says which.
+    /// Whether one has room is its offering's: `ghost catalog offerings
+    /// --host HOST_ID`.
     MeshHosts {
         /// Instance ID or name, from `ghost instance list`.
         #[arg(value_name = "INSTANCE", value_parser = parse_instance_reference)]
@@ -1953,16 +1955,16 @@ struct CreateInstanceArgs {
     /// container instance.
     #[arg(long, value_name = "BACKUP_ID")]
     backup: Option<Uuid>,
-    /// Create a clone of this VM of yours on the offering's host, its own
-    /// host or another host of its host's LAN mesh (`ghost instance
-    /// mesh-hosts`): its disk is copied there, a running VM's from a
-    /// snapshot; a copy over the mesh is billed as LAN mesh traffic, one
-    /// on its own host is free. The offering's root disk must be at least
-    /// the VM's.
+    /// Create a clone of this VM of yours on the offering's host, on any
+    /// host (`ghost instance mesh-hosts`): its disk is copied there, a
+    /// running VM's from a snapshot; a copy to another host of its LAN mesh
+    /// is billed as LAN mesh traffic, one to any other host as internet
+    /// mesh traffic, one on its own host is free. The offering's root disk
+    /// must be at least the VM's.
     #[arg(long, value_name = "INSTANCE", value_parser = parse_instance_reference)]
     clone: Option<InstanceReference>,
-    /// same: on the instance's host; other: on another host of its LAN
-    /// mesh; default: its host when it has room.
+    /// same: on the instance's host; other: on any other host; default:
+    /// its host when it has room.
     #[arg(long, value_name = "HOST", value_enum, conflicts_with_all = ["image", "backup", "container", "stock_image"])]
     clone_host: Option<CloneHostArg>,
     #[command(flatten)]
@@ -3157,10 +3159,12 @@ enum BackupCommand {
         /// Backup ID, from `ghost backup list`.
         backup_id: Uuid,
     },
-    /// List the hosts of a local backup's LAN mesh that can restore it now
-    /// (`ghost instance create --backup` with an offering on one of them),
-    /// of any provider. Whether one has room is its offering's: `ghost
-    /// catalog offerings --host HOST_ID --for-backup BACKUP_ID`.
+    /// List the other hosts that can restore a local backup now (`ghost
+    /// instance create --backup` with an offering on one of them), of any
+    /// provider: those of its host's LAN mesh, then those it reaches over
+    /// the internet; the Path column says which. Whether one has room is
+    /// its offering's: `ghost catalog offerings --host HOST_ID --for-backup
+    /// BACKUP_ID`.
     MeshHosts {
         /// Backup ID, from `ghost backup list`.
         backup_id: Uuid,
@@ -13512,6 +13516,7 @@ fn job_step_words(key: &str) -> String {
         "download_backup" => "downloading the backup",
         "await_restore_authorization" => "waiting for the restore to be authorized",
         "await_forced_backup" => "backing up first",
+        "await_mesh_link" => "waiting for the hosts' mesh link",
         "prepare_restore_key" => "preparing the restore key",
         "discard_restore_key" => "discarding the restore key",
         "start_restored_instance" => "starting the restored instance",
@@ -28170,7 +28175,9 @@ mod tests {
                 200,
                 json!({"hosts": [
                     {"host_id": host_id, "provider_name": "Own", "location": "de-y", "same_host": true},
-                    {"host_id": host_id, "provider_name": "Lan", "location": "de-x"},
+                    {"host_id": host_id, "provider_name": "Lan", "location": "de-x", "path": "lan_mesh"},
+                    {"host_id": host_id, "provider_name": "Far", "location": "sg-z", "path": "wan_mesh"},
+                    {"host_id": host_id, "provider_name": "Old", "location": "de-w"},
                 ]})
                 .to_string(),
             ),
@@ -28201,6 +28208,12 @@ mod tests {
         );
         assert!(shown.contains("(this host)"), "{shown}");
         assert_eq!(shown.matches("(this host)").count(), 1, "{shown}");
+        // Each other host's path (item 311); a backend before it names none.
+        assert_eq!(hosts[1]["path"], "lan_mesh");
+        assert_eq!(hosts[2]["path"], "wan_mesh");
+        assert!(hosts[3]["path"].is_null());
+        assert!(shown.contains("LAN mesh"), "{shown}");
+        assert!(shown.contains("Internet"), "{shown}");
         let backup = backup_id.to_string();
         let none = execute(&account_command(
             &url,
