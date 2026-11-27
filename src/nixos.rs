@@ -40,17 +40,25 @@ pub(crate) enum NixosCommand {
     },
     /// Deploy an earlier retained generation.
     Rollback {
+        /// ID of the instance to roll back.
         instance: Uuid,
+        /// ID of the retained generation to apply.
         generation: Uuid,
         #[command(flatten)]
         queue: QueueArgs,
     },
     /// Read the recorded outcome of an exact deployment job.
-    Status { instance: Uuid, job: Uuid },
+    Status {
+        /// ID of the instance the deployment belongs to.
+        instance: Uuid,
+        /// Job ID returned when the deployment was queued.
+        job: Uuid,
+    },
 }
 
 #[derive(Args)]
 pub(crate) struct BuildArgs {
+    /// ID of the GhostRack NixOS instance.
     instance: Uuid,
     /// Local directory with flake.nix and flake.lock.
     #[arg(long, default_value = ".")]
