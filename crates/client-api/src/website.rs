@@ -1315,6 +1315,25 @@ pub struct OfferingFilters {
     /// absent: no filter.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub trial_host: Option<bool>,
+    /// The offerings with a host that can take a clone of the caller's
+    /// instance of this ID now (item 311): its own host, the other hosts
+    /// of its LAN mesh and the hosts it can link with over the internet, as
+    /// `ListInstanceMeshHosts` lists them; each with only those hosts in
+    /// `host_ids` and their count in
+    /// [`OfferingView::available_instances`], as with `lan_mesh`. None for
+    /// an instance the account does not have. Needs credentials; one of
+    /// `clone_of`, `move_of` and `restore_of` at most.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub clone_of: Option<Uuid>,
+    /// As `clone_of`, for a move of the instance: the other hosts of its
+    /// LAN mesh alone.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub move_of: Option<Uuid>,
+    /// As `clone_of`, for a new instance from the caller's backup of this
+    /// ID: a local backup's own host and the hosts it can be copied to
+    /// (`ListBackupMeshHosts`); every host for a hosted backup.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub restore_of: Option<Uuid>,
 }
 
 /// Which memory a catalog list holds ([`OfferingFilters::memory`]).
