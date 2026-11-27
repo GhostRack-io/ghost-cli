@@ -1,0 +1,325 @@
+mod archive;
+mod build;
+
+use std::{path::PathBuf, time::Duration};
+
+use anyhow::{Context as _, Result, ensure};
+use clap::{Args, Subcommand};
+use ghostrack_client_api::{
+    api::CreateInstanceSnapshot,
+    website::{CreateInstanceSnapshotRequest, JobAccepted, JobState},
+};
+use reqwest::{Client, Url, redirect};
+use serde::Deserialize;
+use serde_json::{Value, json};
+use sha2::{Digest as _, Sha256};
+use uuid::Uuid;
+use zeroize::Zeroizing;
+
+use crate::{
+    ApiClient, MutationKey, api::is_transient, fresh_idempotency_key, parse_idempotency_key,
+    wait_for_job,
+};
+
+#[derive(Subcommand)]
+pub(crate) enum NixosCommand {
+    /// Compare a locked local build with the instance's active system.
+    Diff(BuildArgs),
+    /// Upload a locked local build and deploy its generation.
+    Deploy {
+        #[command(flatten)]
+        build: BuildArgs,
+        /// Take and wait for an instance disk snapshot before queueing the deploy.
+        #[arg(long)]
+        snapshot: bool,
+        /// JSON file containing health check settings.
+        #[arg(long)]
+        health: Option<PathBuf>,
+        #[command(flatten)]
+        queue: QueueArgs,
+    },
+    /// Deploy an earlier retained generation.
+    Rollback {
+        instance: Uuid,
+        generation: Uuid,
+        #[command(flatten)]
+        queue: QueueArgs,
+    },
+    /// Read the recorded outcome of an exact deployment job.
+    Status { instance: Uuid, job: Uuid },
+}
+
+#[derive(Args)]
+pub(crate) struct BuildArgs {
+    instance: Uuid,
+    /// Local directory with flake.nix and flake.lock.
+    #[arg(long, default_value = ".")]
+    flake: PathBuf,
+    /// Name under nixosConfigurations.
+    #[arg(long)]
+    configuration: String,
+}
+
+#[derive(Args)]
+pub(crate) struct QueueArgs {
+    /// Signed request key. Generated when omitted.
+    #[arg(long, value_parser = parse_idempotency_key)]
+    idempotency_key: Option<String>,
+    /// Maximum time to follow the job. Use 0 to print its queue receipt.
+    #[arg(long, default_value_t = 600, value_parser = clap::value_parser!(u64).range(0..=3600))]
+    wait_seconds: u64,
+}
+
+#[derive(Deserialize)]
+struct Active {
+    generation_id: Option<Uuid>,
+    root_path: Option<String>,
+    unsettled_job_id: Option<Uuid>,
+    reconciliation_gap: Option<i64>,
+}
+
+fn path(instance: Uuid, suffix: &str) -> String {
+    format!("/deployments/instances/{instance}/{suffix}")
+}
+
+async fn active(api: &ApiClient, instance: Uuid) -> Result<Active> {
+    let value = api
+        .app("nix", "GET", &path(instance, "active"), None, None)
+        .await?;
+    Ok(serde_json::from_value(value)?)
+}
+
+pub(crate) async fn execute(api: &ApiClient, command: &NixosCommand) -> Result<Value> {
+    match command {
+        NixosCommand::Diff(args) => {
+            let prior = active(api, args.instance).await?;
+            let candidate = build::local(args).await?;
+            let mut result =
+                build::diff(api, args.instance, prior.root_path.as_deref(), &candidate).await?;
+            result["reconciliation_gap"] = json!(prior.reconciliation_gap);
+            Ok(result)
+        }
+        NixosCommand::Deploy {
+            build,
+            snapshot,
+            health,
+            queue,
+        } => deploy(api, build, *snapshot, health.as_deref(), queue).await,
+        NixosCommand::Rollback {
+            instance,
+            generation,
+            queue,
+        } => {
+            let prior = active(api, *instance).await?;
+            let body = json!({"generation_id": generation, "expected_active_generation_id": prior.generation_id});
+            queue_job(api, *instance, "rollback", &body, queue, &queue_key(queue)).await
+        }
+        NixosCommand::Status { instance, job } => status(api, *instance, *job).await,
+    }
+}
+
+async fn deploy(
+    api: &ApiClient,
+    args: &BuildArgs,
+    snapshot: bool,
+    health: Option<&std::path::Path>,
+    queue: &QueueArgs,
+) -> Result<Value> {
+    let prior = active(api, args.instance).await?;
+    if let Some(job) = prior.unsettled_job_id {
+        anyhow::bail!("deployment {job} is still unsettled");
+    }
+    let health = match health {
+        Some(path) => {
+            let bytes = tokio::fs::read(path)
+                .await
+                .context("read health settings")?;
+            ensure!(bytes.len() <= 8192, "health settings exceed 8 KiB");
+            serde_json::from_slice::<Value>(&bytes).context("read JSON health settings")?
+        }
+        None => json!({}),
+    };
+    let candidate = build::local(args).await?;
+    let key = queue_key(queue);
+    let digest = Sha256::digest(format!(
+        "ghostrack/nixos/generation/v1/{}/{key}",
+        args.instance
+    ));
+    let generation = uuid::Builder::from_random_bytes(digest[..16].try_into()?).into_uuid();
+    let client = client()?;
+    let archive = archive::prepare(&client, &candidate, &key).await?;
+    let body = json!({
+        "generation_id": generation,
+        "root_path": candidate.root,
+        "manifest_sha256": archive.manifest_sha256,
+        "source_sha256": archive.source_sha256,
+    });
+    let register_key = derived_key("upload", &key);
+    app_mutation(
+        api,
+        &format!("/cache/instances/{}/uploads", args.instance),
+        &body,
+        &register_key,
+    )
+    .await?;
+    archive.upload(api, &client, generation).await?;
+    let snapshot_id = if snapshot {
+        Some(create_snapshot(api, args.instance, &key).await?)
+    } else {
+        None
+    };
+    let body = json!({
+        "generation_id": generation,
+        "expected_active_generation_id": prior.generation_id,
+        "snapshot_id": snapshot_id,
+        "flake_revision": candidate.revision,
+        "health": health,
+    });
+    queue_job(api, args.instance, "deploy", &body, queue, &key).await
+}
+
+async fn create_snapshot(api: &ApiClient, instance: Uuid, key: &str) -> Result<Uuid> {
+    let key = derived_key("snapshot", key);
+    let mutation = MutationKey {
+        retry: format!("--idempotency-key {key}"),
+        key,
+    };
+    let accepted: JobAccepted = api
+        .write_retryable(
+            &CreateInstanceSnapshot {
+                instance_id: instance,
+            },
+            &CreateInstanceSnapshotRequest::default(),
+            &mutation,
+        )
+        .await?;
+    let job = tokio::time::timeout(
+        Duration::from_mins(8),
+        wait_for_job(api, accepted.job_id, Duration::from_secs(2), false),
+    )
+    .await
+    .with_context(|| format!("snapshot job {} is still unresolved", accepted.job_id))??;
+    ensure!(
+        job.state == JobState::Succeeded,
+        "snapshot job {} ended as {:?}",
+        accepted.job_id,
+        job.state
+    );
+    Ok(accepted.resource_id)
+}
+
+fn derived_key(domain: &str, key: &str) -> String {
+    format!("nixos-{domain}-{:x}", Sha256::digest(key))
+}
+
+fn queue_key(args: &QueueArgs) -> String {
+    args.idempotency_key
+        .clone()
+        .unwrap_or_else(fresh_idempotency_key)
+}
+
+async fn app_mutation(api: &ApiClient, target: &str, body: &Value, key: &str) -> Result<Value> {
+    for delay in [1, 2] {
+        match api.app("nix", "POST", target, Some(body), Some(key)).await {
+            Err(error) if is_transient(&error) => {
+                tokio::time::sleep(Duration::from_secs(delay)).await;
+            }
+            result => return result,
+        }
+    }
+    api.app("nix", "POST", target, Some(body), Some(key)).await
+}
+
+async fn queue_job(
+    api: &ApiClient,
+    instance: Uuid,
+    operation: &str,
+    body: &Value,
+    args: &QueueArgs,
+    key: &str,
+) -> Result<Value> {
+    let target = path(instance, operation);
+    let receipt = match app_mutation(api, &target, body, key).await {
+        Ok(receipt) => receipt,
+        Err(error) if is_transient(&error) => {
+            return Ok(json!({
+                "phase": "unknown", "settled": false, "job_id": null,
+                "retry": {"app":"nix", "method":"POST", "target":target, "body":body, "idempotency_key":key},
+            }));
+        }
+        Err(error) => return Err(error),
+    };
+    let job = serde_json::from_value::<Uuid>(receipt["job_id"].clone())
+        .context("deployment receipt has no job ID")?;
+    if args.wait_seconds == 0 {
+        return Ok(receipt);
+    }
+    let deadline = tokio::time::Instant::now() + Duration::from_secs(args.wait_seconds);
+    let mut observed = receipt;
+    while tokio::time::Instant::now() < deadline {
+        match tokio::time::timeout_at(deadline, status(api, instance, job)).await {
+            Ok(Ok(result)) => {
+                if result["settled"].as_bool() == Some(true) {
+                    return Ok(result);
+                }
+                observed = result;
+            }
+            _ => break,
+        }
+        tokio::time::sleep_until(
+            (tokio::time::Instant::now() + Duration::from_secs(2)).min(deadline),
+        )
+        .await;
+    }
+    Ok(
+        json!({"job_id":job, "phase":"unknown", "settled":false, "last_observed":observed, "status_target":path(instance, &format!("jobs/{job}"))}),
+    )
+}
+
+async fn status(api: &ApiClient, instance: Uuid, job: Uuid) -> Result<Value> {
+    api.app(
+        "nix",
+        "GET",
+        &path(instance, &format!("jobs/{job}")),
+        None,
+        None,
+    )
+    .await
+}
+
+fn client() -> Result<Client> {
+    Ok(Client::builder()
+        .redirect(redirect::Policy::none())
+        .https_only(true)
+        .connect_timeout(Duration::from_secs(8))
+        .build()?)
+}
+
+fn https_url(raw: &str) -> Result<Url> {
+    let url = Url::parse(raw).context("invalid HTTPS URL returned by Nix app")?;
+    ensure!(
+        url.scheme() == "https"
+            && url.host_str().is_some()
+            && url.username().is_empty()
+            && url.password().is_none()
+            && url.query().is_none()
+            && url.fragment().is_none(),
+        "invalid HTTPS URL returned by Nix app"
+    );
+    Ok(url)
+}
+
+#[derive(Deserialize)]
+struct CacheCredential {
+    url: String,
+    public_key_url: String,
+    login: String,
+    #[serde(deserialize_with = "password")]
+    password: Zeroizing<String>,
+}
+
+fn password<'de, D: serde::Deserializer<'de>>(
+    deserializer: D,
+) -> Result<Zeroizing<String>, D::Error> {
+    String::deserialize(deserializer).map(Zeroizing::new)
+}

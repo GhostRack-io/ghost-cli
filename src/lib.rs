@@ -13,6 +13,7 @@ mod console;
 #[cfg(unix)]
 mod ghostd;
 mod keys;
+mod nixos;
 mod pretty;
 mod vpn;
 
@@ -213,6 +214,11 @@ enum Command {
         /// Generated when omitted.
         #[arg(long, value_parser = parse_idempotency_key)]
         idempotency_key: Option<String>,
+    },
+    /// Build, deploy, and roll back a GhostRack NixOS system.
+    Nixos {
+        #[command(subcommand)]
+        command: nixos::NixosCommand,
     },
     /// Generate or inspect the single account key and its purpose-specific keys.
     Key {
@@ -3965,6 +3971,7 @@ async fn execute_command(cli: &Cli) -> Result<Value> {
                 )
                 .await
         }
+        Command::Nixos { command } => Box::pin(nixos::execute(&api_client(cli)?, command)).await,
         Command::Key {
             command: KeyCommand::Import { from, replace },
         } => execute_key_import(cli, from.as_deref(), *replace).await,
