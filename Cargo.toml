@@ -21,6 +21,9 @@ ghostrack-backup-format = { path = "crates/backup-format" }
 ghostrack-client-api = { path = "crates/client-api", default-features = false, features = ["clap"] }
 hkdf.workspace = true
 hpke.workspace = true
+# `ghost provider host recover-backups`: the Content-MD5 of each part it
+# uploads, which the presigned PUT signs.
+md-5 = "0.10.6"
 rand_core.workspace = true
 reqwest = { workspace = true, features = ["gzip", "zstd"] }
 serde.workspace = true

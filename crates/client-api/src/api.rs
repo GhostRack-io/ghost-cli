@@ -13,32 +13,34 @@ use crate::website::{
     CreateSupportTicketRequest, CreditLinkOfferView, CreditLinkRedeemedView,
     CreditLinkReservationView, DeclareHostEmergencyRequest, DownloadBackupRequest,
     EnableTotpRequest, GatewayTrafficView, GithubLoginRequest, GithubLoginStart, GithubUnlinked,
-    HandOverCloudIpPoolRequest, HistoryPage, HostAgentUpdateView, HostEnrollmentToken,
-    HostNetworkTestsView, HostPricingView, HostPrivacyView, ImageView, InstanceAddressChangeView,
-    InstanceConsoleLogView, InstanceConsoleSessionsView, InstanceHardwareView,
-    InstanceLocationView, InstanceProviderTerminationView, InstanceProviderView,
-    InstanceSystemView, InstanceTagView, InstanceUpgradeView, InstanceView, JobAccepted, JobPage,
-    JobView, LocationView, LoginGrant, MigrateAccountSeedRequest, NotificationsReadView,
-    OfferingView, PasswordChallenge, PasswordChallengeRequest, PasswordLoginRequest,
-    PendingAccountActionView, PrivateRenterView, ProtectedBalanceView, ProviderAgentsView,
-    ProviderBalanceView, ProviderDisplayNameView, ProviderHostDetailView, ProviderHostView,
-    ProviderIncidentView, ProviderOutageDetailView, ProviderOutagePage, ProviderPayoutAddressView,
-    ProviderPayoutView, ProviderReliabilityView, ProviderRentalView, ProviderSecurityDepositView,
-    ProviderUptimeView, RedeemCreditLinkRequest, RedeemLoginGrantRequest, RedeemLoginGrantResponse,
-    RedeployInstanceRequest, ReinstallInstanceRequest, ReleaseChannelsView,
-    RemoveAccountSshKeyRequest, RenameInstanceRequest, RequestAccountCloseRequest,
-    RequestProviderDisplayNameRequest, ReserveCreditLinkRequest, RestoreBackupRequest,
-    RotateGatewayKeysRequest, ScheduleHostRetirementRequest, ScheduleInstanceRetirementRequest,
-    SessionCodeRequest, SessionCodeView, SessionRevocationView, SetAgentUpdatePolicyRequest,
-    SetBackupScheduleRequest, SetHostPrivateRequest, SetHostRentalPauseRequest,
-    SetHostUplinkRequest, SetInstanceBandwidthLimitRequest, SetNotificationReadRequest,
-    SetPortForwardsRequest, SetPowerStateRequest, SetProtectedBalanceRequest,
-    SetProviderIncidentStateRequest, SetProviderPayoutAddressRequest, SetSupportTicketStateRequest,
-    SetTagRedundantRequest, SetWebsitePasswordRequest, StartAgentUpdateSequenceRequest,
-    SupportTicketSummaryView, SupportTicketView, TagInstanceRequest, TotpDisabled, TotpView,
-    TrialClaimStatusView, TrialClaimView, UpdateHostPricingRequest, UpdateInstanceRequest,
-    UpgradeInstanceRequest, UserNotificationView, WebsitePasswordRemoved, WebsitePasswordView,
-    WithdrawProviderSecurityDepositRequest, WriteProviderReviewRequest,
+    HandOverCloudIpPoolRequest, HistoryPage, HostAgentUpdateView, HostBackupRecoveryView,
+    HostEnrollmentToken, HostNetworkTestsView, HostPricingView, HostPrivacyView, ImageView,
+    InstanceAddressChangeView, InstanceConsoleLogView, InstanceConsoleSessionsView,
+    InstanceHardwareView, InstanceLocationView, InstanceProviderTerminationView,
+    InstanceProviderView, InstanceSystemView, InstanceTagView, InstanceUpgradeView, InstanceView,
+    JobAccepted, JobPage, JobView, LocationView, LoginGrant, MigrateAccountSeedRequest,
+    NotificationsReadView, OfferingView, PasswordChallenge, PasswordChallengeRequest,
+    PasswordLoginRequest, PendingAccountActionView, PrivateRenterView, ProtectedBalanceView,
+    ProviderAgentsView, ProviderBalanceView, ProviderDisplayNameView, ProviderHostDetailView,
+    ProviderHostView, ProviderIncidentView, ProviderOutageDetailView, ProviderOutagePage,
+    ProviderPayoutAddressView, ProviderPayoutView, ProviderReliabilityView, ProviderRentalView,
+    ProviderSecurityDepositView, ProviderUptimeView, RecoverHostBackupRequest,
+    RecoverHostBackupView, RedeemCreditLinkRequest, RedeemLoginGrantRequest,
+    RedeemLoginGrantResponse, RedeployInstanceRequest, ReinstallInstanceRequest,
+    ReleaseChannelsView, RemoveAccountSshKeyRequest, RenameInstanceRequest,
+    RequestAccountCloseRequest, RequestProviderDisplayNameRequest, ReserveCreditLinkRequest,
+    RestoreBackupRequest, RotateGatewayKeysRequest, ScheduleHostRetirementRequest,
+    ScheduleInstanceRetirementRequest, SessionCodeRequest, SessionCodeView, SessionRevocationView,
+    SetAgentUpdatePolicyRequest, SetBackupScheduleRequest, SetHostPrivateRequest,
+    SetHostRentalPauseRequest, SetHostUplinkRequest, SetInstanceBandwidthLimitRequest,
+    SetNotificationReadRequest, SetPortForwardsRequest, SetPowerStateRequest,
+    SetProtectedBalanceRequest, SetProviderIncidentStateRequest, SetProviderPayoutAddressRequest,
+    SetSupportTicketStateRequest, SetTagRedundantRequest, SetWebsitePasswordRequest,
+    StartAgentUpdateSequenceRequest, SupportTicketSummaryView, SupportTicketView,
+    TagInstanceRequest, TotpDisabled, TotpView, TrialClaimStatusView, TrialClaimView,
+    UpdateHostPricingRequest, UpdateInstanceRequest, UpgradeInstanceRequest, UserNotificationView,
+    WebsitePasswordRemoved, WebsitePasswordView, WithdrawProviderSecurityDepositRequest,
+    WriteProviderReviewRequest,
 };
 use serde::{Serialize, de::DeserializeOwned};
 use serde_json::Value;
@@ -662,6 +664,11 @@ endpoints! {
     /// links a day.
     DownloadBackup { backup_id: Uuid } = user POST
         "/api/mut/v1/backups/{backup_id}/download" (DownloadBackupRequest) => BackupDownloadView;
+    /// Keeps a hosted backup recovered from a lost host past its expiry:
+    /// it stays until deleted, at the price it has. Keeping it again
+    /// answers the same.
+    KeepBackup { backup_id: Uuid } =
+        user POST "/api/mut/v1/backups/{backup_id}/keep" => BackupView;
     /// The instance's backup schedule: its live rules with their next run
     /// and last result, and the latest removed rules whose backups stay.
     GetBackupSchedule { instance_id: Uuid } =
@@ -886,6 +893,15 @@ endpoints! {
     DeclareHostEmergency { host_id: Uuid } = user POST
         "/api/mut/v1/provider/hosts/{host_id}/emergency" (DeclareHostEmergencyRequest)
         => ProviderHostView;
+    /// The local backups of the provider's host declared lost, which it
+    /// can upload as hosted backups until `recover_until` (item 322).
+    ProviderHostBackupRecovery { host_id: Uuid } = user GET
+        "/v1/provider/hosts/{host_id}/backup-recovery" => HostBackupRecoveryView;
+    /// One step of the upload of a lost host's local backup, signed with
+    /// the provider's account key: one backup of a host at a time.
+    RecoverHostBackup { host_id: Uuid, backup_id: Uuid } = wallet POST
+        "/api/mut/v1/provider/hosts/{host_id}/backup-recovery/{backup_id}"
+        (RecoverHostBackupRequest) => RecoverHostBackupView;
     ScheduleInstanceRetirement { instance_id: Uuid } = user POST
         "/api/mut/v1/provider/instances/{instance_id}/retirement-notice"
         (ScheduleInstanceRetirementRequest) => InstanceProviderTerminationView;

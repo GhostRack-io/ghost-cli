@@ -15,6 +15,7 @@ mod ghostd;
 mod keys;
 mod nixos;
 mod pretty;
+mod recover;
 mod vpn;
 
 #[cfg(unix)]
@@ -32,7 +33,7 @@ use std::{
     net::Ipv4Addr,
     path::{Path, PathBuf},
     sync::LazyLock,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use anyhow::{Context as _, Result, bail};
@@ -61,23 +62,24 @@ use ghostrack_client_api::{
         GetInstanceUsage, GetJob, GetOffering, GetOperationIntent, GetProviderAgents,
         GetProviderBalance, GetProviderDisplayName, GetProviderHost, GetProviderHostInstanceUsage,
         GetProviderHostMetrics, GetProviderOutage, GetProviderReliability, GetProviderUptime,
-        GetTicket, HandOverIpPool, ListAuthKeys, ListBackupMeshHosts, ListBackups,
+        GetTicket, HandOverIpPool, KeepBackup, ListAuthKeys, ListBackupMeshHosts, ListBackups,
         ListContainerImages, ListImages, ListIncidents, ListInstanceAddressChanges,
         ListInstanceBackups, ListInstanceMeshHosts, ListInstanceSnapshots, ListInstanceTags,
         ListInstanceUpgrades, ListInstances, ListIpPools, ListJobs, ListLocations,
         ListNotifications, ListOfferings, ListPayouts, ListPrivateRenters, ListProviderConversions,
         ListProviderHosts, ListProviderOutages, ListProviderReviews, ListSessions, ListTickets,
-        MigrateAccountSeed, MoveGatewayLocation, MoveInstance, RedeployInstance, ReinstallInstance,
-        RemoveHttpProxyEntry, RemoveIpAddress, RemovePrivateRenter, RemoveWebsitePassword,
-        RenameInstance, RequestProviderDisplayName, RescueInstance, ResetInstanceAccess,
-        ResetInstanceSnapshot, RestoreBackup, RetireHost, RetryHostAgentUpdate, RevokeSession,
-        RevokeSessions, RotateGatewayKeys, SaveHttpProxyEntry, ScheduleHostRetirement,
-        ScheduleInstanceRetirement, SetBackupSchedule, SetHostAgentUpdatePolicy, SetHostPrivate,
-        SetHostRentalAdmission, SetHostUplink, SetIncidentState, SetInstanceBandwidthLimit,
-        SetInstancePower, SetPayoutAddress, SetPortForwards, SetTagRedundant, SetTicketState,
-        SetWebsitePassword, StartAgentUpdateSequence, StopAgentUpdateSequence, TagInstance,
-        UnlinkGithub, UpdateHostPricing, UpdateInstance, UpgradeInstance,
-        WithdrawProviderDisplayName, WriteProviderReview,
+        MigrateAccountSeed, MoveGatewayLocation, MoveInstance, ProviderHostBackupRecovery,
+        RecoverHostBackup, RedeployInstance, ReinstallInstance, RemoveHttpProxyEntry,
+        RemoveIpAddress, RemovePrivateRenter, RemoveWebsitePassword, RenameInstance,
+        RequestProviderDisplayName, RescueInstance, ResetInstanceAccess, ResetInstanceSnapshot,
+        RestoreBackup, RetireHost, RetryHostAgentUpdate, RevokeSession, RevokeSessions,
+        RotateGatewayKeys, SaveHttpProxyEntry, ScheduleHostRetirement, ScheduleInstanceRetirement,
+        SetBackupSchedule, SetHostAgentUpdatePolicy, SetHostPrivate, SetHostRentalAdmission,
+        SetHostUplink, SetIncidentState, SetInstanceBandwidthLimit, SetInstancePower,
+        SetPayoutAddress, SetPortForwards, SetTagRedundant, SetTicketState, SetWebsitePassword,
+        StartAgentUpdateSequence, StopAgentUpdateSequence, TagInstance, UnlinkGithub,
+        UpdateHostPricing, UpdateInstance, UpgradeInstance, WithdrawProviderDisplayName,
+        WriteProviderReview,
     },
     hypervisor::{GuestInitializationStatus, HostMode, PowerState, RestartPolicy},
     website::{
@@ -97,24 +99,25 @@ use ghostrack_client_api::{
         CreateInstanceRequest, CreateInstanceSnapshotRequest, CreateProviderPayoutRequest,
         CreateSupportTicketRequest, DeclareHostEmergencyRequest, DepositLookupView, DiskChoice,
         DownloadBackupRequest, GatewayTier, GatewayTrafficView, GithubUnlinked,
-        HandOverCloudIpPoolRequest, HostAgentUpdateView, HostEnrollmentToken, HostModeFilter,
-        HostPrivacyView, HttpProxyEntry, HttpProxyEntryView, HttpProxyProtocol, HttpProxyView,
-        ImageView, InstanceConsoleLogView, InstanceEgressLevel, InstanceKind, InstanceListQuery,
-        InstanceMeshView, InstanceMovePreview, InstanceProjectionView, InstanceSnapshotView,
-        InstanceSnapshotsView, InstanceSort, InstanceSource, InstanceState, InstanceStateFilter,
-        InstanceTagView, InstanceUpgradeView, InstanceView, IpChoice, JobAccepted, JobEventView,
-        JobKind, JobPage, JobState, JobStateFilter, JobStepState, JobView, KindChoice, LedgerKind,
-        LocationView, LoginGrant, MAX_SSH_PUBLIC_KEYS, MemoryChoice, MeshHostsView,
-        MigrateAccountSeedRequest, MoveGatewayLocationRequest, MoveInstanceAccepted,
-        MoveInstanceRequest, OfferingView, PortForwardChange, PrivateRenterView,
-        ProviderAgentsView, ProviderBalanceView, ProviderConversionView, ProviderDisplayNameView,
-        ProviderHostDetailView, ProviderHostView, ProviderIncidentSeverity, ProviderIncidentState,
-        ProviderIncidentView, ProviderOutageDetailView, ProviderOutagePage,
-        ProviderPayoutAddressView, ProviderPayoutView, ProviderReliabilityView, ProviderUptimeView,
-        RedeployInstanceRequest, RedeploySetting, ReinstallInstanceRequest, RenameInstanceRequest,
-        RequestProviderDisplayNameRequest, RescueInstanceRequest, ResetInstanceAccessRequest,
-        RestoreBackupRequest, RotateGatewayKeysRequest, SSH_PUBLIC_KEY_TYPES,
-        SaveHttpProxyEntryRequest, ScheduleHostRetirementRequest,
+        HandOverCloudIpPoolRequest, HostAgentUpdateView, HostBackupRecoveryView,
+        HostEnrollmentToken, HostModeFilter, HostPrivacyView, HttpProxyEntry, HttpProxyEntryView,
+        HttpProxyProtocol, HttpProxyView, ImageView, InstanceConsoleLogView, InstanceEgressLevel,
+        InstanceKind, InstanceListQuery, InstanceMeshView, InstanceMovePreview,
+        InstanceProjectionView, InstanceSnapshotView, InstanceSnapshotsView, InstanceSort,
+        InstanceSource, InstanceState, InstanceStateFilter, InstanceTagView, InstanceUpgradeView,
+        InstanceView, IpChoice, JobAccepted, JobEventView, JobKind, JobPage, JobState,
+        JobStateFilter, JobStepState, JobView, KindChoice, LedgerKind, LocationView, LoginGrant,
+        MAX_SSH_PUBLIC_KEYS, MemoryChoice, MeshHostsView, MigrateAccountSeedRequest,
+        MoveGatewayLocationRequest, MoveInstanceAccepted, MoveInstanceRequest, OfferingView,
+        PortForwardChange, PrivateRenterView, ProviderAgentsView, ProviderBalanceView,
+        ProviderConversionView, ProviderDisplayNameView, ProviderHostDetailView, ProviderHostView,
+        ProviderIncidentSeverity, ProviderIncidentState, ProviderIncidentView,
+        ProviderOutageDetailView, ProviderOutagePage, ProviderPayoutAddressView,
+        ProviderPayoutView, ProviderReliabilityView, ProviderUptimeView, RecoverHostBackupRequest,
+        RecoverHostBackupView, RedeployInstanceRequest, RedeploySetting, ReinstallInstanceRequest,
+        RenameInstanceRequest, RequestProviderDisplayNameRequest, RescueInstanceRequest,
+        ResetInstanceAccessRequest, RestoreBackupRequest, RotateGatewayKeysRequest,
+        SSH_PUBLIC_KEY_TYPES, SaveHttpProxyEntryRequest, ScheduleHostRetirementRequest,
         ScheduleInstanceRetirementRequest, SessionRevocationView, SetAgentUpdatePolicyRequest,
         SetBackupScheduleRequest, SetHostPrivateRequest, SetHostRentalPauseRequest,
         SetHostUplinkRequest, SetInstanceBandwidthLimitRequest, SetPortForwardsRequest,
@@ -1350,6 +1353,22 @@ enum ProviderHostCommand {
         yes: bool,
         #[command(flatten)]
         mutation: IdempotencyArgs,
+    },
+    /// Upload a lost host's local backups as hosted backups, from its
+    /// backup pools attached to a fresh system: run as root there, signed
+    /// in with the provider account. Each backup is found by its name in
+    /// the directories given, checked and hashed, then uploaded as it is
+    /// stored, still encrypted; a rerun resumes. Nothing is written to the
+    /// pools.
+    RecoverBackups {
+        /// Host ID of the host declared lost, from `ghost provider hosts`.
+        host_id: Uuid,
+        /// A file pool's directory, or a volume group's `/dev/<VG>`.
+        #[arg(value_name = "DIR", required = true)]
+        directories: Vec<PathBuf>,
+        /// Find and check the backups only; upload nothing.
+        #[arg(long)]
+        dry_run: bool,
     },
     /// Permanently retire an empty host enrollment while preserving history.
     Delete {
@@ -3154,6 +3173,9 @@ enum BackupCommand {
     Restore(RestoreBackupArgs),
     /// Permanently delete a local or hosted backup.
     Delete(DeleteBackupArgs),
+    /// Keep a hosted backup recovered from a lost host past its expiry:
+    /// it stays until you delete it, at the price it has.
+    Keep(CancelBackupArgs),
     /// Download a hosted backup as it is stored, encrypted, with its key
     /// file beside it (FILE.key.json), which `ghost backup decrypt` reads.
     /// It costs what restoring the backup costs, shown before it starts;
@@ -5048,6 +5070,11 @@ impl Summary {
         if backups.iter().any(|backup| backup.locked_until.is_some()) {
             columns.push("locked_until");
         }
+        // When a backup recovered from a lost host expires unless kept
+        // (item 322).
+        if backups.iter().any(|backup| backup.expires_at.is_some()) {
+            columns.push("expires_at");
+        }
         Self {
             columns,
             rows: backups
@@ -5110,6 +5137,7 @@ impl Summary {
                         },
                         "created_at": backup.created_at,
                         "locked_until": backup.locked_until,
+                        "expires_at": backup.expires_at,
                     })
                 })
                 .collect(),
@@ -8134,6 +8162,11 @@ async fn execute_provider(api: &ApiClient, command: &ProviderCommand) -> Result<
                     .await?;
                 to_value(privacy)
             }
+            ProviderHostCommand::RecoverBackups {
+                host_id,
+                directories,
+                dry_run,
+            } => recover_backups(api, *host_id, directories, *dry_run).await,
             ProviderHostCommand::CheckPath { host_id, mutation } => {
                 let host: ProviderHostView = api
                     .write_retryable(
@@ -11721,6 +11754,18 @@ async fn execute_backup(cli: &Cli, api: &ApiClient, command: &BackupCommand) -> 
                 .await?;
             to_value(accepted)
         }
+        BackupCommand::Keep(args) => {
+            let backup: BackupView = api
+                .write_retryable(
+                    &KeepBackup {
+                        backup_id: args.backup_id,
+                    },
+                    &(),
+                    &args.mutation.key(),
+                )
+                .await?;
+            to_value(backup)
+        }
         BackupCommand::Restore(args) => restore_backup(cli, api, args).await,
         BackupCommand::Download(args) => download_backup(cli, api, args).await,
         BackupCommand::Decrypt(args) => decrypt_backup(cli, args),
@@ -11878,6 +11923,261 @@ async fn named_backup(
 /// `ghost backup download`: a hosted backup's encrypted file and its key
 /// file, fetched with a link the backend charges for once; a rerun resumes
 /// with the link it kept while that works ([`backup_file`]).
+/// The backend's steps and the bucket's PUTs of a recovery run (item 322).
+/// A step's key is the run's and the request's, so a retry of a request
+/// whose answer was lost gets that answer, and another run starts afresh.
+struct ApiRecovery<'a> {
+    api: &'a ApiClient,
+    host_id: Uuid,
+    run: Uuid,
+    bucket: reqwest::Client,
+}
+
+/// A PUT to the bucket that failed: its status, none without an answer.
+#[derive(Debug)]
+struct PutFailed(Option<reqwest::StatusCode>);
+
+impl std::fmt::Display for PutFailed {
+    fn fmt(&self, formatter: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self.0 {
+            Some(status) => write!(formatter, "hosted storage answered {status}"),
+            None => write!(formatter, "hosted storage did not answer"),
+        }
+    }
+}
+
+impl std::error::Error for PutFailed {}
+
+impl recover::Recovery for ApiRecovery<'_> {
+    async fn step(
+        &self,
+        backup_id: Uuid,
+        request: &RecoverHostBackupRequest,
+    ) -> Result<RecoverHostBackupView> {
+        let mut hashed = backup_id.as_bytes().to_vec();
+        hashed.extend(serde_json::to_vec(request)?);
+        let key = format!(
+            "recover-{}-{}",
+            self.run.simple(),
+            URL_SAFE_NO_PAD.encode(Sha256::digest(&hashed))
+        );
+        self.api
+            .write(
+                &RecoverHostBackup {
+                    host_id: self.host_id,
+                    backup_id,
+                },
+                request,
+                Some(&key),
+            )
+            .await
+    }
+
+    async fn put(
+        &self,
+        url: &str,
+        headers: &[ghostrack_client_api::website::PresignedHeaderView],
+        body: Vec<u8>,
+    ) -> Result<String> {
+        let mut request = self.bucket.put(url);
+        for header in headers {
+            request = request.header(header.name.as_str(), header.value.as_str());
+        }
+        let response = request
+            .body(body)
+            .send()
+            .await
+            .map_err(|_| anyhow::Error::new(PutFailed(None)))?;
+        if !response.status().is_success() {
+            return Err(anyhow::Error::new(PutFailed(Some(response.status()))));
+        }
+        Ok(response
+            .headers()
+            .get(reqwest::header::ETAG)
+            .context("hosted storage answered no ETag")?
+            .to_str()?
+            .to_owned())
+    }
+
+    fn transient(&self, error: &anyhow::Error) -> bool {
+        api::is_transient(error)
+            || error.downcast_ref::<PutFailed>().is_some_and(|failed| {
+                failed.0.is_none_or(|status| {
+                    status.is_server_error() || status == reqwest::StatusCode::REQUEST_TIMEOUT
+                })
+            })
+    }
+
+    async fn pause(&self, attempt: u32) {
+        tokio::time::sleep(recover::backoff(attempt)).await;
+    }
+}
+
+/// `ghost provider host recover-backups` ([`recover`]): each waiting or
+/// uploading backup of the lost host found in `directories`, checked,
+/// hashed and uploaded one at a time, its progress on stderr; what was
+/// recovered, skipped and failed.
+async fn recover_backups(
+    api: &ApiClient,
+    host_id: Uuid,
+    directories: &[PathBuf],
+    dry_run: bool,
+) -> Result<Value> {
+    use std::io::{IsTerminal as _, Write as _};
+
+    let recovery: HostBackupRecoveryView = api
+        .read(&ProviderHostBackupRecovery { host_id }, "")
+        .await?;
+    let Some(recover_until) = recovery.recover_until else {
+        refuse!(
+            "invalid_request",
+            "host {host_id} was not declared lost, so it has no backups to recover"
+        );
+    };
+    if recover_until <= Utc::now() {
+        refuse!(
+            "invalid_request",
+            "the backups of host {host_id} could be recovered until {}",
+            recover_until.format("%Y-%m-%d %H:%M UTC")
+        );
+    }
+    let tty = std::io::stderr().is_terminal();
+    let line = |text: &str, done: bool| {
+        let mut stderr = std::io::stderr().lock();
+        if tty {
+            let _ = write!(stderr, "\r\x1b[K{text}");
+            if done {
+                let _ = writeln!(stderr);
+            }
+        } else if done {
+            let _ = writeln!(stderr, "{text}");
+        }
+    };
+    let uploader = ApiRecovery {
+        api,
+        host_id,
+        run: Uuid::now_v7(),
+        bucket: reqwest::Client::builder()
+            .connect_timeout(Duration::from_secs(30))
+            .redirect(reqwest::redirect::Policy::none())
+            .build()?,
+    };
+    let (mut recovered, mut checked, mut not_found, mut damaged, mut failed) =
+        (Vec::new(), Vec::new(), Vec::new(), Vec::new(), Vec::new());
+    let mut activation_named = false;
+    for backup in recover::to_upload(&recovery.backups) {
+        let name = backup.artifact_name.as_str();
+        let Some(found) = recover::find(directories, backup) else {
+            let mut text = format!("{name}: not found");
+            if !activation_named && recover::may_need_activation(directories, backup) {
+                activation_named = true;
+                text.push_str(
+                    "; a volume group's logical volumes may need `vgchange -ay VG` first",
+                );
+            }
+            line(&text, true);
+            not_found.push(backup.backup_id);
+            continue;
+        };
+        let started = Instant::now();
+        let checked_artifact = recover::open_artifact(&found.path, backup).and_then(|mut file| {
+            let (header, sha256) = recover::prepass(&mut file, backup, |read| {
+                if tty {
+                    line(
+                        &format!(
+                            "{} (checking)",
+                            recover::progress_line(
+                                name,
+                                read,
+                                backup.size_bytes,
+                                recover::rate(read, started)
+                            )
+                        ),
+                        false,
+                    );
+                }
+            })?;
+            Ok((file, header, sha256))
+        });
+        let (mut file, header, sha256) = match checked_artifact {
+            Ok(checked) if checked.2 == backup.sha256 => checked,
+            Ok(_) => {
+                line(
+                    &format!("{name}: damaged, its SHA-256 differs; skipped"),
+                    true,
+                );
+                damaged.push(backup.backup_id);
+                continue;
+            }
+            Err(error) => {
+                line(&format!("{name}: damaged, {error:#}; skipped"), true);
+                damaged.push(backup.backup_id);
+                continue;
+            }
+        };
+        if dry_run {
+            line(&format!("{name}: found and checked"), true);
+            checked.push(backup.backup_id);
+            continue;
+        }
+        let started = Instant::now();
+        let mut painted = Instant::now();
+        let outcome = recover::upload(&uploader, backup, &mut file, &header, &sha256, |sent| {
+            if tty && (sent == backup.size_bytes || painted.elapsed() >= Duration::from_millis(500))
+            {
+                painted = Instant::now();
+                line(
+                    &recover::progress_line(
+                        name,
+                        sent,
+                        backup.size_bytes,
+                        recover::rate(sent, started),
+                    ),
+                    false,
+                );
+            }
+        })
+        .await;
+        match outcome {
+            Ok(expires_at) => {
+                line(
+                    &format!(
+                        "{name}: recovered as a hosted backup until {}",
+                        expires_at.format("%Y-%m-%d %H:%M UTC")
+                    ),
+                    true,
+                );
+                recovered.push(backup.backup_id);
+            }
+            Err(error) => {
+                line(&format!("{name}: failed, {error:#}"), true);
+                failed.push(json!({"backup_id": backup.backup_id, "error": format!("{error:#}")}));
+            }
+        }
+    }
+    line(
+        &format!(
+            "Recovered {}, skipped {} (not found {}, damaged {}), failed {}.",
+            recovered.len(),
+            not_found.len() + damaged.len(),
+            not_found.len(),
+            damaged.len(),
+            failed.len()
+        ),
+        true,
+    );
+    Ok(json!({
+        "host_id": host_id,
+        "recover_until": recover_until,
+        "dry_run": dry_run,
+        "recovered": recovered,
+        "checked": checked,
+        "not_found": not_found,
+        "damaged": damaged,
+        "failed": failed,
+    }))
+}
+
 async fn download_backup(cli: &Cli, api: &ApiClient, args: &DownloadBackupArgs) -> Result<Value> {
     let backup_id = args.backup_id;
     let output = args
@@ -20653,6 +20953,8 @@ mod tests {
                 container: None,
                 schedule: None,
                 locked_until: None,
+                recover_until: None,
+                expires_at: None,
                 download: None,
             })
             .unwrap()
@@ -21260,6 +21562,8 @@ mod tests {
             container: None,
             schedule: None,
             locked_until: None,
+            recover_until: None,
+            expires_at: None,
             download: None,
         })
         .unwrap();

@@ -5,8 +5,8 @@ use std::{fs::File, io::Cursor};
 
 use base64::{Engine as _, engine::general_purpose::URL_SAFE_NO_PAD};
 use ghostrack_backup_format::{
-    HEADER_FIXED_BYTES, SparseFile, StreamRestoreInput, WRAPPED_DATA_KEY_BYTES, decode_stream,
-    open_data_key,
+    HEADER_BYTES, HEADER_FIXED_BYTES, SparseFile, StreamRestoreInput, WRAPPED_DATA_KEY_BYTES,
+    decode_stream, open_data_key, parse_header,
 };
 use hpke::{Kem as _, kem::X25519HkdfSha256};
 use sha2::{Digest as _, Sha256};
@@ -223,4 +223,30 @@ fn zero_chunks_are_holes_in_the_sparse_output() {
             );
         }
     }
+}
+
+/// A recovery upload reads the header the host wrote: its backup, disk
+/// size, fingerprint and wrapped key; anything but a known magic, the
+/// chunk size and an 80-byte key is refused.
+#[test]
+fn the_header_parses_as_the_encoder_wrote_it() {
+    let fixture = fixture();
+    for version in [1_u8, 2] {
+        let container = container(version);
+        let header = parse_header(&container[..HEADER_BYTES]).unwrap();
+        assert_eq!(header.format_version, version);
+        assert_eq!(header.backup_id, fixture.backup_id);
+        assert_eq!(header.disk_bytes, fixture.disk_bytes);
+        assert_eq!(header.recipient_key_fingerprint, fixture.fingerprint);
+        assert_eq!(header.wrapped_data_key.to_vec(), fixture.wrapped_data_key);
+    }
+    let container = container(2);
+    assert!(parse_header(&container[..HEADER_BYTES - 1]).is_err());
+    let mut bad_magic = container[..HEADER_BYTES].to_vec();
+    bad_magic[7] = b'9';
+    assert!(parse_header(&bad_magic).is_err());
+    let mut bad_length = container[..HEADER_BYTES].to_vec();
+    bad_length[HEADER_FIXED_BYTES - 1] = 79;
+    assert!(parse_header(&bad_length).is_err());
+    assert_eq!(HEADER_BYTES, HEADER_FIXED_BYTES + WRAPPED_DATA_KEY_BYTES);
 }

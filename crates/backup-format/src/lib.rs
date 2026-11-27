@@ -62,6 +62,62 @@ pub const WRAPPED_DATA_KEY_BYTES: usize = 80;
 pub const BACKUP_DATA_KEY_INFO: &[u8] = b"GIGAHOST-BACKUP-DATA-KEY-V1";
 /// The HPKE info of the same key rewrapped to a restore's destination.
 pub const RESTORE_DATA_KEY_INFO: &[u8] = b"GIGAHOST-RESTORE-DATA-KEY-V1";
+/// The whole header of a container: [`HEADER_FIXED_BYTES`] and the
+/// wrapped data key.
+pub const HEADER_BYTES: usize = HEADER_FIXED_BYTES + WRAPPED_DATA_KEY_BYTES;
+
+/// A container's header, as [`parse_header`] reads it: what binds the
+/// container to its backup, and the data key wrapped to the recovery key.
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct ContainerHeader {
+    /// 1 or 2, from the magic.
+    pub format_version: u8,
+    pub backup_id: Uuid,
+    pub disk_bytes: u64,
+    pub chunk_bytes: u64,
+    pub recipient_key_fingerprint: [u8; 32],
+    pub nonce_prefix: [u8; 16],
+    pub wrapped_data_key: [u8; WRAPPED_DATA_KEY_BYTES],
+}
+
+/// Read a container's header from its first [`HEADER_BYTES`] bytes,
+/// checking only its form: a known magic, the chunk size and the wrapped
+/// key's length. Nothing is authenticated; whoever reads it compares its
+/// backup ID, disk size and fingerprint with what it expects.
+///
+/// # Errors
+///
+/// Bytes that are not a header of this form.
+pub fn parse_header(bytes: &[u8]) -> Result<ContainerHeader> {
+    if bytes.len() != HEADER_BYTES {
+        bail!("a backup header is {HEADER_BYTES} bytes");
+    }
+    let format_version = match &bytes[..8] {
+        magic if magic == MAGIC_V1 => 1,
+        magic if magic == MAGIC_V2 => 2,
+        _ => bail!("encrypted backup has an unsupported container magic"),
+    };
+    let fixed = |from: usize, to: usize| &bytes[from..to];
+    let backup_id = Uuid::from_slice(fixed(8, 24))?;
+    let disk_bytes = u64::from_be_bytes(fixed(24, 32).try_into()?);
+    let chunk_bytes = u64::from_be_bytes(fixed(32, 40).try_into()?);
+    let recipient_key_fingerprint: [u8; 32] = fixed(40, 72).try_into()?;
+    let nonce_prefix: [u8; 16] = fixed(72, 88).try_into()?;
+    let wrapped_len = usize::from(u16::from_be_bytes(fixed(88, 90).try_into()?));
+    if chunk_bytes != PLAINTEXT_CHUNK_BYTES || wrapped_len != WRAPPED_DATA_KEY_BYTES {
+        bail!("encrypted backup header has an unsupported layout");
+    }
+    Ok(ContainerHeader {
+        format_version,
+        backup_id,
+        disk_bytes,
+        chunk_bytes,
+        recipient_key_fingerprint,
+        nonce_prefix,
+        wrapped_data_key: bytes[HEADER_FIXED_BYTES..].try_into()?,
+    })
+}
+
 /// The plaintext of a zero chunk.
 static ZERO_CHUNK: [u8; CHUNK_BYTES] = [0; CHUNK_BYTES];
 

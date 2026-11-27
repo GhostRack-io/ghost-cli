@@ -7856,6 +7856,131 @@ pub struct DeclareHostEmergencyRequest {
     pub reason: String,
 }
 
+/// The local backups of a host declared lost that its provider can upload
+/// as hosted backups (`ProviderHostBackupRecovery`, item 322), oldest
+/// first. The provider sees each backup's ID and figures, never its renter.
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct HostBackupRecoveryView {
+    /// The end of the 14 days after the host's emergency in which its local
+    /// backups can be recovered; also once it has passed. None for a host
+    /// that was not declared lost, which lists no backups.
+    #[serde(default)]
+    pub recover_until: Option<DateTime<Utc>>,
+    #[serde(default)]
+    pub backups: Vec<RecoverableBackupView>,
+}
+
+/// One local backup of a lost host, as the provider finds and uploads it.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct RecoverableBackupView {
+    pub backup_id: Uuid,
+    /// The artifact's name in its pool: `ghb-<simple id>.ghb` in a file
+    /// pool's directory, `ghb-<simple id>` among a volume group's logical
+    /// volumes (`/dev/<VG>`).
+    pub artifact_name: String,
+    /// The backup pool that held it, by the host's name for it.
+    pub pool_external_id: String,
+    pub pool_backend: StorageBackend,
+    /// The artifact's recorded size: a file is exactly this long, and only
+    /// this much of a logical volume is the artifact.
+    pub size_bytes: u64,
+    /// The artifact's recorded SHA-256, lowercase hex.
+    pub sha256: String,
+    pub state: BackupRecoveryState,
+    /// While uploading: the parts committed so far, and of how many.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub parts_committed: Option<u32>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub part_count: Option<u32>,
+}
+
+/// Where the recovery of one lost host's local backup stands.
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BackupRecoveryState {
+    /// Not uploaded yet, and the window is open.
+    Waiting,
+    /// Its upload has begun.
+    Uploading,
+    /// Uploaded: it is a hosted backup now.
+    Recovered,
+    /// Deleted: by its renter, or at the end of the window.
+    Deleted,
+    /// Its artifact was gone already.
+    Lost,
+    /// A variant of a newer release, which this one does not know.
+    #[serde(other)]
+    Unknown,
+}
+
+/// One step of a lost host's backup upload (`RecoverHostBackup`), which
+/// the provider's `ghost provider host recover-backups` signs.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(tag = "action", rename_all = "snake_case", deny_unknown_fields)]
+pub enum RecoverHostBackupRequest {
+    /// Start, or resume, the backup's upload. `header` is the artifact's
+    /// first [`BACKUP_HEADER_BYTES`] bytes, unpadded base64url: the
+    /// backend checks it against the backup and keeps its wrapped data key.
+    Begin { header: String },
+    /// A presigned PUT for one part of its exact size: the upload's part
+    /// size, the last part the rest. `content_md5` is the part's MD5,
+    /// unpadded base64url.
+    AuthorizePart {
+        part_number: u32,
+        size_bytes: u64,
+        content_md5: String,
+    },
+    /// Record a part S3 has, with the `ETag` it answered.
+    CommitPart { part_number: u32, etag: String },
+    /// Finish: `sha256` is the whole artifact's, lowercase hex, which must
+    /// be the one recorded when the backup was made.
+    Complete { sha256: String },
+    /// Discard the upload; the backup waits again.
+    Abort,
+}
+
+/// The size of a backup artifact's header: its magic, backup ID, disk
+/// size, chunk size, recipient fingerprint, nonce prefix and wrapped data
+/// key.
+pub const BACKUP_HEADER_BYTES: usize = 170;
+
+/// What one step of a backup's recovery answered.
+#[derive(Clone, Debug, Deserialize, Serialize)]
+#[serde(tag = "result", rename_all = "snake_case")]
+pub enum RecoverHostBackupView {
+    /// The upload's layout and the parts committed already.
+    Begun {
+        part_bytes: u64,
+        part_count: u32,
+        committed: Vec<u32>,
+    },
+    /// Where to PUT the part, with these headers, before `expires_at`.
+    PartAuthorized {
+        part_number: u32,
+        url: String,
+        headers: Vec<PresignedHeaderView>,
+        expires_at: DateTime<Utc>,
+    },
+    PartCommitted {
+        part_number: u32,
+    },
+    /// The backup is the renter's hosted backup now, until `expires_at`.
+    Completed {
+        expires_at: DateTime<Utc>,
+    },
+    Aborted,
+    /// A variant of a newer release, which this one does not know.
+    #[serde(other)]
+    Unknown,
+}
+
+/// A header a presigned request must carry as signed.
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub struct PresignedHeaderView {
+    pub name: String,
+    pub value: String,
+}
+
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub struct ScheduleInstanceRetirementRequest {
@@ -8952,6 +9077,16 @@ pub struct BackupView {
     /// absent from lists, for a deleted backup, and from older backends.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub download: Option<BackupDownloadView>,
+    /// A local backup of a host declared lost: until when its provider can
+    /// recover it as a hosted backup (item 322). It cannot be restored
+    /// meanwhile. Absent for every other backup, and from older backends.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub recover_until: Option<DateTime<Utc>>,
+    /// A hosted backup recovered from a lost host: when it is deleted
+    /// unless the renter keeps it (`KeepBackup`). Absent once kept, for
+    /// every other backup, and from older backends.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub expires_at: Option<DateTime<Utc>>,
 }
 
 /// The rule of an instance's schedule a backup was made by.
