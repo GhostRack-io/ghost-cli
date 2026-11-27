@@ -4,7 +4,7 @@ use std::{
     io::{self, Read, Write as _},
     path::{Path, PathBuf},
     process::Stdio,
-    time::Duration,
+    time::{Duration, Instant},
 };
 
 use anyhow::{Context as _, Result, ensure};
@@ -29,6 +29,16 @@ const MAX_SOURCE: u64 = 256 * 1024 * 1024;
 const MAX_PRIVATE: u64 = 8 * 1024 * 1024 * 1024;
 const MAX_MANIFEST: usize = 32 * 1024 * 1024;
 const MAX_NARINFO: usize = 64 * 1024;
+// Attempts after an unknown outcome or a retryable rejection.
+const ATTEMPTS: u32 = 3;
+// The location receives for up to two hours after the grant was checked,
+// then publishes. The grant's lifetime does not bound a started upload.
+const PUT_TIMEOUT: Duration = Duration::from_mins(150);
+// How long an upload waits while the account's other uploads hold the
+// location's slots for it.
+const BUSY_WAIT: Duration = Duration::from_mins(10);
+const BUSY_RETRY: Duration = Duration::from_secs(30);
+const BUSY_RETRY_MAX: Duration = Duration::from_mins(1);
 
 pub(super) struct Archive {
     pub manifest_sha256: String,
@@ -52,29 +62,73 @@ struct PublicationReceipt {
     root_path: String,
 }
 
+enum Sent {
+    Published,
+    Rejected(StatusCode),
+    // The account's other uploads are in progress: retry after this long.
+    Busy(Duration),
+    Unknown,
+}
+
+struct Retries {
+    failures: u32,
+    busy_until: Instant,
+}
+
+impl Retries {
+    fn new(now: Instant) -> Self {
+        Self {
+            failures: 0,
+            busy_until: now + BUSY_WAIT,
+        }
+    }
+
+    // The wait before the next attempt, or `None` once attempts run out.
+    // Waiting for the account's other uploads uses no attempt while it lasts.
+    fn after(&mut self, busy: Option<Duration>, now: Instant) -> Option<Duration> {
+        if let Some(wait) = busy
+            && now + wait <= self.busy_until
+        {
+            return Some(wait);
+        }
+        self.failures += 1;
+        (self.failures < ATTEMPTS).then(|| Duration::from_secs(1 << (self.failures - 1)))
+    }
+}
+
+fn retry_after(headers: &header::HeaderMap) -> Duration {
+    headers
+        .get(header::RETRY_AFTER)
+        .and_then(|value| value.to_str().ok())
+        .and_then(|value| value.trim().parse::<u64>().ok())
+        .map_or(BUSY_RETRY, |seconds| {
+            Duration::from_secs(seconds).clamp(Duration::from_secs(1), BUSY_RETRY_MAX)
+        })
+}
+
 impl Archive {
     pub async fn upload(&self, api: &ApiClient, client: &Client, generation: Uuid) -> Result<()> {
         let target = format!("/cache/uploads/{generation}/credential");
-        for attempt in 0..3 {
+        let mut retries = Retries::new(Instant::now());
+        loop {
+            let mut busy = None;
             let result = api.app("nix", "GET", &target, None, None).await;
             match result {
                 Ok(value) => {
                     let grant: Grant =
                         serde_json::from_value(value).context("invalid Nix upload grant")?;
-                    if let Some(status) = self.send(client, generation, &grant).await? {
-                        if status == StatusCode::OK {
-                            return Ok(());
-                        }
-                        ensure!(
+                    match self.send(client, generation, &grant).await? {
+                        Sent::Published => return Ok(()),
+                        Sent::Busy(wait) => busy = Some(wait),
+                        Sent::Rejected(status) => ensure!(
                             status.is_server_error()
                                 || matches!(
                                     status,
-                                    StatusCode::REQUEST_TIMEOUT
-                                        | StatusCode::UNAUTHORIZED
-                                        | StatusCode::TOO_MANY_REQUESTS
+                                    StatusCode::REQUEST_TIMEOUT | StatusCode::UNAUTHORIZED
                                 ),
                             "Nix cache rejected generation {generation} ({status})"
-                        );
+                        ),
+                        Sent::Unknown => {}
                     }
                 }
                 Err(error)
@@ -83,17 +137,19 @@ impl Archive {
                             .is_some_and(|error| error.status == 404) => {}
                 Err(error) => return Err(error),
             }
-            tokio::time::sleep(Duration::from_secs(1 << attempt)).await;
+            let Some(wait) = retries.after(busy, Instant::now()) else {
+                ensure!(
+                    busy.is_none(),
+                    "Nix cache stayed busy with the account's other uploads; \
+                     generation {generation} was not uploaded"
+                );
+                anyhow::bail!("upload outcome for generation {generation} is unknown")
+            };
+            tokio::time::sleep(wait).await;
         }
-        anyhow::bail!("upload outcome for generation {generation} is unknown")
     }
 
-    async fn send(
-        &self,
-        client: &Client,
-        generation: Uuid,
-        grant: &Grant,
-    ) -> Result<Option<StatusCode>> {
+    async fn send(&self, client: &Client, generation: Uuid, grant: &Grant) -> Result<Sent> {
         let url = https_url(&grant.url)?;
         ensure!(
             url.path() == format!("/v1/nix/uploads/{generation}"),
@@ -101,26 +157,27 @@ impl Archive {
         );
         let file = tokio::fs::File::open(&self.file).await?;
         let length = file.metadata().await?.len();
-        let seconds = grant
-            .expires_at
-            .saturating_sub(chrono::Utc::now().timestamp().unsigned_abs());
-        if seconds == 0 {
-            return Ok(None);
+        // The grant must be valid when the upload starts, not until it ends.
+        if grant.expires_at <= chrono::Utc::now().timestamp().unsigned_abs() {
+            return Ok(Sent::Unknown);
         }
         let response = client
             .put(url)
             .bearer_auth(grant.token.as_str())
             .header(header::CONTENT_LENGTH, length)
             .body(reqwest::Body::wrap_stream(ReaderStream::new(file)))
-            .timeout(Duration::from_secs(seconds.min(900)))
+            .timeout(PUT_TIMEOUT)
             .send()
             .await;
         let Ok(mut response) = response else {
-            return Ok(None);
+            return Ok(Sent::Unknown);
         };
         let status = response.status();
+        if status == StatusCode::TOO_MANY_REQUESTS {
+            return Ok(Sent::Busy(retry_after(response.headers())));
+        }
         if status != StatusCode::OK {
-            return Ok(Some(status));
+            return Ok(Sent::Rejected(status));
         }
         let mut body = Vec::new();
         loop {
@@ -129,15 +186,18 @@ impl Archive {
                     body.extend_from_slice(&chunk);
                 }
                 Ok(None) => break,
-                _ => return Ok(None),
+                _ => return Ok(Sent::Unknown),
             }
         }
         let Some(receipt) = serde_json::from_slice::<PublicationReceipt>(&body).ok() else {
-            return Ok(None);
+            return Ok(Sent::Unknown);
         };
         Ok(
-            (receipt.generation_id == generation && receipt.root_path == self.root)
-                .then_some(status),
+            if receipt.generation_id == generation && receipt.root_path == self.root {
+                Sent::Published
+            } else {
+                Sent::Unknown
+            },
         )
     }
 }
@@ -496,6 +556,49 @@ fn pack(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_busy_location_is_waited_for_without_using_attempts() {
+        let start = Instant::now();
+        let mut retries = Retries::new(start);
+        let busy = Some(Duration::from_secs(30));
+        // Ten minutes of 30-second waits for the account's other uploads.
+        for wait in 0..20 {
+            let now = start + Duration::from_secs(30 * wait);
+            assert_eq!(retries.after(busy, now), busy, "wait {wait}");
+        }
+        // Past the wait the busy answers count as failed attempts.
+        let late = start + BUSY_WAIT;
+        assert_eq!(retries.after(busy, late), Some(Duration::from_secs(1)));
+        assert_eq!(retries.after(None, late), Some(Duration::from_secs(2)));
+        assert_eq!(retries.after(None, late), None);
+    }
+
+    #[test]
+    fn retry_after_is_bounded() {
+        let headers = |value: Option<&'static str>| {
+            let mut headers = header::HeaderMap::new();
+            if let Some(value) = value {
+                headers.insert(header::RETRY_AFTER, header::HeaderValue::from_static(value));
+            }
+            headers
+        };
+        for (value, seconds) in [
+            (Some("30"), 30),
+            (Some("0"), 1),
+            (Some("3600"), 60),
+            (Some("soon"), 30),
+            (None, 30),
+        ] {
+            assert_eq!(
+                retry_after(&headers(value)),
+                Duration::from_secs(seconds),
+                "{value:?}"
+            );
+        }
+        // The location may receive for two hours after the grant expires.
+        assert!(PUT_TIMEOUT > Duration::from_hours(2));
+    }
 
     #[test]
     fn nix32_matches_native_path_info_and_narinfo() {
