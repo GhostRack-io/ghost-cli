@@ -17,8 +17,9 @@ use uuid::Uuid;
 use zeroize::Zeroizing;
 
 use crate::{
-    ApiClient, MutationKey, api::is_transient, fresh_idempotency_key, parse_idempotency_key,
-    wait_for_job,
+    ApiClient, JobUnsuccessful, MutationKey,
+    api::{is_transient, rejection},
+    fresh_idempotency_key, parse_idempotency_key, wait_for_job,
 };
 
 #[derive(Subcommand)]
@@ -81,6 +82,7 @@ pub(crate) struct QueueArgs {
 #[derive(Deserialize)]
 struct Active {
     generation_id: Option<Uuid>,
+    last_safe_generation_id: Option<Uuid>,
     root_path: Option<String>,
     unsettled_job_id: Option<Uuid>,
     reconciliation_gap: Option<i64>,
@@ -119,7 +121,7 @@ pub(crate) async fn execute(api: &ApiClient, command: &NixosCommand) -> Result<V
             queue,
         } => {
             let prior = active(api, *instance).await?;
-            let body = json!({"generation_id": generation, "expected_active_generation_id": prior.generation_id});
+            let body = json!({"generation_id": generation, "expected_active_generation_id": prior.last_safe_generation_id.or(prior.generation_id)});
             queue_job(api, *instance, "rollback", &body, queue, &queue_key(queue)).await
         }
         NixosCommand::Status { instance, job } => status(api, *instance, *job).await,
@@ -178,7 +180,7 @@ async fn deploy(
     };
     let body = json!({
         "generation_id": generation,
-        "expected_active_generation_id": prior.generation_id,
+        "expected_active_generation_id": prior.last_safe_generation_id.or(prior.generation_id),
         "snapshot_id": snapshot_id,
         "flake_revision": candidate.revision,
         "health": health,
@@ -268,11 +270,15 @@ async fn queue_job(
         match tokio::time::timeout_at(deadline, status(api, instance, job)).await {
             Ok(Ok(result)) => {
                 if result["settled"].as_bool() == Some(true) {
-                    return Ok(result);
+                    return settled_job(result, job);
                 }
                 observed = result;
             }
-            _ => break,
+            Ok(Err(error))
+                if is_transient(&error)
+                    || rejection(&error).is_some_and(|answer| answer.status == 404) => {}
+            Ok(Err(error)) => return Err(error),
+            Err(_) => break,
         }
         tokio::time::sleep_until(
             (tokio::time::Instant::now() + Duration::from_secs(2)).min(deadline),
@@ -282,6 +288,19 @@ async fn queue_job(
     Ok(
         json!({"job_id":job, "phase":"unknown", "settled":false, "last_observed":observed, "status_target":path(instance, &format!("jobs/{job}"))}),
     )
+}
+
+fn settled_job(outcome: Value, job: Uuid) -> Result<Value> {
+    let phase = outcome["phase"].as_str().unwrap_or("unknown");
+    if phase == "committed" {
+        return Ok(outcome);
+    }
+    let message = format!("deployment {job} ended {phase}");
+    Err(JobUnsuccessful {
+        snapshot: outcome,
+        message,
+    }
+    .into())
 }
 
 async fn status(api: &ApiClient, instance: Uuid, job: Uuid) -> Result<Value> {
@@ -330,4 +349,57 @@ fn password<'de, D: serde::Deserializer<'de>>(
     deserializer: D,
 ) -> Result<Zeroizing<String>, D::Error> {
     String::deserialize(deserializer).map(Zeroizing::new)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn a_nixos_deployment_wait_retries_replica_lag_and_prints_a_settled_failure() {
+        let instance = Uuid::now_v7();
+        let job = Uuid::now_v7();
+        let generation = Uuid::now_v7();
+        let receipt =
+            json!({"job_id":job,"generation_id":generation,"phase":"queued","settled":false});
+        let failed =
+            json!({"job_id":job,"generation_id":generation,"phase":"rolled_back","settled":true});
+        let (url, requests) = crate::tests::canned_server(vec![
+            (202, receipt.to_string()),
+            (404, String::new()),
+            (503, String::new()),
+            (200, failed.to_string()),
+        ])
+        .await;
+        let api = ApiClient::new(
+            &url,
+            Some(crate::keys::authentication_identity(&[3; 32]).unwrap()),
+        )
+        .unwrap();
+        let args = QueueArgs {
+            idempotency_key: None,
+            wait_seconds: 10,
+        };
+        let error = queue_job(
+            &api,
+            instance,
+            "deploy",
+            &json!({"generation_id":generation}),
+            &args,
+            "nixos-fixture-key",
+        )
+        .await
+        .unwrap_err();
+        assert_eq!(
+            error.downcast_ref::<JobUnsuccessful>().unwrap().snapshot(),
+            &failed
+        );
+        assert!(error.to_string().contains("rolled_back"));
+        let requests = requests.lock().unwrap();
+        assert_eq!(requests.len(), 4);
+        assert!(requests[0].0.starts_with("POST "));
+        let exact =
+            format!("GET /v1/apps/nix/deployments/instances/{instance}/jobs/{job} HTTP/1.1");
+        assert!(requests[1..].iter().all(|(request, _)| request == &exact));
+    }
 }

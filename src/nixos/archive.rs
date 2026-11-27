@@ -504,3 +504,78 @@ mod tests {
         assert_eq!(nix32(&STANDARD.decode(sri).unwrap()), expected);
     }
 }
+
+#[cfg(test)]
+mod native_tests {
+    use super::*;
+    use crate::nixos::{BuildArgs, build};
+
+    #[tokio::test]
+    #[ignore = "requires the disposable native Git flake, Nix, GNU tar and zstd"]
+    async fn a_locked_git_build_and_its_archive_use_the_same_source() -> Result<()> {
+        let flake = PathBuf::from(
+            std::env::var_os("GHOSTRACK_NIX_FIXTURE")
+                .context("set GHOSTRACK_NIX_FIXTURE to the disposable Git flake")?,
+        );
+        let revision = build::run(
+            Command::new("git")
+                .args(["rev-parse", "HEAD"])
+                .current_dir(&flake),
+            "read fixture commit",
+        )
+        .await?;
+        let revision = std::str::from_utf8(&revision)?.trim();
+        let input = BuildArgs {
+            instance: Uuid::nil(),
+            flake,
+            configuration: "proof".into(),
+        };
+        let candidate = build::local(&input).await?;
+        assert_eq!(candidate.revision.as_deref(), Some(revision));
+        let root = Path::new(&candidate.root);
+        assert_eq!(fs::read_to_string(root.join("revision"))?, revision);
+        assert_eq!(
+            fs::read_to_string(root.join("source"))?,
+            candidate.source.to_str().unwrap()
+        );
+        assert_eq!(fs::read_to_string(root.join("rev-count"))?, "1");
+
+        let scratch = tempfile::tempdir()?;
+        let archive = scratch.path().join("source.tar.zst");
+        export_source(&archive, &candidate.source).await?;
+        let archived = build::run(
+            Command::new("tar")
+                .arg("--zstd")
+                .arg("-xOf")
+                .arg(&archive)
+                .arg("./flake.nix"),
+            "read archived fixture source",
+        )
+        .await?;
+        assert_eq!(archived, fs::read(input.flake.join("flake.nix"))?);
+        assert_eq!(archived, fs::read(candidate.source.join("flake.nix"))?);
+
+        let dirty = scratch.path().join("dirty");
+        build::run(
+            Command::new("git")
+                .args(["clone", "--quiet", "--no-local"])
+                .arg(&input.flake)
+                .arg(&dirty),
+            "clone disposable dirty fixture",
+        )
+        .await?;
+        fs::write(dirty.join("tracked.txt"), "edited")?;
+        let error = build::local(&BuildArgs {
+            flake: dirty,
+            ..input
+        })
+        .await
+        .err()
+        .context("dirty Git source was accepted")?;
+        assert!(
+            error.to_string().contains("commit its changes"),
+            "{error:#}"
+        );
+        Ok(())
+    }
+}

@@ -23,6 +23,18 @@ pub(super) const PUBLIC_KEY: &str =
 struct Flake {
     path: PathBuf,
     revision: Option<String>,
+    url: String,
+    locked: LockedInput,
+}
+
+#[derive(Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "camelCase")]
+struct LockedInput {
+    #[serde(rename = "type")]
+    kind: String,
+    rev: Option<String>,
+    nar_hash: Option<String>,
+    rev_count: Option<u64>,
 }
 
 #[derive(Deserialize)]
@@ -103,16 +115,7 @@ pub(super) async fn local(input: &BuildArgs) -> Result<Build> {
         "--no-update-lock-file",
         "--no-use-registries",
     ];
-    let metadata = run(
-        nix()
-            .args(["flake", "metadata", "--json"])
-            .args(lock)
-            .current_dir(&directory)
-            .arg("."),
-        "nix flake metadata",
-    )
-    .await?;
-    let metadata: Flake = serde_json::from_slice(&metadata).context("read Nix flake metadata")?;
+    let metadata = resolve(&directory, ".", &lock).await?;
     let source = metadata
         .path
         .to_str()
@@ -131,8 +134,30 @@ pub(super) async fn local(input: &BuildArgs) -> Result<Build> {
         .arg(roots.path().join("source"))
         .args(["--indirect", source]);
     run(&mut add_source_root, "protect the locked flake source").await?;
+    let reference = if metadata.locked.kind == "git" {
+        let url = reqwest::Url::parse(&metadata.url).context("read the resolved Git flake URL")?;
+        let revision = metadata.locked.rev.as_deref();
+        ensure!(
+            revision.is_some()
+                && revision == metadata.revision.as_deref()
+                && url.scheme().starts_with("git+")
+                && url
+                    .query_pairs()
+                    .any(|(key, value)| key == "rev" && Some(value.as_ref()) == revision)
+                && metadata.locked.nar_hash.is_some(),
+            "the Git flake is not pinned to a reproducible commit; commit its changes and try again"
+        );
+        let locked = resolve(&directory, &metadata.url, &lock).await?;
+        ensure!(
+            locked.path == metadata.path && locked.locked == metadata.locked,
+            "the pinned Git revision resolves to different source; commit the flake and try again"
+        );
+        metadata.url.clone()
+    } else {
+        format!("path:{source}")
+    };
     let installable =
-        format!("path:{source}#nixosConfigurations.\"{name}\".config.system.build.toplevel");
+        format!("{reference}#nixosConfigurations.\"{name}\".config.system.build.toplevel");
     let root = run(
         nix()
             .args([
@@ -168,6 +193,19 @@ pub(super) async fn local(input: &BuildArgs) -> Result<Build> {
         closure,
         _roots: roots,
     })
+}
+
+async fn resolve(directory: &Path, reference: &str, lock: &[&str]) -> Result<Flake> {
+    let output = run(
+        nix()
+            .args(["flake", "metadata", "--json"])
+            .args(lock)
+            .current_dir(directory)
+            .arg(reference),
+        "nix flake metadata",
+    )
+    .await?;
+    serde_json::from_slice(&output).context("read Nix flake metadata")
 }
 
 async fn closure(root: &str) -> Result<BTreeMap<String, PathInfo>> {
