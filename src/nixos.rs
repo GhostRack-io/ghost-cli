@@ -45,6 +45,10 @@ pub(crate) enum NixosCommand {
         instance: Uuid,
         /// ID of the retained generation to apply.
         generation: Uuid,
+        /// JSON file containing health check settings. Defaults to the
+        /// generation's settings when it was last deployed.
+        #[arg(long)]
+        health: Option<PathBuf>,
         #[command(flatten)]
         queue: QueueArgs,
     },
@@ -118,10 +122,14 @@ pub(crate) async fn execute(api: &ApiClient, command: &NixosCommand) -> Result<V
         NixosCommand::Rollback {
             instance,
             generation,
+            health,
             queue,
         } => {
             let prior = active(api, *instance).await?;
-            let body = json!({"generation_id": generation, "expected_active_generation_id": prior.last_safe_generation_id.or(prior.generation_id)});
+            let mut body = json!({"generation_id": generation, "expected_active_generation_id": prior.last_safe_generation_id.or(prior.generation_id)});
+            if let Some(path) = health {
+                body["health"] = read_health(path).await?;
+            }
             queue_job(api, *instance, "rollback", &body, queue, &queue_key(queue)).await
         }
         NixosCommand::Status { instance, job } => status(api, *instance, *job).await,
@@ -140,13 +148,7 @@ async fn deploy(
         anyhow::bail!("deployment {job} is still unsettled");
     }
     let health = match health {
-        Some(path) => {
-            let bytes = tokio::fs::read(path)
-                .await
-                .context("read health settings")?;
-            ensure!(bytes.len() <= 8192, "health settings exceed 8 KiB");
-            serde_json::from_slice::<Value>(&bytes).context("read JSON health settings")?
-        }
+        Some(path) => read_health(path).await?,
         None => json!({}),
     };
     let candidate = build::local(args).await?;
@@ -186,6 +188,14 @@ async fn deploy(
         "health": health,
     });
     queue_job(api, args.instance, "deploy", &body, queue, &key).await
+}
+
+async fn read_health(path: &std::path::Path) -> Result<Value> {
+    let bytes = tokio::fs::read(path)
+        .await
+        .context("read health settings")?;
+    ensure!(bytes.len() <= 8192, "health settings exceed 8 KiB");
+    serde_json::from_slice::<Value>(&bytes).context("read JSON health settings")
 }
 
 async fn create_snapshot(api: &ApiClient, instance: Uuid, key: &str) -> Result<Uuid> {
@@ -295,7 +305,16 @@ fn settled_job(outcome: Value, job: Uuid) -> Result<Value> {
     if phase == "committed" {
         return Ok(outcome);
     }
-    let message = format!("deployment {job} ended {phase}");
+    let detail = outcome["failure"]["detail"]
+        .as_str()
+        .filter(|detail| !detail.is_empty());
+    let message = match (outcome["failure"]["stage"].as_str(), detail) {
+        (Some(stage), Some(detail)) => {
+            format!("deployment {job} ended {phase} ({stage}: {detail})")
+        }
+        (Some(stage), None) => format!("deployment {job} ended {phase} ({stage})"),
+        (None, _) => format!("deployment {job} ended {phase}"),
+    };
     Err(JobUnsuccessful {
         snapshot: outcome,
         message,
@@ -362,8 +381,8 @@ mod tests {
         let generation = Uuid::now_v7();
         let receipt =
             json!({"job_id":job,"generation_id":generation,"phase":"queued","settled":false});
-        let failed =
-            json!({"job_id":job,"generation_id":generation,"phase":"rolled_back","settled":true});
+        let failed = json!({"job_id":job,"generation_id":generation,"phase":"rolled_back","settled":true,
+                            "failure":{"stage":"systemd","detail":"nginx.service"}});
         let (url, requests) = crate::tests::canned_server(vec![
             (202, receipt.to_string()),
             (404, String::new()),
@@ -394,7 +413,12 @@ mod tests {
             error.downcast_ref::<JobUnsuccessful>().unwrap().snapshot(),
             &failed
         );
-        assert!(error.to_string().contains("rolled_back"));
+        assert!(
+            error
+                .to_string()
+                .contains("ended rolled_back (systemd: nginx.service)"),
+            "{error}"
+        );
         let requests = requests.lock().unwrap();
         assert_eq!(requests.len(), 4);
         assert!(requests[0].0.starts_with("POST "));
