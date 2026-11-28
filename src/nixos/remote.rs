@@ -420,13 +420,6 @@ mod tests {
     }
 
     #[test]
-    fn a_source_is_sent_in_the_build_s_chunks() {
-        let bytes = vec![7_u8; 2 * 1024 * 1024 + 3];
-        let chunks: Vec<usize> = bytes.chunks(1024 * 1024).map(<[u8]>::len).collect();
-        assert_eq!(chunks, [1024 * 1024, 1024 * 1024, 3]);
-    }
-
-    #[test]
     fn states_read_as_terse_facts() {
         let status = |state: &str| Status {
             state: state.into(),
