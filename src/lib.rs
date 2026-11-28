@@ -10790,7 +10790,7 @@ async fn execute_instance(
                     args.host,
                     args.snapshot_space,
                 )
-                .await;
+                .await?;
             }
             if !args.yes {
                 // The copy it leaves takes its snapshots with it (item 298).
@@ -14389,14 +14389,15 @@ fn move_snapshot_space(
 }
 
 /// Print what a move changes before it is asked for. A read that fails
-/// only costs the quote.
+/// only costs the quote, except a named snapshot space the disk has no
+/// room for, which the move would be refused for too.
 async fn quote_move(
     api: &ApiClient,
     instance_id: Uuid,
     offering_id: &str,
     host: Option<CloneHostArg>,
     snapshot_space: Option<u8>,
-) {
+) -> anyhow::Result<()> {
     let colors = Terminal::stderr().colors;
     let read = async {
         let instance: InstanceView = api.read(&GetInstance { instance_id }, "").await?;
@@ -14439,8 +14440,12 @@ async fn quote_move(
             }
             notice("");
         }
+        Err(error) if api::rejection_code(&error) == Some("snapshot_reserve_too_large") => {
+            return Err(error);
+        }
         Err(error) => notice(&prices_unread_notice(&error)),
     }
+    Ok(())
 }
 
 /// Print what an upgrade changes before it is asked for. A read that fails
@@ -31647,6 +31652,39 @@ mod tests {
             .is_err(),
             "above 50"
         );
+        // A snapshot space the disk has no room for: the preview's refusal
+        // ends it, with no go-ahead and no write.
+        let too_large = json!({
+            "code": "snapshot_reserve_too_large",
+            "message": "a snapshot reserve of 30% leaves 21 MiB of the disk for the system, which needs 27 MiB; 10% fits at most"
+        })
+        .to_string();
+        let (url, received) = canned_server(vec![
+            (200, instance.clone()),
+            (200, offering.clone()),
+            (422, too_large),
+        ])
+        .await;
+        let error = execute(&account_command(
+            &url,
+            &seed,
+            &[
+                "instance",
+                "move",
+                &id,
+                "--offering",
+                "of2_there",
+                "--snapshot-space",
+                "30",
+            ],
+        ))
+        .await
+        .unwrap_err();
+        assert_eq!(
+            error_output(&error)["error"]["code"],
+            "snapshot_reserve_too_large"
+        );
+        assert_eq!(request_lines(&received).len(), 3);
 
         // Move with a failed offering read: the write is still sent.
         let (url, received) = canned_server(vec![
