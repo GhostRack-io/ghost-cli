@@ -162,6 +162,10 @@ pub(crate) async fn execute(api: &ApiClient, command: &NixosCommand) -> Result<V
             health,
             queue,
         } => {
+            anyhow::ensure!(
+                *remote || remote_args.is_empty(),
+                "--tier and --max-time need --remote"
+            );
             let remote = remote.then_some(remote_args);
             deploy(api, build, remote, *snapshot, health.as_deref(), queue).await
         }

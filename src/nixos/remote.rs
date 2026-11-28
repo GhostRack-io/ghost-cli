@@ -35,6 +35,13 @@ pub(crate) struct RemoteArgs {
     max_time: Option<u32>,
 }
 
+impl RemoteArgs {
+    /// Neither `--tier` nor `--max-time` was given.
+    pub(crate) fn is_empty(&self) -> bool {
+        self.tier.is_none() && self.max_time.is_none()
+    }
+}
+
 #[derive(Deserialize)]
 struct Created {
     build_id: Uuid,
