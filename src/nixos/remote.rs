@@ -38,7 +38,21 @@ pub(crate) struct RemoteArgs {
 #[derive(Deserialize)]
 struct Created {
     build_id: Uuid,
+    /// `receiving` for a new build; a create repeated under its key answers
+    /// where the build is now.
+    #[serde(default)]
+    state: Option<String>,
     chunk_bytes: usize,
+}
+
+impl Created {
+    /// Whether the build still takes its source. One that went on has it,
+    /// and one that ended has deleted it: its chunks are refused.
+    fn takes_source(&self) -> bool {
+        self.state
+            .as_deref()
+            .is_none_or(|state| state == "receiving")
+    }
 }
 
 /// A build as the Nix app answers it.
@@ -180,22 +194,32 @@ pub(super) async fn build(
     )
     .context("invalid build receipt")?;
     let id = created.build_id;
-    ensure!(created.chunk_bytes > 0, "invalid build chunk size");
-    for (index, chunk) in bytes.chunks(created.chunk_bytes).enumerate() {
-        put_chunk(api, id, index, chunk, key).await?;
-    }
-    let queued = app_mutation(
-        api,
-        &format!("/builds/{id}/source/done"),
-        &json!({}),
-        &derived_key("build-done", key),
-    )
-    .await?;
+    let queued = submit(api, &created, &bytes, key).await?;
     if wait == Some(Duration::ZERO) {
         return Ok((Outcome::Running(queued), locked.revision));
     }
     let outcome = follow(api, id, wait).await?;
     Ok((outcome, locked.revision))
+}
+
+/// Send `bytes` as the created build's source, then queue it: what `done`
+/// answers. A build past `receiving` (its create repeated) is sent none;
+/// its `done` answers where it is.
+async fn submit(api: &ApiClient, created: &Created, bytes: &[u8], key: &str) -> Result<Value> {
+    let id = created.build_id;
+    if created.takes_source() {
+        ensure!(created.chunk_bytes > 0, "invalid build chunk size");
+        for (index, chunk) in bytes.chunks(created.chunk_bytes).enumerate() {
+            put_chunk(api, id, index, chunk, key).await?;
+        }
+    }
+    app_mutation(
+        api,
+        &format!("/builds/{id}/source/done"),
+        &json!({}),
+        &derived_key("build-done", key),
+    )
+    .await
 }
 
 async fn put_chunk(api: &ApiClient, id: Uuid, index: usize, chunk: &[u8], key: &str) -> Result<()> {
@@ -346,6 +370,53 @@ mod tests {
         // A cut inside a character moves to its end.
         assert_eq!(new_output("aé", 3, 1), ("é", false));
         assert_eq!(new_output("aé", 3, 2), ("", false));
+    }
+
+    #[tokio::test]
+    async fn a_repeated_create_of_a_build_past_receiving_sends_no_source() {
+        let id = Uuid::now_v7();
+        let done = json!({"build_id": id, "state": "done", "tier": "2k", "next_tier": "2k",
+                          "seconds": 84, "amount_microusd": 1_200, "log_tail": "", "log_bytes": 0});
+        let (url, requests) =
+            crate::tests::canned_server(vec![(200, done.to_string()), (200, done.to_string())])
+                .await;
+        let api = ApiClient::new(
+            &url,
+            Some(crate::keys::authentication_identity(&[3; 32]).unwrap()),
+        )
+        .unwrap();
+        let created: Created = serde_json::from_value(
+            json!({"build_id": id, "state": "done", "chunk_bytes": 1_048_576}),
+        )
+        .unwrap();
+        assert!(!created.takes_source());
+        submit(&api, &created, &[7; 10], "remote-fixture-key-01")
+            .await
+            .unwrap();
+        // No chunk: the build ended and deleted its source.
+        assert_eq!(
+            crate::tests::request_lines(&requests),
+            [format!("POST /api/mut/v1/apps/nix/builds/{id}/source/done")]
+        );
+        let Outcome::Done(status) = follow(&api, id, None).await.unwrap() else {
+            panic!("the build ended");
+        };
+        assert_eq!(status.seconds, Some(84));
+        assert_eq!(
+            crate::tests::request_lines(&requests)[1],
+            format!("GET /v1/apps/nix/builds/{id}")
+        );
+        // A new build, and an answer without its state, take the source.
+        for answer in [
+            json!({"build_id": id, "state": "receiving", "chunk_bytes": 1}),
+            json!({"build_id": id, "chunk_bytes": 1}),
+        ] {
+            assert!(
+                serde_json::from_value::<Created>(answer)
+                    .unwrap()
+                    .takes_source()
+            );
+        }
     }
 
     #[test]
