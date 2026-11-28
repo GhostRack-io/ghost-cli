@@ -89,11 +89,18 @@ pub(super) fn store_basename(path: &str) -> Option<&str> {
     .then_some(name)
 }
 
-pub(super) async fn local(input: &BuildArgs) -> Result<Build> {
-    ensure!(
-        cfg!(all(target_os = "linux", target_arch = "x86_64")),
-        "local NixOS builds require x86-64 Linux"
-    );
+/// A flake resolved and pinned locally: its source snapshot in the store
+/// (kept alive by a root), its Git revision and the reference Nix builds.
+pub(super) struct Locked {
+    pub source: PathBuf,
+    pub revision: Option<String>,
+    reference: String,
+    roots: tempfile::TempDir,
+}
+
+/// Resolve and pin `input`'s flake without building it, for a remote build
+/// as for a local one.
+pub(super) async fn lock(input: &BuildArgs) -> Result<Locked> {
     let name = &input.configuration;
     ensure!(
         !name.is_empty()
@@ -156,6 +163,31 @@ pub(super) async fn local(input: &BuildArgs) -> Result<Build> {
     } else {
         format!("path:{source}")
     };
+    Ok(Locked {
+        source: metadata.path,
+        revision: metadata.revision,
+        reference,
+        roots,
+    })
+}
+
+pub(super) async fn local(input: &BuildArgs) -> Result<Build> {
+    ensure!(
+        cfg!(all(target_os = "linux", target_arch = "x86_64")),
+        "local NixOS builds require x86-64 Linux"
+    );
+    let Locked {
+        source,
+        revision,
+        reference,
+        roots,
+    } = lock(input).await?;
+    let name = &input.configuration;
+    let lock = [
+        "--no-write-lock-file",
+        "--no-update-lock-file",
+        "--no-use-registries",
+    ];
     let installable =
         format!("{reference}#nixosConfigurations.\"{name}\".config.system.build.toplevel");
     let root = run(
@@ -187,8 +219,8 @@ pub(super) async fn local(input: &BuildArgs) -> Result<Build> {
     );
     let closure = closure(&root).await?;
     Ok(Build {
-        source: metadata.path,
-        revision: metadata.revision,
+        source,
+        revision,
         root,
         closure,
         _roots: roots,

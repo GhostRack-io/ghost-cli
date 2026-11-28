@@ -45,11 +45,25 @@ pub(super) struct Archive {
     pub source_sha256: String,
     file: PathBuf,
     root: String,
-    _scratch: tempfile::TempDir,
+    _scratch: Option<tempfile::TempDir>,
+}
+
+/// The file names of an archive kept in a directory (`ghost nixos builder
+/// build --out`): the v1 frame and its figures.
+const ARCHIVE_FILE: &str = "generation.ghnupl";
+const FIGURES_FILE: &str = "generation.json";
+
+/// An archive's figures: what `ghost nixos builder build` prints and keeps
+/// beside the archive.
+#[derive(Clone, Debug, Deserialize, serde::Serialize, PartialEq, Eq)]
+pub(super) struct Figures {
+    pub root_path: String,
+    pub manifest_sha256: String,
+    pub source_sha256: String,
 }
 
 #[derive(Deserialize)]
-struct Grant {
+pub(super) struct Grant {
     url: String,
     #[serde(deserialize_with = "super::password")]
     token: Zeroizing<String>,
@@ -107,6 +121,78 @@ fn retry_after(headers: &header::HeaderMap) -> Duration {
 }
 
 impl Archive {
+    pub fn figures(&self) -> Figures {
+        Figures {
+            root_path: self.root.clone(),
+            manifest_sha256: self.manifest_sha256.clone(),
+            source_sha256: self.source_sha256.clone(),
+        }
+    }
+
+    /// Keep the archive in `directory` with its figures, for a later
+    /// [`Archive::open`] (the builder's send step).
+    pub fn persist(self, directory: &Path) -> Result<Figures> {
+        fs::create_dir_all(directory)?;
+        let file = directory.join(ARCHIVE_FILE);
+        if fs::rename(&self.file, &file).is_err() {
+            fs::copy(&self.file, &file).context("keep the generation archive")?;
+        }
+        let figures = self.figures();
+        fs::write(directory.join(FIGURES_FILE), serde_json::to_vec(&figures)?)?;
+        Ok(figures)
+    }
+
+    /// The archive [`Archive::persist`] kept in `directory`.
+    pub fn open(directory: &Path) -> Result<Self> {
+        let figures: Figures = serde_json::from_slice(
+            &fs::read(directory.join(FIGURES_FILE)).context("read the archive's figures")?,
+        )
+        .context("invalid archive figures")?;
+        let file = directory.join(ARCHIVE_FILE);
+        ensure!(file.is_file(), "the generation archive is missing");
+        Ok(Self {
+            manifest_sha256: figures.manifest_sha256,
+            source_sha256: figures.source_sha256,
+            file,
+            root: figures.root_path,
+            _scratch: None,
+        })
+    }
+
+    /// Send the archive with `grant`, the generation's upload grant (no
+    /// account key: a builder has the grant alone), with the same retries
+    /// as [`Archive::upload`] while the grant is valid.
+    pub async fn send_with(&self, client: &Client, grant: &Grant) -> Result<Uuid> {
+        let url = https_url(&grant.url)?;
+        let generation = url
+            .path()
+            .strip_prefix("/v1/nix/uploads/")
+            .and_then(|id| Uuid::try_parse(id).ok())
+            .context("Nix cache returned an unexpected upload path")?;
+        let mut retries = Retries::new(Instant::now());
+        loop {
+            let mut busy = None;
+            match self.send(client, generation, grant).await? {
+                Sent::Published => return Ok(generation),
+                Sent::Busy(wait) => busy = Some(wait),
+                Sent::Rejected(status) => ensure!(
+                    status.is_server_error() || status == StatusCode::REQUEST_TIMEOUT,
+                    "Nix cache rejected generation {generation} ({status})"
+                ),
+                Sent::Unknown => {}
+            }
+            let Some(wait) = retries.after(busy, Instant::now()) else {
+                ensure!(
+                    busy.is_none(),
+                    "Nix cache stayed busy with the account's other uploads; \
+                     generation {generation} was not uploaded"
+                );
+                anyhow::bail!("upload outcome for generation {generation} is unknown")
+            };
+            tokio::time::sleep(wait).await;
+        }
+    }
+
     pub async fn upload(&self, api: &ApiClient, client: &Client, generation: Uuid) -> Result<()> {
         let target = format!("/cache/uploads/{generation}/credential");
         let mut retries = Retries::new(Instant::now());
@@ -207,6 +293,26 @@ pub(super) async fn prepare(
     candidate: &Build,
     idempotency_key: &str,
 ) -> Result<Archive> {
+    prepare_from(client, candidate, idempotency_key, None).await
+}
+
+/// [`prepare`] with `source` as the generation's source archive, its bytes
+/// kept as they are (a remote build packs the source the account uploaded).
+pub(super) async fn prepare_with_source(
+    client: &Client,
+    candidate: &Build,
+    idempotency_key: &str,
+    source: &Path,
+) -> Result<Archive> {
+    prepare_from(client, candidate, idempotency_key, Some(source)).await
+}
+
+async fn prepare_from(
+    client: &Client,
+    candidate: &Build,
+    idempotency_key: &str,
+    given: Option<&Path>,
+) -> Result<Archive> {
     let scratch = tempfile::Builder::new().prefix("ghost-nixos-").tempdir()?;
     let cache = scratch.path().join("cache");
     tokio::fs::create_dir(&cache).await?;
@@ -240,7 +346,7 @@ pub(super) async fn prepare(
         export(&cache, &key, &private).await?;
     }
     let source = scratch.path().join("source.tar.zst");
-    export_source(&source, &candidate.source).await?;
+    stage_source(given, &source, &candidate.source).await?;
     let paths = private
         .into_iter()
         .map(|(path, _)| path.to_owned())
@@ -277,7 +383,23 @@ async fn export(cache: &Path, key: &Path, paths: &[(&String, &PathInfo)]) -> Res
     Ok(())
 }
 
-async fn export_source(destination: &Path, source: &Path) -> Result<()> {
+/// The generation's source archive at `destination`: `given` as it is, or
+/// exported from the locked `source` tree.
+async fn stage_source(given: Option<&Path>, destination: &Path, source: &Path) -> Result<()> {
+    let Some(given) = given else {
+        return export_source(destination, source).await;
+    };
+    let length = tokio::fs::copy(given, destination)
+        .await
+        .context("read the given source archive")?;
+    ensure!(
+        (1..=MAX_SOURCE).contains(&length),
+        "flake source archive exceeds 256 MiB"
+    );
+    Ok(())
+}
+
+pub(super) async fn export_source(destination: &Path, source: &Path) -> Result<()> {
     let mut tar = Command::new("tar");
     tar.args([
         "--sort=name",
@@ -549,7 +671,7 @@ fn pack(
         source_sha256: format!("{:x}", source_hash.finalize()),
         file,
         root,
-        _scratch: scratch,
+        _scratch: Some(scratch),
     })
 }
 
@@ -598,6 +720,38 @@ mod tests {
         }
         // The location may receive for two hours after the grant expires.
         assert!(PUT_TIMEOUT > Duration::from_hours(2));
+    }
+
+    #[tokio::test]
+    async fn a_given_source_keeps_its_bytes_and_its_digest() -> Result<()> {
+        let given_dir = tempfile::tempdir()?;
+        let given = given_dir.path().join("source.tar.zst");
+        let bytes: Vec<u8> = (0..70_000_u32).map(|index| (index % 253) as u8).collect();
+        fs::write(&given, &bytes)?;
+        let scratch = tempfile::tempdir()?;
+        let cache = scratch.path().join("cache");
+        fs::create_dir(&cache)?;
+        let staged = scratch.path().join("source.tar.zst");
+        stage_source(Some(&given), &staged, Path::new("/nonexistent")).await?;
+        let root = "/nix/store/zzzzzzzzzzzzzzzzzzzzzzzzzzzzzzzz-system".to_owned();
+        let archive = pack(scratch, &cache, &staged, Vec::new(), root.clone())?;
+        assert_eq!(
+            archive.source_sha256,
+            format!("{:x}", Sha256::digest(&bytes))
+        );
+        let packed = fs::read(&archive.file)?;
+        assert!(
+            packed.ends_with(&bytes),
+            "the source bytes are the archive's tail"
+        );
+        // Kept in a directory and opened again, the figures are the same.
+        let out = tempfile::tempdir()?;
+        let figures = archive.persist(out.path())?;
+        assert_eq!(figures.root_path, root);
+        let opened = Archive::open(out.path())?;
+        assert_eq!(opened.figures(), figures);
+        assert_eq!(fs::read(&opened.file)?, packed);
+        Ok(())
     }
 
     #[test]

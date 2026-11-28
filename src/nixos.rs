@@ -1,5 +1,7 @@
 mod archive;
 mod build;
+mod builder;
+mod remote;
 
 use std::{path::PathBuf, time::Duration};
 
@@ -30,6 +32,11 @@ pub(crate) enum NixosCommand {
     Deploy {
         #[command(flatten)]
         build: BuildArgs,
+        /// Build on a GhostRack builder instead of this machine.
+        #[arg(long)]
+        remote: bool,
+        #[command(flatten)]
+        remote_args: remote::RemoteArgs,
         /// Take and wait for an instance disk snapshot before queueing the deploy.
         #[arg(long)]
         snapshot: bool,
@@ -58,6 +65,40 @@ pub(crate) enum NixosCommand {
         instance: Uuid,
         /// Job ID returned when the deployment was queued.
         job: Uuid,
+    },
+    /// Build on a GhostRack builder and keep the generation in the
+    /// instance's cache.
+    Build {
+        #[command(flatten)]
+        build: BuildArgs,
+        #[command(flatten)]
+        remote: remote::RemoteArgs,
+        /// Signed request key. Generated when omitted.
+        #[arg(long, value_parser = parse_idempotency_key)]
+        idempotency_key: Option<String>,
+        /// Maximum time to follow the build. Use 0 to print its receipt.
+        #[arg(long, default_value_t = 10_800, value_parser = clap::value_parser!(u64).range(0..=50_400))]
+        wait_seconds: u64,
+    },
+    /// End a remote build. The seconds it used are charged.
+    Cancel {
+        /// ID of the build.
+        build: Uuid,
+    },
+    /// Show or set the providers remote builds may run on.
+    Providers {
+        /// Provider IDs, comma-separated.
+        #[arg(long, value_delimiter = ',', conflicts_with = "clear")]
+        set: Option<Vec<Uuid>>,
+        /// Allow any provider.
+        #[arg(long)]
+        clear: bool,
+    },
+    /// A remote build's steps on its builder.
+    #[command(hide = true, version)]
+    Builder {
+        #[command(subcommand)]
+        command: builder::BuilderCommand,
     },
 }
 
@@ -115,10 +156,15 @@ pub(crate) async fn execute(api: &ApiClient, command: &NixosCommand) -> Result<V
         }
         NixosCommand::Deploy {
             build,
+            remote,
+            remote_args,
             snapshot,
             health,
             queue,
-        } => deploy(api, build, *snapshot, health.as_deref(), queue).await,
+        } => {
+            let remote = remote.then_some(remote_args);
+            deploy(api, build, remote, *snapshot, health.as_deref(), queue).await
+        }
         NixosCommand::Rollback {
             instance,
             generation,
@@ -133,12 +179,33 @@ pub(crate) async fn execute(api: &ApiClient, command: &NixosCommand) -> Result<V
             queue_job(api, *instance, "rollback", &body, queue, &queue_key(queue)).await
         }
         NixosCommand::Status { instance, job } => status(api, *instance, *job).await,
+        NixosCommand::Build {
+            build,
+            remote,
+            idempotency_key,
+            wait_seconds,
+        } => {
+            let key = idempotency_key
+                .clone()
+                .unwrap_or_else(fresh_idempotency_key);
+            let wait = Some(Duration::from_secs(*wait_seconds));
+            match remote::build(api, build, remote, &key, wait).await?.0 {
+                remote::Outcome::Done(status) => Ok(status.receipt()),
+                remote::Outcome::Running(receipt) => Ok(receipt),
+            }
+        }
+        NixosCommand::Cancel { build } => remote::cancel(api, *build).await,
+        NixosCommand::Providers { set, clear } => {
+            remote::providers(api, set.as_deref(), *clear).await
+        }
+        NixosCommand::Builder { command } => builder::execute(command).await,
     }
 }
 
 async fn deploy(
     api: &ApiClient,
     args: &BuildArgs,
+    remote: Option<&remote::RemoteArgs>,
     snapshot: bool,
     health: Option<&std::path::Path>,
     queue: &QueueArgs,
@@ -151,30 +218,17 @@ async fn deploy(
         Some(path) => read_health(path).await?,
         None => json!({}),
     };
-    let candidate = build::local(args).await?;
     let key = queue_key(queue);
-    let digest = Sha256::digest(format!(
-        "ghostrack/nixos/generation/v1/{}/{key}",
-        args.instance
-    ));
-    let generation = uuid::Builder::from_random_bytes(digest[..16].try_into()?).into_uuid();
-    let client = client()?;
-    let archive = archive::prepare(&client, &candidate, &key).await?;
-    let body = json!({
-        "generation_id": generation,
-        "root_path": candidate.root,
-        "manifest_sha256": archive.manifest_sha256,
-        "source_sha256": archive.source_sha256,
-    });
-    let register_key = derived_key("upload", &key);
-    app_mutation(
-        api,
-        &format!("/cache/instances/{}/uploads", args.instance),
-        &body,
-        &register_key,
-    )
-    .await?;
-    archive.upload(api, &client, generation).await?;
+    let (generation, revision) = match remote {
+        // Built on a builder, its generation already in the cache.
+        Some(remote) => match remote::build(api, args, remote, &key, None).await? {
+            (remote::Outcome::Done(status), revision) => (status.generation_id, revision),
+            (remote::Outcome::Running(_), _) => {
+                anyhow::bail!("the remote build did not end")
+            }
+        },
+        None => upload_local(api, args, &key).await?,
+    };
     let snapshot_id = if snapshot {
         Some(create_snapshot(api, args.instance, &key).await?)
     } else {
@@ -184,10 +238,43 @@ async fn deploy(
         "generation_id": generation,
         "expected_active_generation_id": prior.last_safe_generation_id.or(prior.generation_id),
         "snapshot_id": snapshot_id,
-        "flake_revision": candidate.revision,
+        "flake_revision": revision,
         "health": health,
     });
     queue_job(api, args.instance, "deploy", &body, queue, &key).await
+}
+
+/// Build `args` here and upload its generation: its ID and the flake's
+/// revision.
+async fn upload_local(
+    api: &ApiClient,
+    args: &BuildArgs,
+    key: &str,
+) -> Result<(Uuid, Option<String>)> {
+    let candidate = build::local(args).await?;
+    let digest = Sha256::digest(format!(
+        "ghostrack/nixos/generation/v1/{}/{key}",
+        args.instance
+    ));
+    let generation = uuid::Builder::from_random_bytes(digest[..16].try_into()?).into_uuid();
+    let client = client()?;
+    let archive = archive::prepare(&client, &candidate, key).await?;
+    let body = json!({
+        "generation_id": generation,
+        "root_path": candidate.root,
+        "manifest_sha256": archive.manifest_sha256,
+        "source_sha256": archive.source_sha256,
+    });
+    let register_key = derived_key("upload", key);
+    app_mutation(
+        api,
+        &format!("/cache/instances/{}/uploads", args.instance),
+        &body,
+        &register_key,
+    )
+    .await?;
+    archive.upload(api, &client, generation).await?;
+    Ok((generation, candidate.revision))
 }
 
 async fn read_health(path: &std::path::Path) -> Result<Value> {

@@ -413,6 +413,40 @@ impl ApiClient {
         Ok(response.value)
     }
 
+    /// Send a signed app mutation whose body is `bytes` as
+    /// `application/octet-stream` (a Nix build's source chunk), under
+    /// `idempotency_key`.
+    pub(crate) async fn app_bytes(
+        &self,
+        name: &str,
+        verb: &str,
+        path: &str,
+        bytes: Vec<u8>,
+        idempotency_key: &str,
+    ) -> Result<serde_json::Value> {
+        anyhow::ensure!(
+            api::valid_app_name(name) && api::valid_app_target(path),
+            "invalid app name or local request target"
+        );
+        let method = Method::from_bytes(verb.to_ascii_uppercase().as_bytes())?;
+        anyhow::ensure!(
+            matches!(method, Method::POST | Method::PUT | Method::PATCH),
+            "unsupported app request method"
+        );
+        let target = format!("/api/mut/v1/apps/{name}{path}");
+        let response = self
+            .send_encoded(
+                method,
+                &target,
+                true,
+                Some((bytes, "application/octet-stream")),
+                Some(idempotency_key),
+                false,
+            )
+            .await?;
+        Ok(response.value)
+    }
+
     async fn send<B: Serialize + ?Sized, T: DeserializeOwned>(
         &self,
         method: Method,
@@ -422,15 +456,37 @@ impl ApiClient {
         idempotency_key: Option<&str>,
         prefer_async: bool,
     ) -> Result<Answered<T>> {
+        let body = body
+            .map(serde_json::to_vec)
+            .transpose()
+            .context("encode API request body")?
+            .map(|bytes| (bytes, "application/json"));
+        self.send_encoded(
+            method,
+            path,
+            authenticated,
+            body,
+            idempotency_key,
+            prefer_async,
+        )
+        .await
+    }
+
+    async fn send_encoded<T: DeserializeOwned>(
+        &self,
+        method: Method,
+        path: &str,
+        authenticated: bool,
+        body: Option<(Vec<u8>, &'static str)>,
+        idempotency_key: Option<&str>,
+        prefer_async: bool,
+    ) -> Result<Answered<T>> {
         let url = self
             .base_url
             .join(path.trim_start_matches('/'))
             .with_context(|| format!("construct API URL for {path}"))?;
-        let encoded_body = body
-            .map(serde_json::to_vec)
-            .transpose()
-            .context("encode API request body")?
-            .unwrap_or_default();
+        let content_type = body.as_ref().map(|(_, content_type)| *content_type);
+        let encoded_body = body.map(|(bytes, _)| bytes).unwrap_or_default();
         let target = url.query().map_or_else(
             || url.path().to_owned(),
             |query| format!("{}?{query}", url.path()),
@@ -466,9 +522,9 @@ impl ApiClient {
         if prefer_async {
             request = request.header("Prefer", "respond-async");
         }
-        if body.is_some() {
+        if let Some(content_type) = content_type {
             request = request
-                .header(reqwest::header::CONTENT_TYPE, "application/json")
+                .header(reqwest::header::CONTENT_TYPE, content_type)
                 .body(encoded_body);
         }
         let sent = std::time::Instant::now();
