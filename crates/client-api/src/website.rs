@@ -828,6 +828,9 @@ pub struct EvmDepositView {
     #[serde(default, with = "activation_fee_decimal")]
     pub activation_fee_microusd: u64,
     pub waiting_microusd: u64,
+    /// Observed deposits not yet credited, including legs below the minimum.
+    #[serde(default)]
+    pub pending_microusd: u64,
     pub transactions: Vec<EvmDepositTransaction>,
 }
 
