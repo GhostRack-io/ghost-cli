@@ -4283,8 +4283,8 @@ pub struct UpgradeInstanceRequest {
 #[serde(deny_unknown_fields)]
 pub struct MoveInstanceRequest {
     /// An offering of another host of the instance's LAN mesh, as
-    /// `ListInstanceMeshHosts` lists the hosts, whose root disk is at least
-    /// the instance's.
+    /// `ListInstanceMeshHosts` lists the hosts, or another offering of its
+    /// own host, whose root disk is at least the instance's.
     pub offering_id: String,
     /// Which host it goes to (item 317b): its own host, on another of its
     /// offerings, or another host of its LAN mesh. None, the default, is
