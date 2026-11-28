@@ -2402,6 +2402,11 @@ struct MoveArgs {
     /// none can take it.
     #[arg(long, value_name = "HOST", value_enum)]
     host: Option<CloneHostArg>,
+    /// The part of the moved instance's disk kept for snapshots, in
+    /// percent, 0 to 50: the guest sees the rest, and 0 takes no
+    /// snapshots. Without it, the instance's setting, lowered to fit.
+    #[arg(long, value_name = "PERCENT", value_parser = clap::value_parser!(u8).range(0..=50))]
+    snapshot_space: Option<u8>,
     /// Confirm the stop of the instance for the copy.
     #[arg(long)]
     yes: bool,
@@ -10778,7 +10783,14 @@ async fn execute_instance(
         InstanceCommand::Move(args) => {
             let instance_id = resolve_instance(api, &args.instance_id, InstanceUse::Change).await?;
             if !cli.globals.compact {
-                quote_move(api, instance_id, &args.offering, args.host).await;
+                quote_move(
+                    api,
+                    instance_id,
+                    &args.offering,
+                    args.host,
+                    args.snapshot_space,
+                )
+                .await;
             }
             if !args.yes {
                 // The copy it leaves takes its snapshots with it (item 298).
@@ -10788,14 +10800,17 @@ async fn execute_instance(
                 return Err(Preview::new(
                     instance_preview_title("Move", &args.instance_id, Some(instance_id), None),
                     format!(
-                        "a move stops the instance for the copy of its disk, which gets a new ID.\nTo move: ghost instance move {} --offering {}{} --yes",
+                        "a move stops the instance for the copy of its disk, which gets a new ID.\nTo move: ghost instance move {} --offering {}{}{} --yes",
                         escape_control(&instance_reference_text(&args.instance_id)),
                         escape_control(&args.offering),
                         match args.host {
                             Some(CloneHostArg::Same) => " --host same",
                             Some(CloneHostArg::Other) => " --host other",
                             None => "",
-                        }
+                        },
+                        args.snapshot_space
+                            .map(|percent| format!(" --snapshot-space {percent}"))
+                            .unwrap_or_default()
                     ),
                 )
                 .row("Offering", Some(args.offering.clone()))
@@ -10809,6 +10824,7 @@ async fn execute_instance(
                     &MoveInstanceRequest {
                         offering_id: args.offering.clone(),
                         host: args.host.map(CloneHost::from),
+                        snapshot_reserve_percent: args.snapshot_space,
                     },
                     &retried_by_id(args.mutation.key(), &args.instance_id, instance_id),
                 )
@@ -14263,12 +14279,14 @@ fn upgrade_quote(
 const MOVE_NEW_IDENTITY: &str = "The guest's hostname and the network settings cloud-init manages are written again; its SSH host keys stay.";
 
 /// What a move of `instance` to `offering` changes: the host it goes to,
-/// its size and its price, that it gets a new ID, and what a new identity
-/// of its guest changes (`keeps_identity` false).
+/// its size and its price, that it gets a new ID, the snapshot space it
+/// gets (`named`: the percentage the move names, item 340), and what a new
+/// identity of its guest changes (`keeps_identity` false).
 fn move_quote(
     instance: &InstanceView,
     offering: &OfferingView,
     preview: &InstanceMovePreview,
+    named: Option<u8>,
     colors: bool,
 ) -> Vec<String> {
     let keeps_identity = preview.keeps_guest_identity;
@@ -14329,7 +14347,7 @@ fn move_quote(
             .to_owned(),
     );
     lines.push("  The copy is billed as LAN mesh traffic.".to_owned());
-    if let Some(line) = move_snapshot_space(instance, preview) {
+    if let Some(line) = move_snapshot_space(instance, preview, named) {
         lines.push(format!("  {line}"));
     }
     if !keeps_identity {
@@ -14339,8 +14357,13 @@ fn move_quote(
 }
 
 /// The snapshot space the moved instance gets, as the preview read it
-/// (item 295c). Nothing when the instance has asked for none.
-fn move_snapshot_space(instance: &InstanceView, preview: &InstanceMovePreview) -> Option<String> {
+/// (item 295c), with `named` the percentage the move names (item 340), which
+/// is never lowered. Nothing when the instance has asked for none.
+fn move_snapshot_space(
+    instance: &InstanceView,
+    preview: &InstanceMovePreview,
+    named: Option<u8>,
+) -> Option<String> {
     if !preview.snapshots_supported {
         return Some("The host takes no snapshots.".to_owned());
     }
@@ -14355,7 +14378,7 @@ fn move_snapshot_space(instance: &InstanceView, preview: &InstanceMovePreview) -
     } else {
         gib_text(preview.snapshot_reserve_bytes).replace('\u{a0}', " ")
     };
-    Some(if preview.snapshot_reserve_lowered {
+    Some(if preview.snapshot_reserve_lowered && named.is_none() {
         match instance.snapshot_reserve_percent {
             Some(percent) => format!("Snapshot space: {size}, lowered from {percent} % to fit."),
             None => format!("Snapshot space: {size}, lowered to fit."),
@@ -14372,6 +14395,7 @@ async fn quote_move(
     instance_id: Uuid,
     offering_id: &str,
     host: Option<CloneHostArg>,
+    snapshot_space: Option<u8>,
 ) {
     let colors = Terminal::stderr().colors;
     let read = async {
@@ -14396,6 +14420,10 @@ async fn quote_move(
                 },
             );
         }
+        if let Some(percent) = snapshot_space {
+            url.query_pairs_mut()
+                .append_pair("snapshot_reserve_percent", &percent.to_string());
+        }
         let preview: InstanceMovePreview = api
             .read(
                 &GetInstanceMovePreview { instance_id },
@@ -14406,7 +14434,7 @@ async fn quote_move(
     };
     match read.await {
         Ok((instance, offering, preview)) => {
-            for line in move_quote(&instance, &offering, &preview, colors) {
+            for line in move_quote(&instance, &offering, &preview, snapshot_space, colors) {
                 notice(&line);
             }
             notice("");
@@ -30629,7 +30657,7 @@ mod tests {
         };
         let mut instance = quoted_instance(false);
         let line = |instance: &InstanceView, preview: &InstanceMovePreview| {
-            move_snapshot_space(instance, preview)
+            move_snapshot_space(instance, preview, None)
         };
         let gib = 1_u64 << 30;
         assert_eq!(
@@ -30649,6 +30677,17 @@ mod tests {
                 "snapshot_reserve_lowered": true}))
             ),
             Some("Snapshot space: 4 GiB, lowered from 20 % to fit.".to_owned())
+        );
+        // A percentage the move names (item 340) is never lowered.
+        assert_eq!(
+            move_snapshot_space(
+                &instance,
+                &preview(json!({"snapshots_supported": true,
+                "snapshot_reserve_bytes": 4 * gib, "snapshot_reserve_percent": 10,
+                "snapshot_reserve_lowered": true})),
+                Some(10)
+            ),
+            Some("Snapshot space: 4 GiB.".to_owned())
         );
         assert_eq!(
             line(
@@ -31527,6 +31566,87 @@ mod tests {
         );
         let body: Value = serde_json::from_slice(&received.lock().unwrap()[3].1).unwrap();
         assert_eq!(body, json!({"offering_id": "of2_there", "host": "same"}));
+        // A move that names its snapshot space (item 340): the preview, the
+        // command to go ahead and the write carry it.
+        let (url, received) = canned_server(vec![
+            (200, instance.clone()),
+            (200, offering.clone()),
+            (200, preview.clone()),
+        ])
+        .await;
+        let error = execute(&account_command(
+            &url,
+            &seed,
+            &[
+                "instance",
+                "move",
+                &id,
+                "--offering",
+                "of2_there",
+                "--snapshot-space",
+                "5",
+            ],
+        ))
+        .await
+        .unwrap_err();
+        let sentence = &error
+            .downcast_ref::<Confirmation>()
+            .expect("a confirmation")
+            .sentence;
+        assert!(
+            sentence.contains(&format!(
+                "To move: ghost instance move {id} --offering of2_there --snapshot-space 5 --yes"
+            )),
+            "{sentence}"
+        );
+        assert_eq!(
+            request_lines(&received)[2],
+            format!(
+                "GET /v1/instances/{id}/move-preview?offering_id=of2_there&snapshot_reserve_percent=5"
+            )
+        );
+        let (url, received) = canned_server(vec![
+            (200, instance.clone()),
+            (200, offering.clone()),
+            (200, preview.clone()),
+            (200, accepted.clone()),
+        ])
+        .await;
+        execute(&account_command(
+            &url,
+            &seed,
+            &[
+                "instance",
+                "move",
+                &id,
+                "--offering",
+                "of2_there",
+                "--snapshot-space",
+                "5",
+                "--yes",
+            ],
+        ))
+        .await
+        .unwrap();
+        let body: Value = serde_json::from_slice(&received.lock().unwrap()[3].1).unwrap();
+        assert_eq!(
+            body,
+            json!({"offering_id": "of2_there", "snapshot_reserve_percent": 5})
+        );
+        assert!(
+            Cli::try_parse_from([
+                "ghost",
+                "instance",
+                "move",
+                &id,
+                "--offering",
+                "of2_there",
+                "--snapshot-space",
+                "51",
+            ])
+            .is_err(),
+            "above 50"
+        );
 
         // Move with a failed offering read: the write is still sent.
         let (url, received) = canned_server(vec![

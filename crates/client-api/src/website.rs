@@ -4293,6 +4293,14 @@ pub struct MoveInstanceRequest {
     /// field, so it is sent only when chosen.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub host: Option<CloneHost>,
+    /// The moved instance's snapshot reserve (item 340), as
+    /// [`CreateInstanceRequest::snapshot_reserve_percent`]. Absent keeps the
+    /// source's setting, lowered to fit the disk the copy holds. A
+    /// percentage that leaves the guest less than the disk it is copied
+    /// from is refused (422 `snapshot_reserve_too_large`). A backend before
+    /// it refuses the field.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub snapshot_reserve_percent: Option<u8>,
 }
 
 /// The answer to a move (item 295b): its job, whose resource is the new
@@ -4353,6 +4361,12 @@ pub struct MovePreviewQuery {
     /// The host the move would go to, as [`MoveInstanceRequest::host`].
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub host: Option<CloneHost>,
+    /// The snapshot reserve the move would name (item 340), as
+    /// [`MoveInstanceRequest::snapshot_reserve_percent`]: the preview then
+    /// gives that percentage's reserve, or the move's refusal. A backend
+    /// before it ignores it and previews the carried setting.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub snapshot_reserve_percent: Option<u8>,
 }
 
 /// A size the instance can be upgraded to: a larger offering of its host.
